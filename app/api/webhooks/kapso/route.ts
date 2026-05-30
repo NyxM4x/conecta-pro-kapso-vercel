@@ -496,6 +496,93 @@ async function markReplyLockSent(params: {
   }
 }
 
+type BotPauseState = {
+  paused: boolean;
+  expired: boolean;
+  reason?: string | null;
+  expiresAt?: string | null;
+};
+
+async function getBotPauseState(conversationId?: string): Promise<BotPauseState> {
+  if (!conversationId) {
+    return { paused: false, expired: false };
+  }
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_conversations")
+    .select("bot_paused, bot_pause_expires_at, bot_paused_reason")
+    .eq("kapso_conversation_id", conversationId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("supabase select bot pause state failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "bot_pause_state_select_failed",
+      conversationId,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+      },
+    });
+
+    return { paused: false, expired: false };
+  }
+
+  if (!data?.bot_paused) {
+    return { paused: false, expired: false };
+  }
+
+  const expiresAt = data.bot_pause_expires_at
+    ? new Date(data.bot_pause_expires_at).getTime()
+    : null;
+
+  const expired = expiresAt ? expiresAt <= Date.now() : false;
+
+  return {
+    paused: true,
+    expired,
+    reason: data.bot_paused_reason,
+    expiresAt: data.bot_pause_expires_at,
+  };
+}
+
+async function resumeBotIfPauseExpired(conversationId?: string) {
+  if (!conversationId) return;
+
+  const supabase = getSupabaseClient();
+
+  const { error } = await supabase
+    .from("kapso_conversations")
+    .update({
+      bot_paused: false,
+      bot_resumed_at: new Date().toISOString(),
+      bot_pause_expires_at: null,
+      bot_paused_reason: "auto_resume_expired",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("kapso_conversation_id", conversationId);
+
+  if (error) {
+    console.error("supabase auto resume bot failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "bot_auto_resume_failed",
+      conversationId,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+      },
+    });
+  }
+}
+
 async function getRecentConversationHistory(
   conversationId?: string,
   limit = 12,
@@ -851,6 +938,46 @@ export async function POST(request: Request) {
 
   if (!canReply) {
     return new Response("reply already processed", { status: 200 });
+  }
+
+  const pauseState = await getBotPauseState(lastMessage.conversationId);
+
+  if (pauseState.paused && !pauseState.expired) {
+    console.log("bot paused, inbound saved but no reply sent", {
+      conversationId: lastMessage.conversationId,
+      reason: pauseState.reason ?? null,
+      expiresAt: pauseState.expiresAt ?? null,
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "bot_reply_skipped_paused",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        reason: pauseState.reason ?? null,
+        expires_at: pauseState.expiresAt ?? null,
+      },
+    });
+
+    return new Response("bot paused", { status: 200 });
+  }
+
+  if (pauseState.paused && pauseState.expired) {
+    await resumeBotIfPauseExpired(lastMessage.conversationId);
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "bot_auto_resumed_pause_expired",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        previous_reason: pauseState.reason ?? null,
+        expired_at: pauseState.expiresAt ?? null,
+      },
+    });
   }
 
   const kapso = getKapsoClient();
