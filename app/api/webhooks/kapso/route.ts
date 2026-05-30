@@ -71,17 +71,13 @@ function getSupabaseClient() {
 
 function maskPhone(phone?: string | null): string | null {
   if (!phone) return null;
-
   const digits = String(phone).replace(/\D/g, "");
-
   if (digits.length <= 4) return "****";
-
   return `${digits.slice(0, 3)}****${digits.slice(-4)}`;
 }
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
-
   try {
     return JSON.stringify(error);
   } catch {
@@ -94,6 +90,44 @@ function cleanMetadata(metadata?: Record<string, any>): Record<string, any> {
     return JSON.parse(JSON.stringify(metadata ?? {}));
   } catch {
     return {};
+  }
+}
+
+async function sendSlackAlert(params: {
+  level: SystemLogLevel;
+  eventType: string;
+  business?: string;
+  conversationId?: string;
+  messageId?: string;
+  contactPhone?: string;
+  errorMessage?: string;
+}) {
+  const webhookUrl = process.env.SLACK_ALERT_WEBHOOK_URL;
+
+  if (!webhookUrl) return;
+  if (!["error", "critical"].includes(params.level)) return;
+
+  try {
+    const emoji = params.level === "critical" ? "🚨" : "⚠️";
+
+    const text = [
+      `${emoji} *${params.level.toUpperCase()} - Kapso/Vercel*`,
+      `*Evento:* ${params.eventType}`,
+      `*Negocio:* ${params.business ?? "conecta-pro"}`,
+      `*Conversación:* ${params.conversationId ?? "N/A"}`,
+      `*Mensaje:* ${params.messageId ?? "N/A"}`,
+      `*Teléfono:* ${maskPhone(params.contactPhone) ?? "N/A"}`,
+      `*Error:* ${params.errorMessage ?? "Sin detalle"}`,
+      `*Hora:* ${new Date().toISOString()}`,
+    ].join("\n");
+
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+  } catch (error) {
+    console.error("sendSlackAlert failed", error);
   }
 }
 
@@ -129,6 +163,16 @@ async function logSystemEvent(params: {
     if (error) {
       console.error("system_logs insert failed", error);
     }
+
+    await sendSlackAlert({
+      level: params.level ?? "info",
+      eventType: params.eventType,
+      business: params.business ?? "conecta-pro",
+      conversationId: params.conversationId,
+      messageId: params.messageId,
+      contactPhone: params.contactPhone,
+      errorMessage: params.errorMessage,
+    });
   } catch (error) {
     console.error("logSystemEvent threw", error);
   }
@@ -136,23 +180,17 @@ async function logSystemEvent(params: {
 
 function parseKapsoTimestamp(timestamp?: string | number | null): string | null {
   if (!timestamp) return null;
-
   const numericTimestamp = Number(timestamp);
   if (!Number.isFinite(numericTimestamp)) return null;
-
   return new Date(numericTimestamp * 1000).toISOString();
 }
 
-function getWebhookEvents(
-  payload: Record<string, any>,
-  request: Request,
-): Record<string, any>[] {
+function getWebhookEvents(payload: Record<string, any>, request: Request): Record<string, any>[] {
   const isBatch =
     payload.batch === true ||
     request.headers.get("x-webhook-batch") === "true";
 
   if (isBatch && Array.isArray(payload.data)) return payload.data;
-
   return [payload];
 }
 
@@ -161,23 +199,18 @@ function extractMessageText(
   conversation?: Record<string, any> | null,
 ): string {
   const textBody = message?.text?.body;
-  if (typeof textBody === "string" && textBody.trim()) {
-    return textBody.trim();
-  }
+  if (typeof textBody === "string" && textBody.trim()) return textBody.trim();
 
   const transcriptText = message?.kapso?.transcript?.text;
-  if (typeof transcriptText === "string" && transcriptText.trim()) {
-    return transcriptText.trim();
-  }
+  if (typeof transcriptText === "string" && transcriptText.trim()) return transcriptText.trim();
 
   const buttonText = message?.button?.text;
-  if (typeof buttonText === "string" && buttonText.trim()) {
-    return buttonText.trim();
-  }
+  if (typeof buttonText === "string" && buttonText.trim()) return buttonText.trim();
 
   const interactiveButtonText =
     message?.interactive?.button_reply?.title ??
     message?.interactive?.list_reply?.title;
+
   if (typeof interactiveButtonText === "string" && interactiveButtonText.trim()) {
     return interactiveButtonText.trim();
   }
@@ -185,22 +218,14 @@ function extractMessageText(
   const kapsoContent = message?.kapso?.content;
   if (typeof kapsoContent === "string" && kapsoContent.trim()) {
     const transcriptMatch = kapsoContent.match(/Transcript:\s*([\s\S]*)$/i);
-
-    if (transcriptMatch?.[1]?.trim()) {
-      return transcriptMatch[1].trim();
-    }
-
+    if (transcriptMatch?.[1]?.trim()) return transcriptMatch[1].trim();
     return kapsoContent.trim();
   }
 
   const lastMessageText = conversation?.kapso?.last_message_text;
   if (typeof lastMessageText === "string" && lastMessageText.trim()) {
     const transcriptMatch = lastMessageText.match(/Transcript:\s*([\s\S]*)$/i);
-
-    if (transcriptMatch?.[1]?.trim()) {
-      return transcriptMatch[1].trim();
-    }
-
+    if (transcriptMatch?.[1]?.trim()) return transcriptMatch[1].trim();
     return lastMessageText.trim();
   }
 
@@ -209,9 +234,7 @@ function extractMessageText(
 
 function extractIncomingFromEvent(event: Record<string, any>): IncomingMessage | null {
   const from = event.message?.from ?? event.conversation?.phone_number ?? "";
-
   const text = extractMessageText(event.message, event.conversation);
-
   const messageId = event.message?.id;
   const conversationId = event.conversation?.id ?? from;
   const contactName = event.conversation?.contact_name ?? null;
