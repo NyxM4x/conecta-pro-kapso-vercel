@@ -864,6 +864,10 @@ export async function POST(request: Request) {
     phone: maskPhone(lastMessage?.from),
   });
 
+  if (events.some((event) => event?.message?.type === "audio")) {
+    console.log("AUDIO DEBUG PAYLOAD", JSON.stringify(payload, null, 2));
+  }
+
   await logSystemEvent({
     level: "info",
     eventType: "webhook_received",
