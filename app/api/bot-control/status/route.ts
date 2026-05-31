@@ -15,6 +15,16 @@ function getSupabaseClient() {
 
 export async function GET(request: Request) {
   try {
+    const secret = process.env.BOT_CONTROL_SECRET;
+    const requestSecret = request.headers.get("X-Bot-Control-Secret");
+
+    if (!secret || requestSecret !== secret) {
+      return Response.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const conversationId = searchParams.get("conversation_id");
 
@@ -50,7 +60,9 @@ export async function GET(request: Request) {
     }
 
     const expiresAt = data.bot_pause_expires_at;
-    const expired = expiresAt ? new Date(expiresAt).getTime() <= Date.now() : false;
+    const expired = expiresAt
+      ? new Date(expiresAt).getTime() <= Date.now()
+      : false;
 
     return Response.json({
       ok: true,

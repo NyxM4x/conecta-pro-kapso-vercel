@@ -22,6 +22,16 @@ function maskPhone(phone?: string | null): string | null {
 
 export async function POST(request: Request) {
   try {
+    const secret = process.env.BOT_CONTROL_SECRET;
+    const requestSecret = request.headers.get("X-Bot-Control-Secret");
+
+    if (!secret || requestSecret !== secret) {
+      return Response.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
     const body = await request.json();
 
     const conversationId = body.conversation_id;
