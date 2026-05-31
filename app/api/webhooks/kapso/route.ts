@@ -218,19 +218,27 @@ function extractMessageText(
   const kapsoContent = message?.kapso?.content;
   if (typeof kapsoContent === "string" && kapsoContent.trim()) {
     const transcriptMatch = kapsoContent.match(/Transcript:\s*([\s\S]*)$/i);
-    if (transcriptMatch?.[1]?.trim()) return transcriptMatch[1].trim();
-    return kapsoContent.trim();
+    if (transcriptMatch?.[1]?.trim()) {
+      return `🎙️ Audio recibido\n\nTranscripción: ${transcriptMatch[1].trim()}`;
+    }
+
+    return "🎙️ Audio recibido";
   }
 
-  const lastMessageText = conversation?.kapso?.last_message_text;
-  if (typeof lastMessageText === "string" && lastMessageText.trim()) {
-    const transcriptMatch = lastMessageText.match(/Transcript:\s*([\s\S]*)$/i);
-    if (transcriptMatch?.[1]?.trim()) return transcriptMatch[1].trim();
-    return lastMessageText.trim();
+
+const lastMessageText = conversation?.kapso?.last_message_text;
+if (typeof lastMessageText === "string" && lastMessageText.trim()) {
+  const transcriptMatch = lastMessageText.match(/Transcript:\s*([\s\S]*)$/i);
+  if (transcriptMatch?.[1]?.trim()) {
+    return `🎙️ Audio recibido\n\nTranscripción: ${transcriptMatch[1].trim()}`;
   }
 
-  return "";
+  return "🎙️ Audio recibido";
 }
+
+return "";
+}
+
 
 function extractIncomingFromEvent(event: Record<string, any>): IncomingMessage | null {
   const from = event.message?.from ?? event.conversation?.phone_number ?? "";
