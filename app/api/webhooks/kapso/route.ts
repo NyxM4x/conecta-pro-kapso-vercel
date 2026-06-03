@@ -239,9 +239,22 @@ if (typeof lastMessageText === "string" && lastMessageText.trim()) {
 return "";
 }
 
-
 function extractIncomingFromEvent(event: Record<string, any>): IncomingMessage | null {
-  const from = event.message?.from ?? event.conversation?.phone_number ?? "";
+  const kapsoDirection = event.message?.kapso?.direction;
+
+  if (kapsoDirection && kapsoDirection !== "inbound") {
+    console.log("outbound message ignored", {
+      direction: kapsoDirection,
+      messageId: event.message?.id ?? null,
+      conversationId: event.conversation?.id ?? null,
+      status: event.message?.kapso?.status ?? null,
+      origin: event.message?.kapso?.origin ?? null,
+    });
+
+    return null;
+  }
+
+  const from = event.message?.from ?? "";
   const text = extractMessageText(event.message, event.conversation);
   const messageId = event.message?.id;
   const conversationId = event.conversation?.id ?? from;
