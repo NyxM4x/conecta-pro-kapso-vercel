@@ -49,6 +49,66 @@ Reglas:
 - Si el usuario quiere inscribirse o comprar, dile que una persona del equipo puede ayudarle a confirmar su cupo.
 `;
 
+const LOCATION_KEYWORDS = [
+  "ubicacion",
+  "ubicame",
+  "direccion",
+  "como llegar",
+  "como llego",
+  "como llegamos",
+  "donde estan",
+  "donde estas",
+  "donde queda",
+  "donde quedan",
+  "donde se encuentran",
+  "mapa",
+  "google maps",
+];
+
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim();
+}
+
+function detectLocationIntent(text: string): boolean {
+  if (!text) return false;
+  const normalized = normalizeText(text);
+  return LOCATION_KEYWORDS.some((keyword) => normalized.includes(keyword));
+}
+
+type LocationResponse = {
+  text: string;
+  mapsUrl: string | null;
+  videoUrl: string | null;
+};
+
+function buildLocationResponse(): LocationResponse {
+  const mapsUrl = (process.env.CONECTA_PRO_MAPS_URL ?? "").trim();
+  const videoUrl = (process.env.CONECTA_PRO_LOCATION_VIDEO_URL ?? "").trim();
+  const fullyConfigured = mapsUrl.length > 0 && videoUrl.length > 0;
+
+  if (fullyConfigured) {
+    return {
+      text:
+        "Claro 😊 estamos en el 2do anillo entre Grigotá y Piraí, oficinas de Conecta Pro. " +
+        "Te comparto la ubicación y un videito para que llegues fácil.",
+      mapsUrl,
+      videoUrl,
+    };
+  }
+
+  return {
+    text:
+      "Claro 😊 estamos en el 2do anillo entre Grigotá y Piraí, oficinas de Conecta Pro. " +
+      "Si necesitas la ubicación exacta o una referencia para llegar, el equipo puede compartírtela enseguida.",
+    mapsUrl: null,
+    videoUrl: null,
+  };
+}
+
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing ${name}`);
@@ -1096,12 +1156,18 @@ export async function POST(request: Request) {
 
   const history = await getRecentConversationHistory(lastMessage.conversationId, 12);
 
-  const replyText = await generateAssistantReply({
-    history,
-    conversationId: lastMessage.conversationId,
-    messageId: lastMessage.messageId,
-    phone: lastMessage.from,
-  });
+  const locationResponse = detectLocationIntent(lastMessage.text)
+    ? buildLocationResponse()
+    : null;
+
+  const replyText = locationResponse
+    ? locationResponse.text
+    : await generateAssistantReply({
+        history,
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        phone: lastMessage.from,
+      });
 
   try {
     await kapso.messages.sendText({
@@ -1130,6 +1196,52 @@ export async function POST(request: Request) {
     return new Response("send failed", { status: 502 });
   }
 
+  if (locationResponse && locationResponse.mapsUrl && locationResponse.videoUrl) {
+    try {
+      await kapso.messages.sendText({
+        phoneNumberId,
+        to: lastMessage.from,
+        body: locationResponse.mapsUrl,
+      });
+
+      await saveOutboundMessage({
+        conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
+        phone: lastMessage.from,
+        content: `[LOCATION_MAPS] ${locationResponse.mapsUrl}`,
+        rawPayload: { type: "location_maps", url: locationResponse.mapsUrl },
+      });
+
+      await kapso.messages.sendVideo({
+        phoneNumberId,
+        to: lastMessage.from,
+        video: {
+          link: locationResponse.videoUrl,
+          caption: "Referencia para llegar a Conecta Pro 📍",
+        },
+      });
+
+      await saveOutboundMessage({
+        conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
+        phone: lastMessage.from,
+        content: `[LOCATION_VIDEO] ${locationResponse.videoUrl}`,
+        rawPayload: { type: "location_video", url: locationResponse.videoUrl },
+      });
+
+      console.log("Kapso location maps + video sent successfully");
+    } catch (error) {
+      console.error("kapso location media send failed", error);
+
+      await logSystemEvent({
+        level: "error",
+        eventType: "location_media_send_failed",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        errorMessage: getErrorMessage(error),
+      });
+    }
+  }
+
   try {
     await saveOutboundMessage({
       conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
@@ -1144,11 +1256,13 @@ export async function POST(request: Request) {
       responseText: replyText,
     });
 
-    await sendMediaAssetsIfNeeded({
-      conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
-      phone: lastMessage.from,
-      phoneNumberId,
-    });
+    if (!locationResponse) {
+      await sendMediaAssetsIfNeeded({
+        conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
+        phone: lastMessage.from,
+        phoneNumberId,
+      });
+    }
   } catch (error) {
     console.error("supabase save outbound/lock/media threw", error);
 
