@@ -244,17 +244,53 @@ if (typeof lastMessageText === "string" && lastMessageText.trim()) {
 return "";
 }
 
-function extractIncomingFromEvent(event: Record<string, any>): IncomingMessage | null {
+async function extractIncomingFromEvent(
+  event: Record<string, any>,
+): Promise<IncomingMessage | null> {
   const kapsoDirection = event.message?.kapso?.direction;
 
   if (kapsoDirection && kapsoDirection !== "inbound") {
-    console.log("outbound message ignored", {
+    const origin = event.message?.kapso?.origin ?? null;
+    const conversationId = event.conversation?.id ?? null;
+    const phone = event.conversation?.phone_number ?? event.message?.to ?? null;
+    const messageId = event.message?.id ?? null;
+
+    console.log("outbound message detected", {
       direction: kapsoDirection,
-      messageId: event.message?.id ?? null,
-      conversationId: event.conversation?.id ?? null,
+      origin,
+      messageId,
+      conversationId,
       status: event.message?.kapso?.status ?? null,
-      origin: event.message?.kapso?.origin ?? null,
     });
+
+    // Respuesta humana desde la app de WhatsApp Business: apaga el bot
+    // para esta conversación hasta que se reanude manualmente (/resume).
+    if (origin === "business_app" && conversationId) {
+      const supabase = getSupabaseClient();
+      const nowIso = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("kapso_conversations")
+        .update({
+          bot_paused: true,
+          bot_paused_at: nowIso,
+          bot_pause_expires_at: null,
+          bot_paused_reason: "human_whatsapp_business_app",
+          bot_pause_mode: "auto",
+          bot_pause_duration_minutes: null,
+          updated_at: nowIso,
+        })
+        .eq("kapso_conversation_id", conversationId);
+
+      if (error) {
+        console.error("auto pause from business_app failed", error);
+      } else {
+        console.log("bot auto-paused from business_app", {
+          conversationId,
+          phone,
+        });
+      }
+    }
 
     return null;
   }
@@ -279,22 +315,22 @@ function extractIncomingFromEvent(event: Record<string, any>): IncomingMessage |
   };
 }
 
-function normalizeIncomingMessages(
+async function normalizeIncomingMessages(
   payload: Record<string, any>,
   request: Request,
-): IncomingMessage[] {
+): Promise<IncomingMessage[]> {
   const events = getWebhookEvents(payload, request);
   const incomingMessages: IncomingMessage[] = [];
 
-  events.forEach((event, index) => {
-    const incoming = extractIncomingFromEvent(event);
-    if (!incoming) return;
+  for (const [index, event] of events.entries()) {
+    const incoming = await extractIncomingFromEvent(event);
+    if (!incoming) continue;
 
     incomingMessages.push({
       ...incoming,
       batchIndex: index,
     });
-  });
+  }
 
   return incomingMessages;
 }
@@ -867,7 +903,7 @@ export async function POST(request: Request) {
   }
 
   const events = getWebhookEvents(payload, request);
-  const incomingMessages = normalizeIncomingMessages(payload, request);
+  const incomingMessages = await normalizeIncomingMessages(payload, request);
 
   const firstMessage = incomingMessages[0];
   const lastMessage = incomingMessages[incomingMessages.length - 1];
