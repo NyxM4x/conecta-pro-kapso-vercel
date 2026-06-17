@@ -76,6 +76,11 @@ function maskPhone(phone?: string | null): string | null {
   return `${digits.slice(0, 3)}****${digits.slice(-4)}`;
 }
 
+function getTestPhoneDigits(): string | null {
+  const digits = (process.env.TEST_PHONE ?? "").replace(/\D/g, "");
+  return digits.length > 0 ? digits : null;
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   try {
@@ -905,6 +910,32 @@ export async function POST(request: Request) {
     });
 
     return new Response("ignored", { status: 200 });
+  }
+
+  const testPhoneDigits = getTestPhoneDigits();
+
+  if (
+    testPhoneDigits &&
+    String(lastMessage.from).replace(/\D/g, "") !== testPhoneDigits
+  ) {
+    console.log("test mode active, message from non-test number ignored", {
+      conversationId: lastMessage.conversationId,
+      phone: maskPhone(lastMessage.from),
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "test_mode_ignored",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        test_phone_masked: maskPhone(testPhoneDigits),
+        incoming_count: incomingMessages.length,
+      },
+    });
+
+    return new Response("ignored (test mode)", { status: 200 });
   }
 
   try {
