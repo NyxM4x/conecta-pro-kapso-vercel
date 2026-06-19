@@ -8,6 +8,7 @@ type IncomingMessage = {
   from: string;
   text: string;
   isImage?: boolean;
+  isDocument?: boolean;
   messageId?: string;
   conversationId?: string;
   contactName?: string | null;
@@ -81,22 +82,27 @@ Reglas de tono y formato (campo "reply"):
   o "¿quieres que te lo envíe?". Eso genera fricción. Responde afirmando el siguiente paso directamente.
 
 Regla de urgencia comercial:
-- Puedes transmitir urgencia genuina porque la preventa vence pronto (ej. "date prisa, el precio sube el
-  domingo", "la preventa está por terminar", "no te quedes sin tu lugar"). Menciónala con naturalidad
-  cuando sea relevante (precio, inscripción); no la repitas en cada mensaje de la conversación.
+- Puedes transmitir urgencia genuina relacionada con la preventa y el cupo (ej. "aprovecha la preventa",
+  "reserva tu cupo", "cupos limitados", "envía tu comprobante para asegurar tu lugar"). Menciónala con
+  naturalidad cuando sea relevante (precio, inscripción); no la repitas en cada mensaje de la conversación.
+- NUNCA digas que el precio "sube", "aumenta", ni frases como "el precio sube el domingo/día del evento".
+  Son dos modalidades de pago (preventa vs. puerta), no un cambio de precio.
 - NUNCA inventes ni menciones una cantidad específica de cupos disponibles, de personas inscritas o de
-  asistentes — no tienes ese dato real. La urgencia se transmite por el corte de precio y la fecha del
-  evento, no por números de cupos.
+  asistentes — no tienes ese dato real. "Cupos limitados" es la única mención de cupos permitida, sin
+  números.
 
 Guía por situación:
 - Saludo / primer contacto: responde con un mensaje comercial completo de bienvenida — saluda con calidez,
   menciona el curso ("Creación de contenido que vende sin tener muchos seguidores"), la fecha (domingo 21
-  de junio, 4:00 PM) y el precio de preventa (350 Bs), sumando la urgencia comercial de que sube a 450 Bs
-  el día del evento. Cierra invitando a preguntar dudas o a inscribirse. NO listes un menú de opciones ni
-  enumeres todos los servicios/paquetes — el sistema ya se encarga de enviar el flyer del curso por
-  separado (vía is_greeting, lógica existente de course_flyer, sin cambios).
-- Pregunta de precio: indica 350 Bs en preventa, y que desde el domingo 21 de junio (día del evento) el
-  precio en puerta es 450 Bs. Súmale la urgencia comercial de arriba sin inventar cupos.
+  de junio, 4:00 PM) y el precio preventa (350 Bs), sumando urgencia genuina para que reserve su cupo
+  aprovechando la preventa (ej. "aprovecha la preventa y reserva tu cupo"). NUNCA digas que el precio sube
+  ni que aumenta el día del evento. Cierra invitando a preguntar dudas o a inscribirse. NO listes un menú
+  de opciones ni enumeres todos los servicios/paquetes — el sistema ya se encarga de enviar el flyer del
+  curso por separado (vía is_greeting, lógica existente de course_flyer, sin cambios).
+- Pregunta de precio: indica 350 Bs en preventa (precio actual), y que el pago en puerta/presencial el día
+  del curso es de 450 Bs. NUNCA digas que el precio "sube" o "aumenta" — son dos modalidades de pago
+  distintas, no un cambio de precio. Súmale la urgencia comercial de arriba (preventa, cupo) sin inventar
+  cupos.
 - Pregunta de ubicación: comparte el link de Maps (texto plano, sin markdown) y menciona que también hay
   un video corto de cómo llegar, sin prometer enviarlo en ese instante.
 - Intención clara de inscribirse/reservar/pagar ("quiero inscribirme", "quiero reservar mi cupo", "quiero
@@ -123,8 +129,8 @@ Guía por situación:
   Cuando realices el pago, puedes enviarnos tu comprobante por este mismo WhatsApp para verificar tu
   inscripción."
 - Si pregunta si puede pagar en efectivo ("¿puedo pagar en efectivo?"): "Sí 😊. También puedes pagar en
-  efectivo el día del curso. En ese caso el precio será de 450 Bs en puerta." Esto es informativo — no
-  marques intents.payment_qr solo por esta pregunta.
+  efectivo el día del curso. El pago en puerta/presencial el día del curso es de 450 Bs." Esto es
+  informativo — no marques intents.payment_qr solo por esta pregunta.
 - Comprobante de pago (dice "ya pagué" o envía una imagen como comprobante, después de habérsele
   compartido el QR): responde con un mensaje breve y cálido en esta línea: "¡Gracias por el comprobante!
   😊 Vamos a verificar el pago y te confirmaremos tu cupo pronto." NUNCA digas que el cupo ya quedó
@@ -315,6 +321,14 @@ function extractMessageText(
     return "📷 Imagen recibida";
   }
 
+  // Documento/PDF entrante (posible comprobante de pago): mismo tratamiento
+  // que la imagen, usando el caption del documento si viene.
+  if (message?.document || message?.type === "document") {
+    const caption = message?.document?.caption;
+    if (typeof caption === "string" && caption.trim()) return caption.trim();
+    return "📄 Documento recibido";
+  }
+
   const transcriptText = message?.kapso?.transcript?.text;
   if (typeof transcriptText === "string" && transcriptText.trim()) return transcriptText.trim();
 
@@ -407,6 +421,8 @@ async function extractIncomingFromEvent(
   const from = event.message?.from ?? "";
   const text = extractMessageText(event.message, event.conversation);
   const isImage = Boolean(event.message?.image) || event.message?.type === "image";
+  const isDocument =
+    Boolean(event.message?.document) || event.message?.type === "document";
   const messageId = event.message?.id;
   const conversationId = event.conversation?.id ?? from;
   const contactName = event.conversation?.contact_name ?? null;
@@ -418,6 +434,7 @@ async function extractIncomingFromEvent(
     from,
     text,
     isImage,
+    isDocument,
     messageId,
     conversationId,
     contactName,
@@ -1398,13 +1415,15 @@ export async function POST(request: Request) {
     ].join("\n"),
   ];
 
-  // Si el último mensaje es una imagen, dale contexto al modelo: solo se trata
-  // como comprobante si ya se envió el QR de pago; si no, pedir contexto.
-  if (lastMessage.isImage) {
+  // Si el último mensaje es una imagen o documento/PDF, dale contexto al
+  // modelo: solo se trata como comprobante si ya se envió el QR de pago;
+  // si no, pedir contexto.
+  if (lastMessage.isImage || lastMessage.isDocument) {
+    const mediaLabel = lastMessage.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
     contextParts.push(
       mediaStatus.payment_qr
-        ? "El último mensaje del usuario es una IMAGEN y ya se le envió antes el QR de pago. Trátala como un posible comprobante: marca payment_confirmation=true y responde que verificaremos el pago y le confirmaremos su cupo. No la trates como pedido de otro material."
-        : "El último mensaje del usuario es una IMAGEN y todavía NO se le ha enviado el QR de pago. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle esa imagen y no marques payment_confirmation.",
+        ? `El último mensaje del usuario es ${mediaLabel} y ya se le envió antes el QR de pago. Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Vamos a verificar el pago y te confirmaremos tu cupo pronto." No lo trates como pedido de otro material.`
+        : `El último mensaje del usuario es ${mediaLabel} y todavía NO se le ha enviado el QR de pago. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
     );
   }
 
