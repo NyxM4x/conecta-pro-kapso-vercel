@@ -52,7 +52,8 @@ Información conocida:
   el domingo 21 de junio, 4:00 PM, duración aproximada 3 horas.
 - Incluye certificado de participación y merienda.
 - Precio preventa: 350 Bs.
-- Precio en puerta: 450 Bs, desde el domingo 21 de junio (día del evento).
+- Precio en puerta: 450 Bs, desde el domingo 21 de junio (día del evento). También se puede pagar en
+  efectivo el día del evento.
 - Ubicación: 2do anillo entre Grigotá y Piraí, oficinas de Conecta Pro.
 - Link de ubicación (Google Maps): https://www.google.com/maps?q=-17.772659301757812,-63.16727828979492&z=17&hl=es
 - El curso enseña tipos de videos, algoritmo de TikTok, cómo convertir vistas en ventas, guiones y estrategias prácticas.
@@ -73,7 +74,11 @@ Reglas de tono y formato (campo "reply"):
 - El envío de flyers, QR, video de ubicación e imágenes de paquetes lo decide el sistema por separado, no
   tú. NUNCA prometas ni digas "ahora te envío/comparto" una imagen, video, flyer o QR. Usa frases neutras
   sobre el material (ej. "el QR de pago está disponible para reservar tu cupo", "hay un video corto de
-  cómo llegar") en vez de comprometerte a enviarlo en este instante.
+  cómo llegar") en vez de comprometerte a enviarlo en este instante. Esto NO significa pedir permiso: si
+  la intención del usuario ya es clara, afirma el siguiente paso directamente, sin preguntar.
+- Si la intención del usuario ya es clara (inscripción, pago, ubicación, paquetes), NO hagas preguntas de
+  confirmación intermedias como "¿te gustaría que te pase el QR?", "¿quieres que te ayude a inscribirte?"
+  o "¿quieres que te lo envíe?". Eso genera fricción. Responde afirmando el siguiente paso directamente.
 
 Regla de urgencia comercial:
 - Puedes transmitir urgencia genuina porque la preventa vence pronto (ej. "date prisa, el precio sube el
@@ -90,10 +95,19 @@ Guía por situación:
   precio en puerta es 450 Bs. Súmale la urgencia comercial de arriba sin inventar cupos.
 - Pregunta de ubicación: comparte el link de Maps (texto plano, sin markdown) y menciona que también hay
   un video corto de cómo llegar, sin prometer enviarlo en ese instante.
-- Intención clara de inscribirse/reservar/pagar ("quiero inscribirme", "cómo pago", "pásame el QR", "quiero
-  reservar cupo"): confirma el precio vigente con entusiasmo y dile algo natural como "para reservar tu
-  cupo puedes realizar el pago por QR y luego enviar tu comprobante por este mismo WhatsApp". No marques
-  esta intención solo porque pregunte el precio o pida información general.
+- Intención clara de inscribirse/reservar/pagar ("quiero inscribirme", "quiero reservar mi cupo", "quiero
+  anotarme", "quiero participar", "quiero pagar", "cómo pago", "quiero confirmar", "pásame el QR"):
+  responde directo y con entusiasmo, SIN preguntar si quiere que le pases el QR. Menciona el precio de
+  preventa vigente (350 Bs) y pide que envíe su comprobante por este mismo WhatsApp luego de pagar. No
+  marques esta intención solo porque pregunte el precio o pida información general.
+- Si por el historial de la conversación ya le mencionaste el QR/la inscripción antes y vuelve a decir lo
+  mismo ("quiero inscribirme", "quiero reservar", "quiero pagar"): no lo trates como la primera vez ni
+  pidas confirmación de nuevo. Responde algo como "Perfecto 😊. Ya te compartimos el QR anteriormente.
+  Cuando realices el pago, puedes enviarnos tu comprobante por este mismo WhatsApp para verificar tu
+  inscripción."
+- Si pregunta si puede pagar en efectivo ("¿puedo pagar en efectivo?"): "Sí 😊. También puedes pagar en
+  efectivo el día del curso. En ese caso el precio será de 450 Bs en puerta." Esto es informativo — no
+  marques intents.payment_qr solo por esta pregunta.
 - Comprobante de pago (dice "ya pagué" o envía una imagen como comprobante, después de habérsele
   compartido el QR): agradece el comprobante con calidez. Indica que el equipo lo va a revisar y que el
   cupo se confirma después de esa revisión — NUNCA digas que el cupo ya quedó confirmado solo por enviar
@@ -106,13 +120,16 @@ Guía por situación:
 Clasificación (campos booleanos). Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 - is_greeting: true solo si el mensaje es básicamente un saludo o primer contacto sin una pregunta concreta.
 - explicit_resend_request: true si pide explícitamente reenviar material ("mándame de nuevo", "no me llegó",
-  "reenvíame el QR", "manda otra vez la imagen/flyer/video").
+  "no puedo verlo", "reenvíame el QR", "pásame otra vez el QR", "se borró el QR", "manda otra vez la
+  imagen/flyer/video").
 - payment_confirmation: true si dice que ya pagó o que adjunta/envía un comprobante.
 - intents.course_flyer: true si pide información, detalles, contenido, imágenes o flyer del curso.
 - intents.location_video: true si pide ubicación, dirección, cómo llegar o mapa.
-- intents.payment_qr: true SOLO con intención clara de inscribirse/reservar/pagar
-  (ej: "quiero inscribirme", "cómo pago", "pásame el QR", "quiero reservar cupo", "cómo deposito/transfiero").
-  NO lo marques si solo preguntan precio o información general.
+- intents.payment_qr: true SOLO con intención clara de inscribirse/reservar/pagar (ej: "quiero inscribirme",
+  "quiero reservar mi cupo", "quiero anotarme", "quiero participar", "quiero pagar", "cómo pago", "quiero
+  confirmar", "pásame el QR", "cómo deposito/transfiero") — inclúyelo también si ya se le mencionó el QR
+  antes y vuelve a pedirlo (el backend controla el dedup). NO lo marques si solo preguntan precio,
+  información general, o si preguntan por pagar en efectivo.
 - intents.service_packages: true si preguntan por servicios, paquetes, planes mensuales, edición, grabación o drone.
 `;
 
@@ -892,6 +909,59 @@ async function hasMediaIntentBeenSent(
   return (data ?? []).length > 0;
 }
 
+async function getMediaSentStatus(
+  phone: string,
+): Promise<Record<MediaIntent, boolean>> {
+  const status: Record<MediaIntent, boolean> = {
+    course_flyer: false,
+    location_video: false,
+    payment_qr: false,
+    service_packages: false,
+  };
+
+  if (!phone) return status;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("content")
+    .eq("contact_phone", phone)
+    .eq("direction", "outbound")
+    .or('content.ilike."[MEDIA_SENT:%",content.ilike."[MEDIA_SENT] %"');
+
+  if (error) {
+    console.error("supabase check media sent status failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "supabase_media_status_check_failed",
+      contactPhone: phone,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+      },
+    });
+
+    return status;
+  }
+
+  for (const row of data ?? []) {
+    const content = String(row.content ?? "");
+    const match = content.match(/^\[MEDIA_SENT:([a-z_]+)\]/);
+
+    if (match && match[1] in status) {
+      status[match[1] as MediaIntent] = true;
+    } else if (content.startsWith("[MEDIA_SENT] ")) {
+      // Marcador legacy sin intent: solo existía para course_flyer.
+      status.course_flyer = true;
+    }
+  }
+
+  return status;
+}
+
 async function getActiveMediaAssets(intent: MediaIntent): Promise<MediaAsset[]> {
   const supabase = getSupabaseClient();
 
@@ -1284,17 +1354,35 @@ export async function POST(request: Request) {
     }
   }
 
-  const history = await getRecentConversationHistory(lastMessage.conversationId, 12);
+  const [history, mediaStatus] = await Promise.all([
+    getRecentConversationHistory(lastMessage.conversationId, 12),
+    getMediaSentStatus(lastMessage.from),
+  ]);
+
+  // Estado real (ground truth del backend) de qué ya se envió a este teléfono.
+  // Reemplaza la inferencia del LLM sobre el historial de texto.
+  const contextParts: string[] = [
+    [
+      "Estado real (ground truth del backend) de materiales ya enviados a este usuario:",
+      `- course_flyer: ${mediaStatus.course_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
+      `- location_video: ${mediaStatus.location_video ? "YA enviado antes" : "NUNCA enviado"}`,
+      `- payment_qr: ${mediaStatus.payment_qr ? "YA enviado antes" : "NUNCA enviado"}`,
+      `- service_packages: ${mediaStatus.service_packages ? "YA enviado antes" : "NUNCA enviado"}`,
+      "Confía en este estado (no en lo que infieras del historial de mensajes) para saber si algo ya se envió.",
+    ].join("\n"),
+  ];
 
   // Si el último mensaje es una imagen, dale contexto al modelo: solo se trata
   // como comprobante si ya se envió el QR de pago; si no, pedir contexto.
-  let extraContext: string | undefined;
   if (lastMessage.isImage) {
-    const qrSent = await hasMediaIntentBeenSent(lastMessage.from, "payment_qr");
-    extraContext = qrSent
-      ? "El último mensaje del usuario es una IMAGEN y ya se le envió antes el QR de pago. Trátala como un posible comprobante: marca payment_confirmation=true y responde que verificaremos el pago y le confirmaremos su cupo. No la trates como pedido de otro material."
-      : "El último mensaje del usuario es una IMAGEN y todavía NO se le ha enviado el QR de pago. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle esa imagen y no marques payment_confirmation.";
+    contextParts.push(
+      mediaStatus.payment_qr
+        ? "El último mensaje del usuario es una IMAGEN y ya se le envió antes el QR de pago. Trátala como un posible comprobante: marca payment_confirmation=true y responde que verificaremos el pago y le confirmaremos su cupo. No la trates como pedido de otro material."
+        : "El último mensaje del usuario es una IMAGEN y todavía NO se le ha enviado el QR de pago. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle esa imagen y no marques payment_confirmation.",
+    );
   }
+
+  const extraContext = contextParts.join("\n\n");
 
   const turn = await generateAssistantTurn({
     history,
