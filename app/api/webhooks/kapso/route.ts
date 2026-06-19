@@ -1,11 +1,13 @@
 import { WhatsAppClient } from "@kapso/whatsapp-cloud-api";
 import { createClient } from "@supabase/supabase-js";
 import { openai } from "@ai-sdk/openai";
-import { generateText } from "ai";
+import { generateText, Output } from "ai";
+import { z } from "zod";
 
 type IncomingMessage = {
   from: string;
   text: string;
+  isImage?: boolean;
   messageId?: string;
   conversationId?: string;
   contactName?: string | null;
@@ -19,26 +21,47 @@ type HistoryMessage = {
   content: string;
 };
 
+type MediaIntent =
+  | "course_flyer"
+  | "location_video"
+  | "payment_qr"
+  | "service_packages";
+
 type MediaAsset = {
   title: string;
   url: string;
+  mediaType: "image" | "video";
 };
 
+// Orden en que se envían los intents cuando aplica más de uno en un mismo turno.
+const MEDIA_SEND_ORDER: MediaIntent[] = [
+  "course_flyer",
+  "service_packages",
+  "location_video",
+  "payment_qr",
+];
+
 type SystemLogLevel = "info" | "warning" | "error" | "critical";
+
+const CONECTA_PRO_MAPS_URL =
+  "https://www.google.com/maps?q=-17.772659301757812,-63.16727828979492&z=17&hl=es";
 
 const SYSTEM_PROMPT = `
 Eres el asistente de WhatsApp de Conecta Pro.
 
-Tu tarea es responder dudas sobre los cursos de Conecta Pro de forma breve, clara, amable y natural.
+Tu tarea es responder dudas sobre los cursos y servicios de Conecta Pro de forma breve, clara, amable y natural,
+y además clasificar la intención del mensaje para decidir qué material multimedia corresponde enviar.
 
 Información conocida:
 - Curso principal: "Creación de contenido que vende sin tener muchos seguidores".
 - Precio preventa: 350 Bs.
 - Precio en puerta: 450 Bs.
 - Ubicación: 2do anillo entre Grigotá y Piraí, oficinas de Conecta Pro.
+- Link de ubicación (Google Maps): ${CONECTA_PRO_MAPS_URL}
 - El curso enseña tipos de videos, algoritmo de TikTok, cómo convertir vistas en ventas, guiones y estrategias prácticas.
+- También se ofrecen servicios/paquetes mensuales de edición y grabación, y un paquete de drone.
 
-Reglas:
+Reglas de respuesta (campo "reply"):
 - Responde como WhatsApp, no como email.
 - Sé breve. Máximo 2 o 3 bloques cortos.
 - No inventes información.
@@ -46,68 +69,24 @@ Reglas:
 - No repitas todo si el usuario solo hace una pregunta puntual.
 - Si el usuario saluda, responde amable y ofrece ayuda.
 - Si el usuario pregunta precio, responde precio directo.
-- Si el usuario quiere inscribirse o comprar, dile que una persona del equipo puede ayudarle a confirmar su cupo.
+- Si piden la ubicación, incluye en el texto el link de Google Maps de arriba.
+- Si el usuario muestra intención clara de inscribirse/reservar/pagar, indícale que le compartes el QR de pago
+  y pídele que al terminar envíe el comprobante por este mismo WhatsApp.
+- Si el usuario dice que ya pagó o envía un comprobante, responde que verificaremos el pago y le confirmaremos su cupo.
+  NUNCA digas que lo pasas con un humano ni que un agente lo atenderá.
+
+Clasificación (campos booleanos). Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
+- is_greeting: true solo si el mensaje es básicamente un saludo o primer contacto sin una pregunta concreta.
+- explicit_resend_request: true si pide explícitamente reenviar material ("mándame de nuevo", "no me llegó",
+  "reenvíame el QR", "manda otra vez la imagen/flyer/video").
+- payment_confirmation: true si dice que ya pagó o que adjunta/envía un comprobante.
+- intents.course_flyer: true si pide información, detalles, contenido, imágenes o flyer del curso.
+- intents.location_video: true si pide ubicación, dirección, cómo llegar o mapa.
+- intents.payment_qr: true SOLO con intención clara de inscribirse/reservar/pagar
+  (ej: "quiero inscribirme", "cómo pago", "pásame el QR", "quiero reservar cupo", "cómo deposito/transfiero").
+  NO lo marques si solo preguntan precio o información general.
+- intents.service_packages: true si preguntan por servicios, paquetes, planes mensuales, edición, grabación o drone.
 `;
-
-const LOCATION_KEYWORDS = [
-  "ubicacion",
-  "ubicame",
-  "direccion",
-  "como llegar",
-  "como llego",
-  "como llegamos",
-  "donde estan",
-  "donde estas",
-  "donde queda",
-  "donde quedan",
-  "donde se encuentran",
-  "mapa",
-  "google maps",
-];
-
-function normalizeText(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .trim();
-}
-
-function detectLocationIntent(text: string): boolean {
-  if (!text) return false;
-  const normalized = normalizeText(text);
-  return LOCATION_KEYWORDS.some((keyword) => normalized.includes(keyword));
-}
-
-type LocationResponse = {
-  text: string;
-  mapsUrl: string | null;
-  videoUrl: string | null;
-};
-
-function buildLocationResponse(): LocationResponse {
-  const mapsUrl = (process.env.CONECTA_PRO_MAPS_URL ?? "").trim();
-  const videoUrl = (process.env.CONECTA_PRO_LOCATION_VIDEO_URL ?? "").trim();
-  const fullyConfigured = mapsUrl.length > 0 && videoUrl.length > 0;
-
-  if (fullyConfigured) {
-    return {
-      text:
-        "Claro 😊 estamos en el 2do anillo entre Grigotá y Piraí, oficinas de Conecta Pro. " +
-        "Te comparto la ubicación y un videito para que llegues fácil.",
-      mapsUrl,
-      videoUrl,
-    };
-  }
-
-  return {
-    text:
-      "Claro 😊 estamos en el 2do anillo entre Grigotá y Piraí, oficinas de Conecta Pro. " +
-      "Si necesitas la ubicación exacta o una referencia para llegar, el equipo puede compartírtela enseguida.",
-    mapsUrl: null,
-    videoUrl: null,
-  };
-}
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -266,6 +245,14 @@ function extractMessageText(
   const textBody = message?.text?.body;
   if (typeof textBody === "string" && textBody.trim()) return textBody.trim();
 
+  // Imagen entrante (posible comprobante de pago): usar el caption si viene,
+  // o un texto centinela para que el mensaje no se descarte aguas abajo.
+  if (message?.image || message?.type === "image") {
+    const caption = message?.image?.caption;
+    if (typeof caption === "string" && caption.trim()) return caption.trim();
+    return "📷 Imagen recibida";
+  }
+
   const transcriptText = message?.kapso?.transcript?.text;
   if (typeof transcriptText === "string" && transcriptText.trim()) return transcriptText.trim();
 
@@ -357,6 +344,7 @@ async function extractIncomingFromEvent(
 
   const from = event.message?.from ?? "";
   const text = extractMessageText(event.message, event.conversation);
+  const isImage = Boolean(event.message?.image) || event.message?.type === "image";
   const messageId = event.message?.id;
   const conversationId = event.conversation?.id ?? from;
   const contactName = event.conversation?.contact_name ?? null;
@@ -367,6 +355,7 @@ async function extractIncomingFromEvent(
   return {
     from,
     text,
+    isImage,
     messageId,
     conversationId,
     contactName,
@@ -745,29 +734,71 @@ async function getRecentConversationHistory(
       role: row.role === "assistant" ? "assistant" : "user",
       content: String(row.content ?? ""),
     }))
-    .filter((message) => message.content.trim().length > 0);
+    .filter((message) => message.content.trim().length > 0)
+    // Excluir marcadores internos ([MEDIA_SENT...], [LOCATION_...]) para no
+    // ensuciar el contexto del LLM; el estado de "ya enviado" lo resuelve el dedup.
+    .filter((message) => !/^\[(MEDIA_SENT|LOCATION_)/.test(message.content.trim()));
 }
 
-async function generateAssistantReply(params: {
+const AssistantTurnSchema = z.object({
+  reply: z.string(),
+  is_greeting: z.boolean(),
+  explicit_resend_request: z.boolean(),
+  payment_confirmation: z.boolean(),
+  intents: z.object({
+    course_flyer: z.boolean(),
+    location_video: z.boolean(),
+    payment_qr: z.boolean(),
+    service_packages: z.boolean(),
+  }),
+});
+
+type AssistantTurn = z.infer<typeof AssistantTurnSchema>;
+
+const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
+  reply:
+    "Gracias por escribirnos 😊 En este momento puedo ayudarte con información del curso. ¿Quieres saber el precio, ubicación o detalles del contenido?",
+  is_greeting: false,
+  explicit_resend_request: false,
+  payment_confirmation: false,
+  intents: {
+    course_flyer: false,
+    location_video: false,
+    payment_qr: false,
+    service_packages: false,
+  },
+};
+
+async function generateAssistantTurn(params: {
   history: HistoryMessage[];
+  extraContext?: string;
   conversationId?: string;
   messageId?: string;
   phone?: string;
-}): Promise<string> {
+}): Promise<AssistantTurn> {
   try {
-    const { text } = await generateText({
+    const result = await generateText({
       model: openai(process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
-      system: SYSTEM_PROMPT,
+      system: params.extraContext
+        ? `${SYSTEM_PROMPT}\n\nContexto adicional para este mensaje:\n${params.extraContext}`
+        : SYSTEM_PROMPT,
       messages: params.history.map((message) => ({
         role: message.role,
         content: message.content,
       })),
       temperature: 0.4,
+      output: Output.object({ schema: AssistantTurnSchema }),
     });
 
-    return text.trim();
+    const turn = result.output;
+    const reply = turn.reply.trim();
+
+    return {
+      ...turn,
+      reply: reply.length > 0 ? reply : FALLBACK_ASSISTANT_TURN.reply,
+    };
   } catch (error) {
-    console.error("openai generateText failed", error);
+    console.error("openai generate turn failed", error);
 
     await logSystemEvent({
       level: "critical",
@@ -782,33 +813,48 @@ async function generateAssistantReply(params: {
       },
     });
 
-    return "Gracias por escribirnos 😊 En este momento puedo ayudarte con información del curso. ¿Quieres saber el precio, ubicación o detalles del contenido?";
+    return FALLBACK_ASSISTANT_TURN;
   }
 }
 
-async function hasMediaAlreadySent(conversationId?: string): Promise<boolean> {
-  if (!conversationId) return false;
+async function hasMediaIntentBeenSent(
+  phone: string,
+  intent: MediaIntent,
+): Promise<boolean> {
+  if (!phone) return false;
 
   const supabase = getSupabaseClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("kapso_messages")
     .select("id")
-    .eq("kapso_conversation_id", conversationId)
-    .ilike("content", "[MEDIA_SENT]%")
-    .limit(1);
+    .eq("contact_phone", phone)
+    .eq("direction", "outbound");
+
+  // Dedup por teléfono + intent. Para course_flyer también contamos el marcador
+  // legacy "[MEDIA_SENT] ..." (sin intent) para no reenviar a quienes ya lo recibieron.
+  if (intent === "course_flyer") {
+    query = query.or(
+      'content.ilike."[MEDIA_SENT:course_flyer]%",content.ilike."[MEDIA_SENT] %"',
+    );
+  } else {
+    query = query.ilike("content", `[MEDIA_SENT:${intent}]%`);
+  }
+
+  const { data, error } = await query.limit(1);
 
   if (error) {
-    console.error("supabase check media already sent failed", error);
+    console.error("supabase check media intent sent failed", error);
 
     await logSystemEvent({
       level: "error",
       eventType: "supabase_media_check_failed",
-      conversationId,
+      contactPhone: phone,
       errorMessage: error.message,
       metadata: {
         code: error.code,
         details: error.details,
+        intent,
       },
     });
 
@@ -818,15 +864,14 @@ async function hasMediaAlreadySent(conversationId?: string): Promise<boolean> {
   return (data ?? []).length > 0;
 }
 
-async function getActiveMediaAssets(): Promise<MediaAsset[]> {
+async function getActiveMediaAssets(intent: MediaIntent): Promise<MediaAsset[]> {
   const supabase = getSupabaseClient();
 
   const { data, error } = await supabase
     .from("kapso_media_assets")
-    .select("title, url")
+    .select("title, url, media_type")
     .eq("business", "conecta-pro")
-    .eq("intent", "course_flyer")
-    .eq("media_type", "image")
+    .eq("intent", intent)
     .eq("is_active", true)
     .order("sort_order", { ascending: true });
 
@@ -840,6 +885,7 @@ async function getActiveMediaAssets(): Promise<MediaAsset[]> {
       metadata: {
         code: error.code,
         details: error.details,
+        intent,
       },
     });
 
@@ -848,8 +894,9 @@ async function getActiveMediaAssets(): Promise<MediaAsset[]> {
 
   return (data ?? [])
     .map((asset): MediaAsset => ({
-      title: String(asset.title ?? "Imagen enviada"),
+      title: String(asset.title ?? "Material enviado"),
       url: String(asset.url ?? ""),
+      mediaType: asset.media_type === "video" ? "video" : "image",
     }))
     .filter((asset) => asset.url.trim().length > 0);
 }
@@ -886,48 +933,100 @@ async function sendKapsoImage(params: {
   }
 }
 
-async function sendMediaAssetsIfNeeded(params: {
+async function sendKapsoVideo(params: {
+  phoneNumberId: string;
+  to: string;
+  videoUrl: string;
+  caption?: string;
+}) {
+  const response = await fetch(
+    `https://api.kapso.ai/meta/whatsapp/v24.0/${params.phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": getRequiredEnv("KAPSO_API_KEY"),
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: params.to,
+        type: "video",
+        video: {
+          link: params.videoUrl,
+          ...(params.caption ? { caption: params.caption } : {}),
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Kapso video send failed ${response.status}: ${body}`);
+  }
+}
+
+async function sendMediaForIntent(params: {
+  intent: MediaIntent;
   conversationId?: string;
   phone: string;
   phoneNumberId: string;
-}) {
-  const alreadySent = await hasMediaAlreadySent(params.conversationId);
-
-  if (alreadySent) {
-    console.log("media already sent for conversation", params.conversationId);
-    return;
+  force?: boolean;
+}): Promise<boolean> {
+  if (!params.force) {
+    const alreadySent = await hasMediaIntentBeenSent(params.phone, params.intent);
+    if (alreadySent) {
+      console.log(
+        "media intent already sent, skipping",
+        params.intent,
+        maskPhone(params.phone),
+      );
+      return false;
+    }
   }
 
-  const assets = await getActiveMediaAssets();
+  const assets = await getActiveMediaAssets(params.intent);
 
   if (assets.length === 0) {
-    console.log("no active media assets found");
-    return;
+    console.log("no active media assets found for intent", params.intent);
+    return false;
   }
+
+  let sentAny = false;
 
   for (const asset of assets) {
     try {
-      await sendKapsoImage({
-        phoneNumberId: params.phoneNumberId,
-        to: params.phone,
-        imageUrl: asset.url,
-      });
+      if (asset.mediaType === "video") {
+        await sendKapsoVideo({
+          phoneNumberId: params.phoneNumberId,
+          to: params.phone,
+          videoUrl: asset.url,
+          caption: asset.title,
+        });
+      } else {
+        await sendKapsoImage({
+          phoneNumberId: params.phoneNumberId,
+          to: params.phone,
+          imageUrl: asset.url,
+        });
+      }
 
       await saveOutboundMessage({
         conversationId: params.conversationId,
         phone: params.phone,
-        content: `[MEDIA_SENT] ${asset.title}`,
+        content: `[MEDIA_SENT:${params.intent}] ${asset.title}`,
         rawPayload: {
-          type: "image",
+          type: asset.mediaType,
+          intent: params.intent,
           title: asset.title,
           url: asset.url,
           source: "kapso_media_assets",
         },
       });
 
-      console.log("Kapso image sent successfully", asset.title);
+      sentAny = true;
+      console.log("Kapso media sent successfully", params.intent, asset.title);
     } catch (error) {
-      console.error("kapso image send/save failed", asset.title, error);
+      console.error("kapso media send/save failed", params.intent, asset.title, error);
 
       await logSystemEvent({
         level: "error",
@@ -936,12 +1035,15 @@ async function sendMediaAssetsIfNeeded(params: {
         contactPhone: params.phone,
         errorMessage: getErrorMessage(error),
         metadata: {
+          intent: params.intent,
           asset_title: asset.title,
           asset_url_present: Boolean(asset.url),
         },
       });
     }
   }
+
+  return sentAny;
 }
 
 export async function POST(request: Request) {
@@ -1156,18 +1258,25 @@ export async function POST(request: Request) {
 
   const history = await getRecentConversationHistory(lastMessage.conversationId, 12);
 
-  const locationResponse = detectLocationIntent(lastMessage.text)
-    ? buildLocationResponse()
-    : null;
+  // Si el último mensaje es una imagen, dale contexto al modelo: solo se trata
+  // como comprobante si ya se envió el QR de pago; si no, pedir contexto.
+  let extraContext: string | undefined;
+  if (lastMessage.isImage) {
+    const qrSent = await hasMediaIntentBeenSent(lastMessage.from, "payment_qr");
+    extraContext = qrSent
+      ? "El último mensaje del usuario es una IMAGEN y ya se le envió antes el QR de pago. Trátala como un posible comprobante: marca payment_confirmation=true y responde que verificaremos el pago y le confirmaremos su cupo. No la trates como pedido de otro material."
+      : "El último mensaje del usuario es una IMAGEN y todavía NO se le ha enviado el QR de pago. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle esa imagen y no marques payment_confirmation.";
+  }
 
-  const replyText = locationResponse
-    ? locationResponse.text
-    : await generateAssistantReply({
-        history,
-        conversationId: lastMessage.conversationId,
-        messageId: lastMessage.messageId,
-        phone: lastMessage.from,
-      });
+  const turn = await generateAssistantTurn({
+    history,
+    extraContext,
+    conversationId: lastMessage.conversationId,
+    messageId: lastMessage.messageId,
+    phone: lastMessage.from,
+  });
+
+  const replyText = turn.reply;
 
   try {
     await kapso.messages.sendText({
@@ -1196,55 +1305,33 @@ export async function POST(request: Request) {
     return new Response("send failed", { status: 502 });
   }
 
-  if (locationResponse && locationResponse.mapsUrl && locationResponse.videoUrl) {
-    try {
-      await kapso.messages.sendText({
-        phoneNumberId,
-        to: lastMessage.from,
-        body: locationResponse.mapsUrl,
-      });
+  const mediaConversationId =
+    lastMessage.conversationId ?? firstMessage.conversationId;
 
-      await saveOutboundMessage({
-        conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
-        phone: lastMessage.from,
-        content: `[LOCATION_MAPS] ${locationResponse.mapsUrl}`,
-        rawPayload: { type: "location_maps", url: locationResponse.mapsUrl },
-      });
+  // Conjunto de intents a enviar este turno, combinando la clasificación del LLM
+  // con reglas deterministas (saludo y reenvío explícito).
+  const intentsToSend = new Set<MediaIntent>();
+  const forcedIntents = new Set<MediaIntent>();
 
-      await kapso.messages.sendVideo({
-        phoneNumberId,
-        to: lastMessage.from,
-        video: {
-          link: locationResponse.videoUrl,
-          caption: "Referencia para llegar a Conecta Pro 📍",
-        },
-      });
+  if (turn.intents.course_flyer) intentsToSend.add("course_flyer");
+  if (turn.intents.location_video) intentsToSend.add("location_video");
+  if (turn.intents.payment_qr) intentsToSend.add("payment_qr");
+  if (turn.intents.service_packages) intentsToSend.add("service_packages");
 
-      await saveOutboundMessage({
-        conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
-        phone: lastMessage.from,
-        content: `[LOCATION_VIDEO] ${locationResponse.videoUrl}`,
-        rawPayload: { type: "location_video", url: locationResponse.videoUrl },
-      });
+  // Regla de saludo: en el primer saludo enviar el flyer del curso. El dedup por
+  // teléfono + intent evita reenviarlo si ya se mandó antes.
+  if (turn.is_greeting) intentsToSend.add("course_flyer");
 
-      console.log("Kapso location maps + video sent successfully");
-    } catch (error) {
-      console.error("kapso location media send failed", error);
-
-      await logSystemEvent({
-        level: "error",
-        eventType: "location_media_send_failed",
-        conversationId: lastMessage.conversationId,
-        messageId: lastMessage.messageId,
-        contactPhone: lastMessage.from,
-        errorMessage: getErrorMessage(error),
-      });
-    }
+  // Reenvío explícito: forzar (anular dedup) los intents detectados este turno.
+  if (turn.explicit_resend_request) {
+    for (const intent of intentsToSend) forcedIntents.add(intent);
   }
+
+  const sentIntents: MediaIntent[] = [];
 
   try {
     await saveOutboundMessage({
-      conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
+      conversationId: mediaConversationId,
       phone: lastMessage.from,
       content: replyText,
     });
@@ -1256,12 +1343,18 @@ export async function POST(request: Request) {
       responseText: replyText,
     });
 
-    if (!locationResponse) {
-      await sendMediaAssetsIfNeeded({
-        conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
+    for (const intent of MEDIA_SEND_ORDER) {
+      if (!intentsToSend.has(intent)) continue;
+
+      const sent = await sendMediaForIntent({
+        intent,
+        conversationId: mediaConversationId,
         phone: lastMessage.from,
         phoneNumberId,
+        force: forcedIntents.has(intent),
       });
+
+      if (sent) sentIntents.push(intent);
     }
   } catch (error) {
     console.error("supabase save outbound/lock/media threw", error);
@@ -1287,6 +1380,11 @@ export async function POST(request: Request) {
       incoming_messages_count: incomingMessages.length,
       reply_sent: true,
       media_check_done: true,
+      is_greeting: turn.is_greeting,
+      explicit_resend_request: turn.explicit_resend_request,
+      payment_confirmation: turn.payment_confirmation,
+      detected_intents: turn.intents,
+      sent_intents: sentIntents,
     },
   });
 
