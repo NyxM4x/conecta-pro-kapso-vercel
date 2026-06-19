@@ -89,8 +89,12 @@ Regla de urgencia comercial:
   evento, no por números de cupos.
 
 Guía por situación:
-- Saludo / primer contacto: responde breve y natural (ej. "¡hola! ¿en qué te puedo ayudar?"). NO listes
-  opciones ni hagas un menú — el sistema ya se encarga de enviar material relevante por separado.
+- Saludo / primer contacto: responde con un mensaje comercial completo de bienvenida — saluda con calidez,
+  menciona el curso ("Creación de contenido que vende sin tener muchos seguidores"), la fecha (domingo 21
+  de junio, 4:00 PM) y el precio de preventa (350 Bs), sumando la urgencia comercial de que sube a 450 Bs
+  el día del evento. Cierra invitando a preguntar dudas o a inscribirse. NO listes un menú de opciones ni
+  enumeres todos los servicios/paquetes — el sistema ya se encarga de enviar el flyer del curso por
+  separado (vía is_greeting, lógica existente de course_flyer, sin cambios).
 - Pregunta de precio: indica 350 Bs en preventa, y que desde el domingo 21 de junio (día del evento) el
   precio en puerta es 450 Bs. Súmale la urgencia comercial de arriba sin inventar cupos.
 - Pregunta de ubicación: comparte el link de Maps (texto plano, sin markdown) y menciona que también hay
@@ -1369,6 +1373,15 @@ export async function POST(request: Request) {
       `- payment_qr: ${mediaStatus.payment_qr ? "YA enviado antes" : "NUNCA enviado"}`,
       `- service_packages: ${mediaStatus.service_packages ? "YA enviado antes" : "NUNCA enviado"}`,
       "Confía en este estado (no en lo que infieras del historial de mensajes) para saber si algo ya se envió.",
+      ...(mediaStatus.payment_qr
+        ? ["Como payment_qr YA fue enviado: si el usuario vuelve a pedirlo o a insistir en inscribirse/pagar, menciona que ya le compartiste el QR anteriormente y enfoca tu respuesta en pedir/confirmar el comprobante de pago; no lo reenvíes salvo que lo pida explícitamente."]
+        : []),
+      ...(mediaStatus.location_video
+        ? ['Como location_video YA fue enviado: NO digas "también hay un video corto de cómo llegar" ni anuncies el video de nuevo. Asume que ya lo compartiste. Limita tu respuesta al link de Maps, salvo que el usuario pida el video explícitamente otra vez.']
+        : []),
+      ...(mediaStatus.service_packages
+        ? ["Como service_packages YA fue enviado: no presentes los servicios/paquetes como si fuera la primera vez. Responde asumiendo que ese material ya fue compartido antes, salvo que el usuario lo pida explícitamente de nuevo."]
+        : []),
     ].join("\n"),
   ];
 
