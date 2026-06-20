@@ -53,6 +53,13 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!phone) {
+      return Response.json(
+        { ok: false, error: "phone is required" },
+        { status: 400 },
+      );
+    }
+
     if (
       durationMinutes !== null &&
       (!Number.isFinite(durationMinutes) || durationMinutes <= 0)
@@ -65,6 +72,8 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseClient();
 
+    const nowIso = new Date().toISOString();
+
     const expiresAt =
       durationMinutes !== null
         ? new Date(Date.now() + durationMinutes * 60 * 1000).toISOString()
@@ -72,16 +81,20 @@ export async function POST(request: Request) {
 
     const { error } = await supabase
       .from("kapso_conversations")
-      .update({
-        bot_paused: true,
-        bot_paused_at: new Date().toISOString(),
-        bot_pause_expires_at: expiresAt,
-        bot_paused_reason: reason,
-        bot_pause_mode: "manual",
-        bot_pause_duration_minutes: durationMinutes,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("kapso_conversation_id", conversationId);
+      .upsert(
+        {
+          kapso_conversation_id: conversationId,
+          contact_phone: phone,
+          bot_paused: true,
+          bot_paused_at: nowIso,
+          bot_pause_expires_at: expiresAt,
+          bot_paused_reason: reason,
+          bot_pause_mode: "manual",
+          bot_pause_duration_minutes: durationMinutes,
+          updated_at: nowIso,
+        },
+        { onConflict: "kapso_conversation_id" },
+      );
 
     if (error) {
       return Response.json(
