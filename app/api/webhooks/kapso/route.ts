@@ -689,6 +689,7 @@ async function markReplyLockSent(params: {
 type BotPauseState = {
   paused: boolean;
   expired: boolean;
+  failed?: boolean;
   reason?: string | null;
   expiresAt?: string | null;
 };
@@ -720,7 +721,14 @@ async function getBotPauseState(conversationId?: string): Promise<BotPauseState>
       },
     });
 
-    return { paused: false, expired: false };
+    // Falla cerrada: si no se puede confirmar el estado real de pausa, se
+    // trata como pausado para no arriesgar responder durante una pausa real.
+    return {
+      paused: true,
+      expired: false,
+      failed: true,
+      reason: "pause_state_check_failed",
+    };
   }
 
   if (!data?.bot_paused) {
@@ -1323,6 +1331,27 @@ export async function POST(request: Request) {
   }
 
   const pauseState = await getBotPauseState(lastMessage.conversationId);
+
+  if (pauseState.failed) {
+    console.log("bot pause state check failed, skipping reply (fail-closed)", {
+      conversationId: lastMessage.conversationId,
+    });
+
+    await logSystemEvent({
+      level: "warning",
+      eventType: "bot_reply_skipped_pause_check_failed",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        reason: "pause_state_check_failed",
+      },
+    });
+
+    return new Response("pause state check failed, skipping reply", {
+      status: 200,
+    });
+  }
 
   if (pauseState.paused && !pauseState.expired) {
     console.log("bot paused, inbound saved but no reply sent", {
