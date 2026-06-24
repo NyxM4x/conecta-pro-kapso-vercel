@@ -49,12 +49,15 @@ Eres la asistente de WhatsApp de Conecta Pro. Hablas en nombre del equipo, en un
 y natural — como alguien del equipo respondiendo por WhatsApp, no como un bot formal. Trata al usuario de "tú".
 
 Información conocida:
-- Curso: "Creación de contenido que vende sin tener muchos seguidores" — se imparte como evento presencial
-  el domingo 21 de junio, 4:00 PM, duración aproximada 3 horas.
+- Curso: "Edición persuasiva en CapCut Pro" — se imparte como evento presencial el domingo 28 de junio,
+  4:00 PM, duración aproximada 3 horas.
 - Incluye certificado de participación y merienda.
-- Precio preventa: 350 Bs.
-- Precio en puerta: 450 Bs, desde el domingo 21 de junio (día del evento). También se puede pagar en
+- Precio preventa: 350 Bs (hasta el sábado 27 de junio).
+- Precio en puerta: 450 Bs, desde el domingo 28 de junio (día del evento). También se puede pagar en
   efectivo el día del evento.
+- Promoción del live: si el backend detecta que el usuario escribió una palabra clave de promoción
+  (PROMO/PROMOCIÓN + monto, ej. "PROMO300"), usa ese monto como precio especial en vez de 350/450 Bs
+  — el dato te llega confirmado en el contexto adicional, no lo infieras del texto.
 - Ubicación del curso/salón de eventos (link de Google Maps): https://maps.app.goo.gl/iHp3o6dUPSBzRydu7?g_st=ic
 - Ubicación de la oficina de Conecta Pro (link de Google Maps, distinta a la del curso): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
 - El curso enseña tipos de videos, algoritmo de TikTok, cómo convertir vistas en ventas, guiones y estrategias prácticas.
@@ -93,7 +96,7 @@ Regla de urgencia comercial:
 
 Guía por situación:
 - Saludo / primer contacto: responde con un mensaje comercial completo de bienvenida — saluda con calidez,
-  menciona el curso ("Creación de contenido que vende sin tener muchos seguidores"), la fecha (domingo 21
+  menciona el curso ("Edición persuasiva en CapCut Pro"), la fecha (domingo 28
   de junio, 4:00 PM) y el precio preventa (350 Bs), sumando urgencia genuina para que reserve su cupo
   aprovechando la preventa (ej. "aprovecha la preventa y reserva tu cupo"). NUNCA digas que el precio sube
   ni que aumenta el día del evento. Cierra invitando a preguntar dudas o a inscribirse. NO listes un menú
@@ -103,6 +106,11 @@ Guía por situación:
   del curso es de 450 Bs. NUNCA digas que el precio "sube" o "aumenta" — son dos modalidades de pago
   distintas, no un cambio de precio. Súmale la urgencia comercial de arriba (preventa, cupo) sin inventar
   cupos.
+- Si el backend confirma una promoción del live detectada (ver contexto adicional), usa ese monto como
+  precio especial en vez de 350/450 Bs. Si preguntan "¿hay descuento?" o "¿tiene promo?" y el backend NO
+  detectó ninguna palabra clave, responde que las promociones del live se activan escribiendo la palabra
+  clave indicada durante la transmisión, y que sin esa palabra clave aplica el precio normal. NUNCA
+  inventes un monto de promo por tu cuenta.
 - Pregunta de ubicación ("ubicación", "dónde es", "dónde será el curso", "dónde queda", "cómo
   llego", sin mencionar la oficina explícitamente): es la ubicación del curso/salón de eventos,
   NUNCA la de la oficina. Responde SIEMPRE con este formato exacto, sin omitir el link y sin
@@ -136,7 +144,7 @@ Guía por situación:
 
   🚨 *ATENCIÓN – ATENCIÓN* 🚨
 
-  Quienes paguen el *curso de Creación de Contenido* deben enviar su comprobante de pago por este mismo
+  Quienes paguen el *curso de Edición* deben enviar su comprobante de pago por este mismo
   WhatsApp.
 
   📌 Enviar junto con:
@@ -155,11 +163,19 @@ Guía por situación:
 - Si pregunta si puede pagar en efectivo ("¿puedo pagar en efectivo?"): "Sí 😊. También puedes pagar en
   efectivo el día del curso. El pago en puerta/presencial el día del curso es de 450 Bs." Esto es
   informativo — no marques intents.payment_qr solo por esta pregunta.
-- Comprobante de pago (dice "ya pagué" o envía una imagen como comprobante, después de habérsele
-  compartido el QR): responde con un mensaje breve y cálido en esta línea: "¡Gracias por el comprobante!
-  😊 Vamos a verificar el pago y te confirmaremos tu cupo pronto." NUNCA digas que el cupo ya quedó
-  confirmado solo por enviar el comprobante, ni que lo vas a pasar con un humano o un agente. La
-  confirmación llega por este mismo chat cuando el equipo la haga.
+- Comprobante de pago: SOLO trátalo como confirmación de pago si el contexto adicional del backend te lo
+  confirma — (a) el mensaje actual es una imagen o PDF Y ya se compartió el QR antes, o (b) el texto usa
+  explícitamente "comprobante", "ya pagué" o "realicé el pago". En ese caso responde con un mensaje breve
+  y cálido: "¡Gracias por el comprobante! 😊 Vamos a verificar el pago y te confirmaremos tu cupo pronto."
+  NUNCA digas que el cupo ya quedó confirmado solo por el mensaje, ni que lo vas a pasar con un humano o
+  un agente. La confirmación llega por este mismo chat cuando el equipo la haga.
+- Frases vagas de envío sin archivo adjunto ("ya mandé", "ya pasé", "ya envié"): el backend te avisará en
+  el contexto adicional cuando esto ocurra. NO son comprobante por sí solas — NO marques
+  payment_confirmation ni agradezcas el comprobante. Pide con amabilidad que envíe la imagen o el PDF del
+  comprobante, o que lo confirme con la palabra "comprobante" si ya lo había mandado antes.
+- Si el contexto adicional indica que ya se le agradeció el comprobante antes en esta conversación, NO
+  repitas la plantilla de agradecimiento. Si insiste, responde algo breve como "Ya lo tenemos en revisión,
+  en breve te confirmamos tu cupo 😊".
 - Pregunta por servicios/paquetes ("paquetes", "planes", "edición", "grabación", "dron", u otros): cuenta
   con entusiasmo que Conecta Pro también ofrece otros servicios y paquetes, mencionando los que conoces
   (edición y grabación de contenido, paquete con dron) sin cerrar la lista a solo esos.
@@ -169,7 +185,9 @@ Clasificación (campos booleanos). Marca solo lo que corresponda al ÚLTIMO mens
 - explicit_resend_request: true si pide explícitamente reenviar material ("mándame de nuevo", "no me llegó",
   "no puedo verlo", "reenvíame el QR", "pásame otra vez el QR", "se borró el QR", "manda otra vez la
   imagen/flyer/video").
-- payment_confirmation: true si dice que ya pagó o que adjunta/envía un comprobante.
+- payment_confirmation: true SOLO si el contexto adicional del backend confirma que el mensaje actual es
+  un comprobante válido (imagen/PDF tras QR, o frase explícita de pago). No lo marques solo por frases
+  vagas como "ya mandé"/"ya pasé"/"ya envié" sin esa confirmación del backend.
 - intents.course_flyer: true si pide información, detalles, contenido, imágenes o flyer del curso.
 - intents.location_video: true si pide ubicación, dirección, cómo llegar o mapa DEL CURSO/salón
   de eventos. FALSE si la pregunta es explícitamente sobre la oficina de Conecta Pro (ej. "dónde
@@ -1032,6 +1050,61 @@ async function getMediaSentStatus(
   return status;
 }
 
+// Quita acentos/diacríticos y pasa a mayúsculas, para que las regex de
+// detección no dependan de cómo el usuario tildó las palabras (é/e, ó/o, etc.).
+function normalizeForMatch(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase();
+}
+
+const PROMO_REGEX = /\bPROMO(?:CION)?\s*(?:DE\s*)?(\d{2,4})(?!\d)/;
+
+function detectPromoAmount(text: string): number | null {
+  if (!text) return null;
+
+  const match = normalizeForMatch(text).match(PROMO_REGEX);
+  return match ? Number(match[1]) : null;
+}
+
+const EXPLICIT_PAYMENT_PHRASES =
+  /\b(COMPROBANTE|YA PAGUE|REALICE EL PAGO|HICE EL PAGO|PAGO REALIZADO)\b/;
+const VAGUE_SEND_PHRASES = /\b(YA MANDE|YA PASE|YA ENVIE)\b/;
+
+async function hasPaymentBeenAcknowledged(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "%Gracias por el comprobante%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check payment acknowledged failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "supabase_payment_ack_check_failed",
+      conversationId,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+      },
+    });
+
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
 async function getActiveMediaAssets(intent: MediaIntent): Promise<MediaAsset[]> {
   const supabase = getSupabaseClient();
 
@@ -1445,10 +1518,35 @@ export async function POST(request: Request) {
     }
   }
 
-  const [history, mediaStatus] = await Promise.all([
+  const [history, mediaStatus, paymentAcknowledged] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
+    hasPaymentBeenAcknowledged(lastMessage.conversationId),
   ]);
+
+  // Monto de promoción del live (PROMO[monto]): primero se revisa el mensaje
+  // actual; si no hay match, se busca la mención más reciente dentro de la
+  // ventana de historial ya cargada (sin queries adicionales).
+  let promoAmount = detectPromoAmount(lastMessage.text);
+  if (promoAmount == null) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const candidate = history[i];
+      if (candidate.role !== "user") continue;
+      const amount = detectPromoAmount(candidate.content);
+      if (amount != null) {
+        promoAmount = amount;
+        break;
+      }
+    }
+  }
+
+  const normalizedLastMessageText = normalizeForMatch(lastMessage.text);
+  const hasExplicitPaymentPhrase = EXPLICIT_PAYMENT_PHRASES.test(normalizedLastMessageText);
+  const hasVagueSendPhraseOnly =
+    VAGUE_SEND_PHRASES.test(normalizedLastMessageText) &&
+    !lastMessage.isImage &&
+    !lastMessage.isDocument &&
+    !hasExplicitPaymentPhrase;
 
   // Estado real (ground truth del backend) de qué ya se envió a este teléfono.
   // Reemplaza la inferencia del LLM sobre el historial de texto.
@@ -1472,15 +1570,36 @@ export async function POST(request: Request) {
     ].join("\n"),
   ];
 
-  // Si el último mensaje es una imagen o documento/PDF, dale contexto al
-  // modelo: solo se trata como comprobante si ya se envió el QR de pago;
-  // si no, pedir contexto.
+  contextParts.push(
+    promoAmount != null
+      ? `Promoción del live detectada: el usuario escribió la palabra clave de promoción y el monto detectado es ${promoAmount} Bs. Usa ${promoAmount} Bs como precio especial de inscripción/pago en esta conversación en vez del precio normal (350/450 Bs).`
+      : "No se detectó ninguna palabra clave de promoción (PROMO/PROMOCIÓN + monto) en este mensaje ni en el historial reciente. Si preguntan por descuento o promo, indica que las promociones del live se activan con la palabra clave indicada en la transmisión, sin inventar un monto.",
+  );
+
+  // Comprobante de pago: solo se trata como confirmación válida si (a) es
+  // imagen/PDF y ya se envió el QR antes, o (b) el texto usa una frase
+  // explícita de pago. Frases vagas ("ya mandé/pasé/envié") sin archivo NO
+  // cuentan como comprobante.
   if (lastMessage.isImage || lastMessage.isDocument) {
     const mediaLabel = lastMessage.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
     contextParts.push(
       mediaStatus.payment_qr
         ? `El último mensaje del usuario es ${mediaLabel} y ya se le envió antes el QR de pago. Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Vamos a verificar el pago y te confirmaremos tu cupo pronto." No lo trates como pedido de otro material.`
         : `El último mensaje del usuario es ${mediaLabel} y todavía NO se le ha enviado el QR de pago. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
+    );
+  } else if (hasExplicitPaymentPhrase) {
+    contextParts.push(
+      'El último mensaje del usuario usa una frase explícita de confirmación de pago ("comprobante", "ya pagué", "realicé el pago" o similar). Puedes marcar payment_confirmation=true si corresponde según el resto de la conversación.',
+    );
+  } else if (hasVagueSendPhraseOnly) {
+    contextParts.push(
+      'El último mensaje del usuario dice algo como "ya mandé"/"ya pasé"/"ya envié" pero SIN adjuntar imagen/PDF y SIN una frase explícita de pago. NO marques payment_confirmation. Pide con amabilidad que envíe la imagen o el PDF del comprobante, o que lo confirme con la palabra "comprobante" si ya lo había mandado antes.',
+    );
+  }
+
+  if (paymentAcknowledged) {
+    contextParts.push(
+      'Ya se le agradeció el comprobante de pago anteriormente en esta conversación (el backend ya tiene una respuesta con "Gracias por el comprobante" guardada). NO repitas esa plantilla de agradecimiento; si insiste, responde algo breve como "Ya lo tenemos en revisión, en breve te confirmamos tu cupo 😊".',
     );
   }
 
