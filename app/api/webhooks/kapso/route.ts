@@ -587,10 +587,12 @@ async function saveContactAndConversation(message: IncomingMessage) {
   }
 }
 
-async function saveInboundMessage(message: IncomingMessage): Promise<boolean> {
+async function saveInboundMessage(
+  message: IncomingMessage,
+): Promise<{ saved: boolean; createdAt: string | null }> {
   const supabase = getSupabaseClient();
 
-  const { error: messageError } = await supabase
+  const { data, error: messageError } = await supabase
     .from("kapso_messages")
     .insert({
       kapso_message_id: message.messageId,
@@ -602,12 +604,14 @@ async function saveInboundMessage(message: IncomingMessage): Promise<boolean> {
       message_timestamp: message.messageTimestamp,
       batch_index: message.batchIndex ?? null,
       raw_payload: message.raw,
-    });
+    })
+    .select("created_at")
+    .single();
 
   if (messageError) {
     if (messageError.code === "23505") {
       console.log("duplicate inbound message ignored", message.messageId);
-      return false;
+      return { saved: false, createdAt: null };
     }
 
     console.error("supabase insert kapso_messages inbound failed", messageError);
@@ -626,10 +630,10 @@ async function saveInboundMessage(message: IncomingMessage): Promise<boolean> {
       },
     });
 
-    return false;
+    return { saved: false, createdAt: null };
   }
 
-  return true;
+  return { saved: true, createdAt: data?.created_at ?? null };
 }
 
 async function saveOutboundMessage(params: {
@@ -888,6 +892,40 @@ async function getRecentConversationHistory(
     // Excluir marcadores internos ([MEDIA_SENT...], [LOCATION_...]) para no
     // ensuciar el contexto del LLM; el estado de "ya enviado" lo resuelve el dedup.
     .filter((message) => !/^\[(MEDIA_SENT|LOCATION_)/.test(message.content.trim()));
+}
+
+async function getNewestInboundMessage(
+  conversationId: string | undefined,
+  excludeMessageId: string | undefined,
+  afterCreatedAt: string | null,
+): Promise<{ kapso_message_id: string | null; created_at: string | null } | null> {
+  if (!conversationId) return null;
+
+  const supabase = getSupabaseClient();
+
+  let query = supabase
+    .from("kapso_messages")
+    .select("kapso_message_id, created_at")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "inbound")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (excludeMessageId) {
+    query = query.neq("kapso_message_id", excludeMessageId);
+  }
+  if (afterCreatedAt) {
+    query = query.gt("created_at", afterCreatedAt);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    console.error("supabase select newest inbound failed", error);
+    return null;
+  }
+
+  return data ?? null;
 }
 
 const AssistantTurnSchema = z.object({
@@ -1455,11 +1493,15 @@ export async function POST(request: Request) {
   }
 
   const newMessages: IncomingMessage[] = [];
+  let lastMessageCreatedAt: string | null = null;
 
   for (const message of incomingMessages) {
     try {
-      const saved = await saveInboundMessage(message);
-      if (saved) newMessages.push(message);
+      const { saved, createdAt } = await saveInboundMessage(message);
+      if (saved) {
+        newMessages.push(message);
+        if (message === lastMessage) lastMessageCreatedAt = createdAt;
+      }
     } catch (error) {
       console.error("supabase save inbound threw", error);
 
@@ -1669,6 +1711,42 @@ export async function POST(request: Request) {
 
   const extraContext = contextParts.join("\n\n");
 
+  const newerInbound = await getNewestInboundMessage(
+    lastMessage.conversationId,
+    lastMessage.messageId,
+    lastMessageCreatedAt,
+  );
+
+  if (newerInbound) {
+    await logSystemEvent({
+      level: "info",
+      eventType: "bot_reply_skipped_newer_inbound",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        current_kapso_message_id: lastMessage.messageId ?? null,
+        current_created_at: lastMessageCreatedAt,
+        newer_kapso_message_id: newerInbound.kapso_message_id,
+        newer_created_at: newerInbound.created_at,
+      },
+    });
+
+    return new Response("newer inbound message exists, skipping stale reply", {
+      status: 200,
+    });
+  }
+
+  await logSystemEvent({
+    level: "info",
+    eventType: "assistant_generation_started",
+    conversationId: lastMessage.conversationId,
+    messageId: lastMessage.messageId,
+    contactPhone: lastMessage.from,
+  });
+
+  const generationStartedAt = Date.now();
+
   const turn = await generateAssistantTurn({
     history,
     extraContext,
@@ -1687,6 +1765,17 @@ export async function POST(request: Request) {
     });
 
     console.log("Kapso SDK text sent successfully");
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "reply_sent",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        duration_ms: Date.now() - generationStartedAt,
+      },
+    });
   } catch (error) {
     console.error("kapso sendText failed", error);
 
