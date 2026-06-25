@@ -55,9 +55,12 @@ Información conocida:
 - Precio preventa: 350 Bs (hasta el sábado 27 de junio).
 - Precio en puerta: 450 Bs, desde el domingo 28 de junio (día del evento). También se puede pagar en
   efectivo el día del evento.
-- Promoción del live: si el backend detecta que el usuario escribió una palabra clave de promoción
-  (PROMO/PROMOCIÓN + monto, ej. "PROMO300"), usa ese monto como precio especial en vez de 350/450 Bs
-  — el dato te llega confirmado en el contexto adicional, no lo infieras del texto.
+- Promoción del live: si el backend detecta que el usuario escribió la palabra clave de promoción
+  (PROMO/PROMOCIÓN + un número, ej. "PROMO300", "PROMOO350" — se tolera typos comunes) y la promo
+  está vigente, el backend te confirma en el contexto adicional el monto OFICIAL. Ese monto oficial es
+  el único precio especial válido — el número que el usuario haya escrito (ej. "PROMO300") NUNCA define
+  el precio, solo dispara la detección. Si el backend detecta la palabra clave pero indica que la promo
+  NO está vigente, no hay descuento: aplica el precio normal (350/450 Bs).
 - Ubicación del curso/salón de eventos (link de Google Maps): https://maps.app.goo.gl/iHp3o6dUPSBzRydu7?g_st=ic
 - Ubicación de la oficina de Conecta Pro (link de Google Maps, distinta a la del curso): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
 - El curso enseña tipos de videos, algoritmo de TikTok, cómo convertir vistas en ventas, guiones y estrategias prácticas.
@@ -106,11 +109,16 @@ Guía por situación:
   del curso es de 450 Bs. NUNCA digas que el precio "sube" o "aumenta" — son dos modalidades de pago
   distintas, no un cambio de precio. Súmale la urgencia comercial de arriba (preventa, cupo) sin inventar
   cupos.
-- Si el backend confirma una promoción del live detectada (ver contexto adicional), usa ese monto como
-  precio especial en vez de 350/450 Bs. Si preguntan "¿hay descuento?" o "¿tiene promo?" y el backend NO
-  detectó ninguna palabra clave, responde que las promociones del live se activan escribiendo la palabra
-  clave indicada durante la transmisión, y que sin esa palabra clave aplica el precio normal. NUNCA
-  inventes un monto de promo por tu cuenta.
+- Pregunta de precio con promo del live — sigue lo que confirme el contexto adicional:
+  (1) Promo detectada y VIGENTE: usa el monto OFICIAL del contexto (nunca el número que escribió el
+      usuario) como precio especial en vez de 350/450 Bs.
+  (2) Promo detectada pero NO VIGENTE: dile con amabilidad que ahora mismo no hay promo vigente y dale
+      el precio normal (350 Bs preventa / 450 Bs en puerta). NUNCA ofrezcas el monto que escribió el
+      usuario en este caso.
+  (3) Ninguna palabra clave detectada: si preguntan "¿hay descuento?" o "¿tiene promo?", responde que
+      las promociones del live se activan escribiendo la palabra clave durante la transmisión, y que
+      sin ella aplica el precio normal.
+  En todos los casos, NUNCA inventes ni confirmes un monto de promo por tu cuenta.
 - Pregunta de ubicación ("ubicación", "dónde es", "dónde será el curso", "dónde queda", "cómo
   llego", sin mencionar la oficina explícitamente): es la ubicación del curso/salón de eventos,
   NUNCA la de la oficina. Responde SIEMPRE con este formato exacto, sin omitir el link y sin
@@ -1059,14 +1067,59 @@ function normalizeForMatch(text: string): string {
     .toUpperCase();
 }
 
-const PROMO_REGEX = /\bPROMO(?:CION)?\s*(?:DE\s*)?(\d{2,4})(?!\d)/;
+// Distancia de edición clásica (Levenshtein), sin dependencias externas.
+function levenshteinDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
 
-function detectPromoAmount(text: string): number | null {
-  if (!text) return null;
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
 
-  const match = normalizeForMatch(text).match(PROMO_REGEX);
-  return match ? Number(match[1]) : null;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  return dp[m][n];
 }
+
+// Palabra candidata (solo letras) pegada o seguida de "DE"/espacios y un
+// número de 2-4 dígitos. Ej: "PROMO300", "PROMO 300", "PROMO DE 300",
+// "PRMO350", "PROMOO350".
+const PROMO_CANDIDATE_REGEX = /\b([A-Z]{4,10})\s*(?:DE\s*)?(\d{2,4})(?!\d)/;
+
+const PROMO_KEYWORD_MAX_DISTANCE = 1; // tolerancia contra "PROMO" (5 letras)
+const PROMOCION_KEYWORD_MAX_DISTANCE = 2; // tolerancia contra "PROMOCION" (9 letras)
+
+// Detecta si el usuario escribió la palabra clave de promoción (tolerando
+// typos comunes) seguida de un número. El número detectado NUNCA se usa
+// como precio — solo dispara la detección (ver PRECIO_PROMO_LIVE).
+function detectPromoKeyword(text: string): boolean {
+  if (!text) return false;
+
+  const match = normalizeForMatch(text).match(PROMO_CANDIDATE_REGEX);
+  if (!match) return false;
+
+  const word = match[1];
+  return (
+    levenshteinDistance(word, "PROMO") <= PROMO_KEYWORD_MAX_DISTANCE ||
+    levenshteinDistance(word, "PROMOCION") <= PROMOCION_KEYWORD_MAX_DISTANCE
+  );
+}
+
+// --- Toggle manual de la promo del live ---------------------------------
+// Valores fijos en código a propósito (sin env var, sin columna en BD): el
+// equipo los cambia a mano aquí antes/durante cada transmisión live.
+// PROMO_LIVE_ACTIVA: false desactiva la promo aunque se detecte la palabra clave.
+// PRECIO_PROMO_LIVE: monto oficial (Bs) cuando la promo está activa — ignora
+// el número que haya escrito el usuario.
+const PROMO_LIVE_ACTIVA = true;
+const PRECIO_PROMO_LIVE = 350;
 
 const EXPLICIT_PAYMENT_PHRASES =
   /\b(COMPROBANTE|YA PAGUE|REALICE EL PAGO|HICE EL PAGO|PAGO REALIZADO)\b/;
@@ -1524,17 +1577,19 @@ export async function POST(request: Request) {
     hasPaymentBeenAcknowledged(lastMessage.conversationId),
   ]);
 
-  // Monto de promoción del live (PROMO[monto]): primero se revisa el mensaje
-  // actual; si no hay match, se busca la mención más reciente dentro de la
-  // ventana de historial ya cargada (sin queries adicionales).
-  let promoAmount = detectPromoAmount(lastMessage.text);
-  if (promoAmount == null) {
+  // Palabra clave de promoción del live (PROMO[monto]/PROMOCION[monto], con
+  // tolerancia a typos): primero se revisa el mensaje actual; si no hay
+  // match, se busca la mención más reciente dentro de la ventana de
+  // historial ya cargada (sin queries adicionales). El monto que escriba el
+  // usuario NUNCA define el precio final — solo dispara la detección; el
+  // precio oficial sale de PRECIO_PROMO_LIVE cuando PROMO_LIVE_ACTIVA = true.
+  let promoKeywordDetected = detectPromoKeyword(lastMessage.text);
+  if (!promoKeywordDetected) {
     for (let i = history.length - 1; i >= 0; i--) {
       const candidate = history[i];
       if (candidate.role !== "user") continue;
-      const amount = detectPromoAmount(candidate.content);
-      if (amount != null) {
-        promoAmount = amount;
+      if (detectPromoKeyword(candidate.content)) {
+        promoKeywordDetected = true;
         break;
       }
     }
@@ -1571,8 +1626,10 @@ export async function POST(request: Request) {
   ];
 
   contextParts.push(
-    promoAmount != null
-      ? `Promoción del live detectada: el usuario escribió la palabra clave de promoción y el monto detectado es ${promoAmount} Bs. Usa ${promoAmount} Bs como precio especial de inscripción/pago en esta conversación en vez del precio normal (350/450 Bs).`
+    promoKeywordDetected
+      ? PROMO_LIVE_ACTIVA
+        ? `Promoción del live detectada y VIGENTE: el usuario escribió la palabra clave de promoción. El precio oficial de la promo en este momento es ${PRECIO_PROMO_LIVE} Bs (este es el único monto válido, sin importar qué número haya escrito el usuario). Usa ${PRECIO_PROMO_LIVE} Bs como precio especial de inscripción/pago en esta conversación en vez del precio normal (350/450 Bs).`
+        : `Promoción del live detectada pero NO VIGENTE en este momento: el usuario escribió la palabra clave de promoción, pero la promo está desactivada actualmente. NO ofrezcas ningún descuento. Indica con amabilidad que ahora mismo no hay promoción activa y que aplica el precio normal (350 Bs preventa / 450 Bs en puerta).`
       : "No se detectó ninguna palabra clave de promoción (PROMO/PROMOCIÓN + monto) en este mensaje ni en el historial reciente. Si preguntan por descuento o promo, indica que las promociones del live se activan con la palabra clave indicada en la transmisión, sin inventar un monto.",
   );
 
