@@ -55,12 +55,13 @@ Información conocida:
 - Precio preventa: 350 Bs (hasta el sábado 27 de junio).
 - Precio en puerta: 450 Bs, desde el domingo 28 de junio (día del evento). También se puede pagar en
   efectivo el día del evento.
-- Promoción del live: si el backend detecta que el usuario escribió la palabra clave de promoción
-  (PROMO/PROMOCIÓN + un número, ej. "PROMO300", "PROMOO350" — se tolera typos comunes) y la promo
-  está vigente, el backend te confirma en el contexto adicional el monto OFICIAL. Ese monto oficial es
-  el único precio especial válido — el número que el usuario haya escrito (ej. "PROMO300") NUNCA define
-  el precio, solo dispara la detección. Si el backend detecta la palabra clave pero indica que la promo
-  NO está vigente, no hay descuento: aplica el precio normal (350/450 Bs).
+- Promoción del live: el backend controla si la promo está activa o no. Si está VIGENTE y detecta que el
+  usuario escribió la palabra clave de promoción (PROMO/PROMOCIÓN + un número, ej. "PROMO300",
+  "PROMOO350" — se tolera typos comunes), te confirma en el contexto adicional el monto OFICIAL — ese
+  es el único precio especial válido, el número que escriba el usuario (ej. "PROMO300") NUNCA lo define.
+  Si la promo está DESACTIVADA, el contexto adicional te lo indica y en ese caso NUNCA menciones
+  promociones, la palabra clave ni el live en tu respuesta — responde siempre con el precio normal
+  (350/450 Bs), sin importar lo que haya escrito o preguntado el usuario.
 - Ubicación del curso/salón de eventos (link de Google Maps): https://maps.app.goo.gl/iHp3o6dUPSBzRydu7?g_st=ic
 - Ubicación de la oficina de Conecta Pro (link de Google Maps, distinta a la del curso): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
 - El curso enseña tipos de videos, algoritmo de TikTok, cómo convertir vistas en ventas, guiones y estrategias prácticas.
@@ -110,14 +111,14 @@ Guía por situación:
   distintas, no un cambio de precio. Súmale la urgencia comercial de arriba (preventa, cupo) sin inventar
   cupos.
 - Pregunta de precio con promo del live — sigue lo que confirme el contexto adicional:
-  (1) Promo detectada y VIGENTE: usa el monto OFICIAL del contexto (nunca el número que escribió el
+  (1) Promo VIGENTE y detectada: usa el monto OFICIAL del contexto (nunca el número que escribió el
       usuario) como precio especial en vez de 350/450 Bs.
-  (2) Promo detectada pero NO VIGENTE: dile con amabilidad que ahora mismo no hay promo vigente y dale
-      el precio normal (350 Bs preventa / 450 Bs en puerta). NUNCA ofrezcas el monto que escribió el
-      usuario en este caso.
-  (3) Ninguna palabra clave detectada: si preguntan "¿hay descuento?" o "¿tiene promo?", responde que
+  (2) Promo VIGENTE pero no detectada: si preguntan "¿hay descuento?" o "¿tiene promo?", responde que
       las promociones del live se activan escribiendo la palabra clave durante la transmisión, y que
       sin ella aplica el precio normal.
+  (3) Promo DESACTIVADA (el contexto adicional te lo indica): responde SOLO con el precio normal (350 Bs
+      preventa / 450 Bs en puerta), sin mencionar promociones, palabra clave ni el live, aunque el
+      usuario pregunte por descuentos o escriba algo parecido a la palabra clave de promo.
   En todos los casos, NUNCA inventes ni confirmes un monto de promo por tu cuenta.
 - Pregunta de ubicación ("ubicación", "dónde es", "dónde será el curso", "dónde queda", "cómo
   llego", sin mencionar la oficina explícitamente): es la ubicación del curso/salón de eventos,
@@ -177,10 +178,13 @@ Guía por situación:
   y cálido: "¡Gracias por el comprobante! 😊 Vamos a verificar el pago y te confirmaremos tu cupo pronto."
   NUNCA digas que el cupo ya quedó confirmado solo por el mensaje, ni que lo vas a pasar con un humano o
   un agente. La confirmación llega por este mismo chat cuando el equipo la haga.
-- Frases vagas de envío sin archivo adjunto ("ya mandé", "ya pasé", "ya envié"): el backend te avisará en
-  el contexto adicional cuando esto ocurra. NO son comprobante por sí solas — NO marques
-  payment_confirmation ni agradezcas el comprobante. Pide con amabilidad que envíe la imagen o el PDF del
-  comprobante, o que lo confirme con la palabra "comprobante" si ya lo había mandado antes.
+- Frases vagas de envío sin archivo adjunto ("ya mandé"/"ya mande", "ya pasé"/"ya pase",
+  "ya envié"/"ya envie"): el backend te avisará en el contexto adicional cuando esto ocurra. NO son
+  comprobante por sí solas — NO marques payment_confirmation y NUNCA digas "gracias por el comprobante"
+  ni nada que suene a que ya recibiste o verificaste un archivo. Responde solo pidiendo con amabilidad
+  que envíe la imagen o el PDF del comprobante (ej. "Para confirmar tu pago necesito que me envíes la
+  imagen o el PDF de tu comprobante 😊"), o que lo confirme con la palabra "comprobante" si ya lo había
+  mandado antes.
 - Si el contexto adicional indica que ya se le agradeció el comprobante antes en esta conversación, NO
   repitas la plantilla de agradecimiento. Si insiste, responde algo breve como "Ya lo tenemos en revisión,
   en breve te confirmamos tu cupo 😊".
@@ -1626,11 +1630,11 @@ export async function POST(request: Request) {
   ];
 
   contextParts.push(
-    promoKeywordDetected
-      ? PROMO_LIVE_ACTIVA
+    PROMO_LIVE_ACTIVA
+      ? promoKeywordDetected
         ? `Promoción del live detectada y VIGENTE: el usuario escribió la palabra clave de promoción. El precio oficial de la promo en este momento es ${PRECIO_PROMO_LIVE} Bs (este es el único monto válido, sin importar qué número haya escrito el usuario). Usa ${PRECIO_PROMO_LIVE} Bs como precio especial de inscripción/pago en esta conversación en vez del precio normal (350/450 Bs).`
-        : `Promoción del live detectada pero NO VIGENTE en este momento: el usuario escribió la palabra clave de promoción, pero la promo está desactivada actualmente. NO ofrezcas ningún descuento. Indica con amabilidad que ahora mismo no hay promoción activa y que aplica el precio normal (350 Bs preventa / 450 Bs en puerta).`
-      : "No se detectó ninguna palabra clave de promoción (PROMO/PROMOCIÓN + monto) en este mensaje ni en el historial reciente. Si preguntan por descuento o promo, indica que las promociones del live se activan con la palabra clave indicada en la transmisión, sin inventar un monto.",
+        : "No se detectó ninguna palabra clave de promoción (PROMO/PROMOCIÓN + monto) en este mensaje ni en el historial reciente. Si preguntan por descuento o promo, indica que las promociones del live se activan con la palabra clave indicada en la transmisión, sin inventar un monto."
+      : "La promoción del live está DESACTIVADA en este momento. NO menciones ninguna promoción, palabra clave, transmisión live ni cómo se activan promociones en tu respuesta, aunque el usuario pregunte por descuentos/promos o escriba algo parecido a una palabra clave de promo con un número. Responde SIEMPRE solo con el precio normal: 350 Bs en preventa (hasta el sábado 27 de junio) y 450 Bs en puerta/domingo.",
   );
 
   // Comprobante de pago: solo se trata como confirmación válida si (a) es
@@ -1650,7 +1654,7 @@ export async function POST(request: Request) {
     );
   } else if (hasVagueSendPhraseOnly) {
     contextParts.push(
-      'El último mensaje del usuario dice algo como "ya mandé"/"ya pasé"/"ya envié" pero SIN adjuntar imagen/PDF y SIN una frase explícita de pago. NO marques payment_confirmation. Pide con amabilidad que envíe la imagen o el PDF del comprobante, o que lo confirme con la palabra "comprobante" si ya lo había mandado antes.',
+      'El último mensaje del usuario dice algo como "ya mandé"/"ya mande"/"ya pasé"/"ya pase"/"ya envié"/"ya envie" pero SIN adjuntar imagen/PDF/documento y SIN una frase explícita de pago ("comprobante", "ya pagué", "realicé el pago", "hice el pago"). Esto NO es un comprobante. NO marques payment_confirmation y NO digas "gracias por el comprobante" ni nada que suene a que ya recibiste o verificaste un archivo. Responde pidiendo con amabilidad que envíe la imagen o el PDF del comprobante, por ejemplo: "Para confirmar tu pago necesito que me envíes la imagen o el PDF de tu comprobante 😊."',
     );
   }
 
