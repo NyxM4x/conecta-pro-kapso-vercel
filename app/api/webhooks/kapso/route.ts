@@ -65,6 +65,10 @@ Información conocida:
 - Ubicación de la oficina de Conecta Pro (link de Google Maps, distinta a la del curso): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
 - El curso enseña tipos de videos, algoritmo de TikTok, cómo convertir vistas en ventas, guiones y estrategias prácticas.
 - También se ofrecen otros servicios y paquetes (por ejemplo, edición y grabación de contenido, paquete con dron, entre otros que el equipo puede ir sumando).
+- Promo temporal e independiente del curso: edición de UN video puntual por 50 Bs, solo por unos días
+  (sin fecha de vencimiento exacta — nunca la inventes ni la menciones). La atiende directamente un
+  editor externo por WhatsApp: +591 74271406. Esta promo NO es el curso, NO es parte de los paquetes
+  de producción/servicios continuos, y NO usa el QR ni el flujo de inscripción del curso.
 
 Tu tarea es responder dudas sobre los cursos y servicios de Conecta Pro, y clasificar la intención del último
 mensaje del usuario para decidir qué material multimedia corresponde enviar.
@@ -196,6 +200,24 @@ Guía por situación:
 - Pregunta por servicios/paquetes ("paquetes", "planes", "edición", "grabación", "dron", u otros): cuenta
   con entusiasmo que Conecta Pro también ofrece otros servicios y paquetes, mencionando los que conoces
   (edición y grabación de contenido, paquete con dron) sin cerrar la lista a solo esos.
+  Si la pregunta es sobre paquetes/producción en general (grabación, dron, contenido para redes, reels,
+  contenido para negocio) — NO sobre editar un video puntual propio —, agrega siempre al final de tu
+  respuesta, tal cual: "También tenemos una promo de edición de video por 50 Bs, solo por unos días.
+  Para más información puedes comunicarte con nuestro editor: +591 74271406".
+- Promo de edición de UN video por 50 Bs: si el usuario pregunta específicamente por editar SU video,
+  por la edición puntual de un video, o menciona la promo de 50 Bs (ej. "quiero que me editen un
+  video", "edición de video", "edición de 50 Bs", "video por 50 Bs", "quiero un video de 50 Bs",
+  "cuánto cuesta editar un video", "me pueden editar mi video", "lo puede revisar y editar"), responde
+  ÚNICA y EXACTAMENTE con este texto, sin modificarlo ni agregar nada del curso:
+
+  Tenemos una promo de edición de video por 50 Bs, solo por unos días 😊
+
+  Para más información y coordinación, comunícate directamente con nuestro editor:
+  +591 74271406
+
+  En este caso: NO menciones el curso de 350/450 Bs, NO marques intents.payment_qr ni
+  intents.course_flyer, NO marques payment_confirmation, NO pidas comprobante, y NO trates esto como
+  una inscripción al curso. Esta promo es independiente y no tiene relación con el curso ni con el QR.
 
 Clasificación (campos booleanos). Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 - is_greeting: true solo si el mensaje es básicamente un saludo o primer contacto sin una pregunta concreta.
@@ -217,6 +239,9 @@ Clasificación (campos booleanos). Marca solo lo que corresponda al ÚLTIMO mens
   antes y vuelve a pedirlo (el backend controla el dedup). NO lo marques si solo preguntan precio,
   información general, o si preguntan por pagar en efectivo.
 - intents.service_packages: true si preguntan por servicios, paquetes, planes mensuales, edición, grabación o drone.
+- Si la respuesta es sobre la promo de edición de UN video por 50 Bs (ver guía arriba), NO marques
+  intents.payment_qr, intents.course_flyer ni payment_confirmation como true, aunque el mensaje
+  contenga palabras como "edición" o "video" — esos campos son solo para el curso y sus materiales.
 `;
 
 function getRequiredEnv(name: string): string {
