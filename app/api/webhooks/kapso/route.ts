@@ -55,13 +55,12 @@ Información conocida:
 - Precio preventa: 350 Bs (hasta el sábado 27 de junio).
 - Precio en puerta: 450 Bs, desde el domingo 28 de junio (día del evento). También se puede pagar en
   efectivo el día del evento.
-- Promoción del live: el backend controla si la promo está activa o no. Si está VIGENTE y detecta que el
-  usuario escribió la palabra clave de promoción (PROMO/PROMOCIÓN + un número, ej. "PROMO300",
-  "PROMOO350" — se tolera typos comunes), te confirma en el contexto adicional el monto OFICIAL — ese
-  es el único precio especial válido, el número que escriba el usuario (ej. "PROMO300") NUNCA lo define.
-  Si la promo está DESACTIVADA, el contexto adicional te lo indica y en ese caso NUNCA menciones
-  promociones, la palabra clave ni el live en tu respuesta — responde siempre con el precio normal
-  (350/450 Bs), sin importar lo que haya escrito o preguntado el usuario.
+- Precio especial interno (uso exclusivo del backend): en ciertos casos el backend te indica en el
+  contexto adicional que ESTE usuario en particular tiene acceso a un precio especial. Esto es
+  información 100% interna — el usuario NUNCA debe saber por qué la tiene, que existe una palabra clave,
+  un live o algún mecanismo de activación. Si el contexto NO te indica esto (sea cual sea el motivo), el
+  usuario es un cliente normal en todo sentido: responde siempre con el precio normal (350 Bs preventa /
+  450 Bs en puerta), sin importar lo que pregunte sobre descuentos, promociones o el live.
 - Ubicación del curso/salón de eventos (link de Google Maps): https://maps.app.goo.gl/iHp3o6dUPSBzRydu7?g_st=ic
 - Ubicación de la oficina de Conecta Pro (link de Google Maps, distinta a la del curso): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
 - El curso enseña tipos de videos, algoritmo de TikTok, cómo convertir vistas en ventas, guiones y estrategias prácticas.
@@ -110,16 +109,22 @@ Guía por situación:
   del curso es de 450 Bs. NUNCA digas que el precio "sube" o "aumenta" — son dos modalidades de pago
   distintas, no un cambio de precio. Súmale la urgencia comercial de arriba (preventa, cupo) sin inventar
   cupos.
-- Pregunta de precio con promo del live — sigue lo que confirme el contexto adicional:
-  (1) Promo VIGENTE y detectada: usa el monto OFICIAL del contexto (nunca el número que escribió el
-      usuario) como precio especial en vez de 350/450 Bs.
-  (2) Promo VIGENTE pero no detectada: si preguntan "¿hay descuento?" o "¿tiene promo?", responde que
-      las promociones del live se activan escribiendo la palabra clave durante la transmisión, y que
-      sin ella aplica el precio normal.
-  (3) Promo DESACTIVADA (el contexto adicional te lo indica): responde SOLO con el precio normal (350 Bs
-      preventa / 450 Bs en puerta), sin mencionar promociones, palabra clave ni el live, aunque el
-      usuario pregunte por descuentos o escriba algo parecido a la palabra clave de promo.
-  En todos los casos, NUNCA inventes ni confirmes un monto de promo por tu cuenta.
+- Precio especial / preguntas de descuento o promoción — sigue ESTRICTAMENTE lo que confirme el
+  contexto adicional, sin excepción:
+  (1) Si el contexto te indica que ESTE usuario tiene acceso a un precio especial: ofrécelo con
+      naturalidad como si fuera simplemente "su precio" (ej. "¡Genial! Tienes acceso al precio especial
+      de [monto del contexto] Bs."). NUNCA menciones qué escribió el usuario, ni expliques por qué tiene
+      ese precio, ni cómo lo obtuvo — actúa como si fuera obvio y no necesitara explicación.
+  (2) Si el contexto NO te indica eso (sin importar el motivo: no hay promo activa, no se detectó nada,
+      etc.): trata al usuario exactamente como a un cliente normal. Responde ÚNICAMENTE con el precio
+      normal (350 Bs preventa / 450 Bs en puerta), aunque pregunte "¿hay descuento?", "¿tienen
+      promoción?", "me haces una rebaja?", "vi el live", "quiero el precio del live", o cualquier
+      variante similar.
+  EN AMBOS CASOS, esto es información 100% interna: JAMÁS menciones, insinúes ni expliques que existen
+  promociones, palabras clave, códigos, el live/transmisión, ni cómo se activa nada de esto. Nunca digas
+  frases como "las promociones se activan...", "durante el live...", "si escribes PROMO...". Si no
+  aplica precio especial, simplemente no existe ningún concepto de promoción en tu respuesta — responde
+  como si la promoción no existiera.
 - Pregunta de ubicación ("ubicación", "dónde es", "dónde será el curso", "dónde queda", "cómo
   llego", sin mencionar la oficina explícitamente): es la ubicación del curso/salón de eventos,
   NUNCA la de la oficina. Responde SIEMPRE con este formato exacto, sin omitir el link y sin
@@ -1630,11 +1635,9 @@ export async function POST(request: Request) {
   ];
 
   contextParts.push(
-    PROMO_LIVE_ACTIVA
-      ? promoKeywordDetected
-        ? `Promoción del live detectada y VIGENTE: el usuario escribió la palabra clave de promoción. El precio oficial de la promo en este momento es ${PRECIO_PROMO_LIVE} Bs (este es el único monto válido, sin importar qué número haya escrito el usuario). Usa ${PRECIO_PROMO_LIVE} Bs como precio especial de inscripción/pago en esta conversación en vez del precio normal (350/450 Bs).`
-        : "No se detectó ninguna palabra clave de promoción (PROMO/PROMOCIÓN + monto) en este mensaje ni en el historial reciente. Si preguntan por descuento o promo, indica que las promociones del live se activan con la palabra clave indicada en la transmisión, sin inventar un monto."
-      : "La promoción del live está DESACTIVADA en este momento. NO menciones ninguna promoción, palabra clave, transmisión live ni cómo se activan promociones en tu respuesta, aunque el usuario pregunte por descuentos/promos o escriba algo parecido a una palabra clave de promo con un número. Responde SIEMPRE solo con el precio normal: 350 Bs en preventa (hasta el sábado 27 de junio) y 450 Bs en puerta/domingo.",
+    PROMO_LIVE_ACTIVA && promoKeywordDetected
+      ? `Este usuario tiene acceso a un precio especial de ${PRECIO_PROMO_LIVE} Bs en vez del precio normal (350/450 Bs). Esto es información 100% interna: NUNCA menciones que escribió una palabra clave, ni expliques cómo obtuvo este precio ni dependas del número que escribió — usa exactamente ${PRECIO_PROMO_LIVE} Bs, con naturalidad, como si fuera simplemente "su precio" (ej. "¡Genial! Tienes acceso al precio especial de ${PRECIO_PROMO_LIVE} Bs.").`
+      : "Este usuario NO tiene acceso a ningún precio especial en este momento. NUNCA menciones las palabras 'promoción', 'promo', 'descuento', 'live', 'transmisión' ni 'palabra clave', ni expliques que existe algún mecanismo de promociones, aunque el usuario pregunte por descuentos, promos, rebajas o mencione el live. Responde siempre y únicamente con el precio normal: 350 Bs en preventa (hasta el sábado 27 de junio) y 450 Bs en puerta/domingo — exactamente como si fuera un cliente normal sin ningún contexto especial.",
   );
 
   // Comprobante de pago: solo se trata como confirmación válida si (a) es
