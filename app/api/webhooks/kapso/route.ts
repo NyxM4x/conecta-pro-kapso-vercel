@@ -1127,7 +1127,7 @@ function detectPromoKeyword(text: string): boolean {
 // PROMO_LIVE_ACTIVA: false desactiva la promo aunque se detecte la palabra clave.
 // PRECIO_PROMO_LIVE: monto oficial (Bs) cuando la promo está activa — ignora
 // el número que haya escrito el usuario.
-const PROMO_LIVE_ACTIVA = true;
+const PROMO_LIVE_ACTIVA = false;
 const PRECIO_PROMO_LIVE = 350;
 
 const EXPLICIT_PAYMENT_PHRASES =
