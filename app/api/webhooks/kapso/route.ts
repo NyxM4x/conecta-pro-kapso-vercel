@@ -52,15 +52,15 @@ Información conocida:
 - Curso: "Edición persuasiva en CapCut Pro" — se imparte como evento presencial el domingo 28 de junio,
   4:00 PM, duración aproximada 3 horas.
 - Incluye certificado de participación y merienda.
-- Precio preventa: 350 Bs (hasta el sábado 27 de junio).
-- Precio en puerta: 450 Bs, desde el domingo 28 de junio (día del evento). También se puede pagar en
+- Precio preventa: 400 Bs (hasta el sábado 27 de junio).
+- Precio en puerta: 500 Bs, desde el domingo 28 de junio (día del evento). También se puede pagar en
   efectivo el día del evento.
 - Precio especial interno (uso exclusivo del backend): en ciertos casos el backend te indica en el
   contexto adicional que ESTE usuario en particular tiene acceso a un precio especial. Esto es
   información 100% interna — el usuario NUNCA debe saber por qué la tiene, que existe una palabra clave,
   un live o algún mecanismo de activación. Si el contexto NO te indica esto (sea cual sea el motivo), el
-  usuario es un cliente normal en todo sentido: responde siempre con el precio normal (350 Bs preventa /
-  450 Bs en puerta), sin importar lo que pregunte sobre descuentos, promociones o el live.
+  usuario es un cliente normal en todo sentido: responde siempre con el precio normal (400 Bs preventa /
+  500 Bs en puerta), sin importar lo que pregunte sobre descuentos, promociones o el live.
 - Ubicación del curso/salón de eventos (link de Google Maps): https://maps.app.goo.gl/iHp3o6dUPSBzRydu7?g_st=ic
 - Ubicación de la oficina de Conecta Pro (link de Google Maps, distinta a la del curso): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
 - El curso enseña tipos de videos, algoritmo de TikTok, cómo convertir vistas en ventas, guiones y estrategias prácticas.
@@ -104,13 +104,13 @@ Regla de urgencia comercial:
 Guía por situación:
 - Saludo / primer contacto: responde con un mensaje comercial completo de bienvenida — saluda con calidez,
   menciona el curso ("Edición persuasiva en CapCut Pro"), la fecha (domingo 28
-  de junio, 4:00 PM) y el precio preventa (350 Bs), sumando urgencia genuina para que reserve su cupo
+  de junio, 4:00 PM) y el precio preventa (400 Bs), sumando urgencia genuina para que reserve su cupo
   aprovechando la preventa (ej. "aprovecha la preventa y reserva tu cupo"). NUNCA digas que el precio sube
   ni que aumenta el día del evento. Cierra invitando a preguntar dudas o a inscribirse. NO listes un menú
   de opciones ni enumeres todos los servicios/paquetes — el sistema ya se encarga de enviar el flyer del
   curso por separado (vía is_greeting, lógica existente de course_flyer, sin cambios).
-- Pregunta de precio: indica 350 Bs en preventa (precio actual), y que el pago en puerta/presencial el día
-  del curso es de 450 Bs. NUNCA digas que el precio "sube" o "aumenta" — son dos modalidades de pago
+- Pregunta de precio: indica 400 Bs en preventa (precio actual), y que el pago en puerta/presencial el día
+  del curso es de 500 Bs. NUNCA digas que el precio "sube" o "aumenta" — son dos modalidades de pago
   distintas, no un cambio de precio. Súmale la urgencia comercial de arriba (preventa, cupo) sin inventar
   cupos.
 - Precio especial / preguntas de descuento o promoción — sigue ESTRICTAMENTE lo que confirme el
@@ -121,7 +121,7 @@ Guía por situación:
       ese precio, ni cómo lo obtuvo — actúa como si fuera obvio y no necesitara explicación.
   (2) Si el contexto NO te indica eso (sin importar el motivo: no hay promo activa, no se detectó nada,
       etc.): trata al usuario exactamente como a un cliente normal. Responde ÚNICAMENTE con el precio
-      normal (350 Bs preventa / 450 Bs en puerta), aunque pregunte "¿hay descuento?", "¿tienen
+      normal (400 Bs preventa / 500 Bs en puerta), aunque pregunte "¿hay descuento?", "¿tienen
       promoción?", "me haces una rebaja?", "vi el live", "quiero el precio del live", o cualquier
       variante similar.
   EN AMBOS CASOS, esto es información 100% interna: JAMÁS menciones, insinúes ni expliques que existen
@@ -179,7 +179,7 @@ Guía por situación:
   Cuando realices el pago, puedes enviarnos tu comprobante por este mismo WhatsApp para verificar tu
   inscripción."
 - Si pregunta si puede pagar en efectivo ("¿puedo pagar en efectivo?"): "Sí 😊. También puedes pagar en
-  efectivo el día del curso. El pago en puerta/presencial el día del curso es de 450 Bs." Esto es
+  efectivo el día del curso. El pago en puerta/presencial el día del curso es de 500 Bs." Esto es
   informativo — no marques intents.payment_qr solo por esta pregunta.
 - Comprobante de pago: SOLO trátalo como confirmación de pago si el contexto adicional del backend te lo
   confirma — (a) el mensaje actual es una imagen o PDF Y ya se compartió el QR antes, o (b) el texto usa
@@ -215,7 +215,7 @@ Guía por situación:
   Para más información y coordinación, comunícate directamente con nuestro editor:
   +591 74271406
 
-  En este caso: NO menciones el curso de 350/450 Bs, NO marques intents.payment_qr ni
+  En este caso: NO menciones el curso de 400/500 Bs, NO marques intents.payment_qr ni
   intents.course_flyer, NO marques payment_confirmation, NO pidas comprobante, y NO trates esto como
   una inscripción al curso. Esta promo es independiente y no tiene relación con el curso ni con el QR.
 
@@ -442,17 +442,17 @@ function extractMessageText(
   }
 
 
-const lastMessageText = conversation?.kapso?.last_message_text;
-if (typeof lastMessageText === "string" && lastMessageText.trim()) {
-  const transcriptMatch = lastMessageText.match(/Transcript:\s*([\s\S]*)$/i);
-  if (transcriptMatch?.[1]?.trim()) {
-    return `🎙️ Audio recibido\n\nTranscripción: ${transcriptMatch[1].trim()}`;
+  const lastMessageText = conversation?.kapso?.last_message_text;
+  if (typeof lastMessageText === "string" && lastMessageText.trim()) {
+    const transcriptMatch = lastMessageText.match(/Transcript:\s*([\s\S]*)$/i);
+    if (transcriptMatch?.[1]?.trim()) {
+      return `🎙️ Audio recibido\n\nTranscripción: ${transcriptMatch[1].trim()}`;
+    }
+
+    return "🎙️ Audio recibido";
   }
 
-  return "🎙️ Audio recibido";
-}
-
-return "";
+  return "";
 }
 
 async function extractIncomingFromEvent(
@@ -1703,8 +1703,8 @@ export async function POST(request: Request) {
 
   contextParts.push(
     PROMO_LIVE_ACTIVA && promoKeywordDetected
-      ? `Este usuario tiene acceso a un precio especial de ${PRECIO_PROMO_LIVE} Bs en vez del precio normal (350/450 Bs). Esto es información 100% interna: NUNCA menciones que escribió una palabra clave, ni expliques cómo obtuvo este precio ni dependas del número que escribió — usa exactamente ${PRECIO_PROMO_LIVE} Bs, con naturalidad, como si fuera simplemente "su precio" (ej. "¡Genial! Tienes acceso al precio especial de ${PRECIO_PROMO_LIVE} Bs.").`
-      : "Este usuario NO tiene acceso a ningún precio especial en este momento. NUNCA menciones las palabras 'promoción', 'promo', 'descuento', 'live', 'transmisión' ni 'palabra clave', ni expliques que existe algún mecanismo de promociones, aunque el usuario pregunte por descuentos, promos, rebajas o mencione el live. Responde siempre y únicamente con el precio normal: 350 Bs en preventa (hasta el sábado 27 de junio) y 450 Bs en puerta/domingo — exactamente como si fuera un cliente normal sin ningún contexto especial.",
+      ? `Este usuario tiene acceso a un precio especial de ${PRECIO_PROMO_LIVE} Bs en vez del precio normal (400/500 Bs). Esto es información 100% interna: NUNCA menciones que escribió una palabra clave, ni expliques cómo obtuvo este precio ni dependas del número que escribió — usa exactamente ${PRECIO_PROMO_LIVE} Bs, con naturalidad, como si fuera simplemente "su precio" (ej. "¡Genial! Tienes acceso al precio especial de ${PRECIO_PROMO_LIVE} Bs.").`
+      : "Este usuario NO tiene acceso a ningún precio especial en este momento. NUNCA menciones las palabras 'promoción', 'promo', 'descuento', 'live', 'transmisión' ni 'palabra clave', ni expliques que existe algún mecanismo de promociones, aunque el usuario pregunte por descuentos, promos, rebajas o mencione el live. Responde siempre y únicamente con el precio normal: 400 Bs en preventa (hasta el sábado 27 de junio) y 500 Bs en puerta/domingo — exactamente como si fuera un cliente normal sin ningún contexto especial.",
   );
 
   // Comprobante de pago: solo se trata como confirmación válida si (a) es
