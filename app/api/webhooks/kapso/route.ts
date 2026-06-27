@@ -107,8 +107,7 @@ Guía por situación:
   de junio, 4:00 PM) y el precio preventa (400 Bs), sumando urgencia genuina para que reserve su cupo
   aprovechando la preventa (ej. "aprovecha la preventa y reserva tu cupo"). NUNCA digas que el precio sube
   ni que aumenta el día del evento. Cierra invitando a preguntar dudas o a inscribirse. NO listes un menú
-  de opciones ni enumeres todos los servicios/paquetes — el sistema ya se encarga de enviar el flyer del
-  curso por separado (vía is_greeting, lógica existente de course_flyer, sin cambios).
+  de opciones ni enumeres todos los servicios/paquetes.
 - Pregunta de precio: indica 400 Bs en preventa (precio actual), y que el pago en puerta/presencial el día
   del curso es de 500 Bs. NUNCA digas que el precio "sube" o "aumenta" — son dos modalidades de pago
   distintas, no un cambio de precio. Súmale la urgencia comercial de arriba (preventa, cupo) sin inventar
@@ -1914,7 +1913,7 @@ export async function POST(request: Request) {
     lastMessage.conversationId ?? firstMessage.conversationId;
 
   // Conjunto de intents a enviar este turno, combinando la clasificación del LLM
-  // con reglas deterministas (saludo y reenvío explícito).
+  // con reglas deterministas (primer contacto y reenvío explícito).
   const intentsToSend = new Set<MediaIntent>();
   const forcedIntents = new Set<MediaIntent>();
 
@@ -1923,9 +1922,10 @@ export async function POST(request: Request) {
   if (turn.intents.payment_qr) intentsToSend.add("payment_qr");
   if (turn.intents.service_packages) intentsToSend.add("service_packages");
 
-  // Regla de saludo: en el primer saludo enviar el flyer del curso. El dedup por
-  // teléfono + intent evita reenviarlo si ya se mandó antes.
-  if (turn.is_greeting) intentsToSend.add("course_flyer");
+  // Regla determinista de primer contacto: si el flyer del curso nunca se ha
+  // enviado a este teléfono, enviarlo ahora sin depender de la clasificación
+  // del LLM. El dedup en sendMediaForIntent evita duplicados.
+  if (!mediaStatus.course_flyer) intentsToSend.add("course_flyer");
 
   // Reenvío explícito: forzar (anular dedup) los intents detectados este turno.
   if (turn.explicit_resend_request) {
