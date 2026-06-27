@@ -204,6 +204,30 @@ Guía por situación:
   contenido para negocio) — NO sobre editar un video puntual propio —, agrega siempre al final de tu
   respuesta, tal cual: "También tenemos una promo de edición de video por 50 Bs, solo por unos días.
   Para más información puedes comunicarte con nuestro editor: +591 74271406".
+- Intención CLARA de contratar un plan de producción/grabación ("quiero el plan de X videos",
+  "quiero contratar el paquete de grabación", "me interesa contratar", "cuándo empezamos",
+  "cómo contrato", "quiero empezar con el plan", "quiero los servicios de grabación y edición",
+  etc.) y la consulta es sobre paquetes de producción/grabación/contenido (NO el curso de
+  CapCut, NO la promo de 50 Bs): incluye en tu respuesta el siguiente formulario de
+  recopilación de datos EXACTAMENTE como aparece aquí, sin agregar ni quitar campos, y con
+  una línea de intro antes (ej. "¡Con gusto! Para coordinar todo, necesito algunos datos 📋"):
+
+  📌 Nombre:
+  📌 Nombre de tu empresa o emprendimiento:
+  📌 Cargo dentro de la empresa:
+  📌 Número de contacto personal:
+  📌 Rubro o sector: (Ej. gastronomía, belleza, moda, salud, etc.)
+  📌 Instagram o redes sociales:
+  📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
+  📌 ¿Tienes alguna referencia de contenido que te guste? (Opcional)
+
+  Marca service_intake_requested=true cuando incluyas este formulario.
+  Una vez que el cliente envíe sus datos (en uno o varios mensajes), agradece con calidez y
+  avísale que un asesor del equipo se comunicará con él/ella personalmente. Si envía los datos
+  en partes, guíalo para completar solo los campos que falten — sin repetir los ya completados.
+  Si el contexto adicional indica que el formulario ya fue enviado en esta conversación, NO lo
+  repitas (salvo que el cliente lo pida explícitamente de nuevo).
+
 - Promo de edición de UN video por 50 Bs: si el usuario pregunta específicamente por editar SU video,
   por la edición puntual de un video, o menciona la promo de 50 Bs (ej. "quiero que me editen un
   video", "edición de video", "edición de 50 Bs", "video por 50 Bs", "quiero un video de 50 Bs",
@@ -239,6 +263,10 @@ Clasificación (campos booleanos). Marca solo lo que corresponda al ÚLTIMO mens
   antes y vuelve a pedirlo (el backend controla el dedup). NO lo marques si solo preguntan precio,
   información general, o si preguntan por pagar en efectivo.
 - intents.service_packages: true si preguntan por servicios, paquetes, planes mensuales, edición, grabación o drone.
+- service_intake_requested: true SOLO cuando incluyas el formulario de recopilación de datos para
+  planes de producción/grabación en tu respuesta (intención clara de contratar, no solo curiosidad).
+  NO lo marques si es una consulta general sobre servicios/paquetes sin intención de contratar, ni
+  para el curso, ni para la promo de 50 Bs.
 - Si la respuesta es sobre la promo de edición de UN video por 50 Bs (ver guía arriba), NO marques
   intents.payment_qr, intents.course_flyer ni payment_confirmation como true, aunque el mensaje
   contenga palabras como "edición" o "video" — esos campos son solo para el curso y sus materiales.
@@ -503,6 +531,18 @@ async function extractIncomingFromEvent(
       }
     }
 
+    return null;
+  }
+
+  // Reacciones de WhatsApp (emoji sobre un mensaje): no son un mensaje del
+  // usuario. Se ignoran para que el bot no responda repitiendo el contexto.
+  const messageType = event.message?.type;
+  if (messageType === "reaction" || event.message?.reaction) {
+    console.log("reaction message ignored", {
+      conversationId: event.conversation?.id ?? null,
+      messageId: event.message?.id ?? null,
+      emoji: event.message?.reaction?.emoji ?? null,
+    });
     return null;
   }
 
@@ -958,6 +998,7 @@ const AssistantTurnSchema = z.object({
   is_greeting: z.boolean(),
   explicit_resend_request: z.boolean(),
   payment_confirmation: z.boolean(),
+  service_intake_requested: z.boolean(),
   intents: z.object({
     course_flyer: z.boolean(),
     location_video: z.boolean(),
@@ -974,6 +1015,7 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   is_greeting: false,
   explicit_resend_request: false,
   payment_confirmation: false,
+  service_intake_requested: false,
   intents: {
     course_flyer: false,
     location_video: false,
@@ -1196,6 +1238,39 @@ const PRECIO_PROMO_LIVE = 350;
 const EXPLICIT_PAYMENT_PHRASES =
   /\b(COMPROBANTE|YA PAGUE|REALICE EL PAGO|HICE EL PAGO|PAGO REALIZADO)\b/;
 const VAGUE_SEND_PHRASES = /\b(YA MANDE|YA PASE|YA ENVIE)\b/;
+
+async function hasIntakeFormBeenSent(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "[INTAKE_FORM_SENT]%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check intake form sent failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "supabase_intake_form_check_failed",
+      conversationId,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+      },
+    });
+
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
 
 async function hasPaymentBeenAcknowledged(conversationId?: string): Promise<boolean> {
   if (!conversationId) return false;
@@ -1647,10 +1722,11 @@ export async function POST(request: Request) {
     }
   }
 
-  const [history, mediaStatus, paymentAcknowledged] = await Promise.all([
+  const [history, mediaStatus, paymentAcknowledged, intakeFormSent] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
     hasPaymentBeenAcknowledged(lastMessage.conversationId),
+    hasIntakeFormBeenSent(lastMessage.conversationId),
   ]);
 
   // Palabra clave de promoción del live (PROMO[monto]/PROMOCION[monto], con
@@ -1731,6 +1807,12 @@ export async function POST(request: Request) {
   if (paymentAcknowledged) {
     contextParts.push(
       'Ya se le agradeció el comprobante de pago anteriormente en esta conversación (el backend ya tiene una respuesta con "Gracias por el comprobante" guardada). NO repitas esa plantilla de agradecimiento; si insiste, responde algo breve como "Ya lo tenemos en revisión, en breve te confirmamos tu cupo 😊".',
+    );
+  }
+
+  if (intakeFormSent) {
+    contextParts.push(
+      'El formulario de recopilación de datos para planes de producción/grabación YA fue enviado en esta conversación. NO lo repitas (a menos que el cliente lo pida explícitamente de nuevo). Si el cliente ya envió todos los campos, agradece y confirma que un asesor se comunicará. Si aún faltan campos, guíalo amablemente para completarlos sin repetir el formulario completo.',
     );
   }
 
@@ -1858,6 +1940,15 @@ export async function POST(request: Request) {
       responseText: replyText,
     });
 
+    if (turn.service_intake_requested) {
+      await saveOutboundMessage({
+        conversationId: mediaConversationId,
+        phone: lastMessage.from,
+        content: "[INTAKE_FORM_SENT] formulario de datos para paquetes de producción",
+        rawPayload: { type: "intake_form", source: "service_packages_intake" },
+      });
+    }
+
     for (const intent of MEDIA_SEND_ORDER) {
       if (!intentsToSend.has(intent)) continue;
 
@@ -1898,6 +1989,7 @@ export async function POST(request: Request) {
       is_greeting: turn.is_greeting,
       explicit_resend_request: turn.explicit_resend_request,
       payment_confirmation: turn.payment_confirmation,
+      service_intake_requested: turn.service_intake_requested,
       detected_intents: turn.intents,
       sent_intents: sentIntents,
     },
