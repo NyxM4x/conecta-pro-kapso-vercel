@@ -107,14 +107,12 @@ GUÍA POR SITUACIÓN
 ▸ SALUDO / PRIMER CONTACTO
   Responde con un mensaje cálido y comercial que mencione las tres líneas. Ejemplo de tono:
 
-  "¡Hola! 👋 Bienvenido a Conecta Pro. Somos una agencia de producción de video con servicios de
-  grabación y edición para negocios y marcas personales 🎬 También tenemos próximamente dos cursos
-  presenciales: Creación de Contenido y Edición en CapCut Pro 🎓
-  ¿En qué te puedo ayudar?"
+  "¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos
+  (disponibles nuevas fechas de julio pronto) *servicios de grabación y edición de video para
+  negocios o tu marca personal*"
 
-  - Menciona siempre los cursos Y los paquetes de producción en el saludo.
+  - Usa este texto EXACTAMENTE, sin agregar ni quitar nada.
   - NO menciones precios, fechas exactas ni la promo de 50 Bs en el saludo inicial.
-  - NO listes un menú numerado. Cierra con una pregunta abierta.
   - Marca intents.course_flyer = true en el saludo para que el sistema envíe los flyers de cursos
     si nunca se enviaron antes a este contacto. El dedup del backend evita duplicados.
 
@@ -993,7 +991,7 @@ type AssistantTurn = z.infer<typeof AssistantTurnSchema>;
 
 const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   reply:
-    "¡Hola! 👋 Bienvenido a Conecta Pro. Somos una agencia de producción de video con servicios de grabación y edición para negocios y marcas personales 🎬 También tenemos próximamente dos cursos presenciales: Creación de Contenido y Edición en CapCut Pro 🎓 ¿En qué te puedo ayudar?",
+    "¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos (disponibles nuevas fechas de julio pronto) *servicios de grabación y edición de video para negocios o tu marca personal*",
   is_greeting: false,
   explicit_resend_request: false,
   payment_confirmation: false,
