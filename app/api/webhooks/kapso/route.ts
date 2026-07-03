@@ -116,8 +116,8 @@ GUÍA POR SITUACIÓN
   - NO agregues saludos adicionales, preguntas extra ni emojis que no estén ahí.
   - NO menciones la promo de 50 Bs en este mensaje.
   - NO menciones precios ni fechas exactas.
-  - Marca intents.course_flyer = true para que el sistema envíe los flyers de cursos si nunca
-    se enviaron antes. El dedup del backend evita duplicados.
+  - NO marques intents.course_flyer ni intents.service_packages — el usuario aún no ha pedido
+    información específica. Espera su respuesta para saber a qué flujo dirigirlo.
 
 ▸ FLUJO A — CURSOS
   Aplica cuando el usuario pregunta por los cursos, por aprender edición, por capacitación,
@@ -235,9 +235,10 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 - explicit_resend_request: true si pide explícitamente reenviar material ("mándame de nuevo",
   "no me llegó", "no puedo verlo", "reenvíame el flyer", "pásame otra vez la imagen").
 - payment_confirmation: false siempre — no hay proceso de pago activo.
-- intents.course_flyer: true si el usuario pregunta por los cursos (fechas, contenido, capacitación,
-  clases de CapCut, etc.) O si es un saludo/primer contacto (para que el sistema envíe los flyers).
-  El dedup del backend evita enviar duplicados. FALSE si el usuario pregunta solo por paquetes o 50 Bs.
+- intents.course_flyer: true SOLO si el usuario pregunta explícitamente por los cursos (fechas,
+  contenido, capacitación, clases de CapCut, "¿qué cursos tienen?", etc.).
+  FALSE en el saludo inicial — el cliente aún no ha pedido info de cursos.
+  FALSE si el usuario pregunta solo por paquetes de producción o por la promo de 50 Bs.
 - intents.location_video: false siempre — no aplica actualmente.
 - intents.payment_qr: false siempre — no hay proceso de pago activo.
 - intents.service_packages: true cuando pregunta por servicios, paquetes de producción, grabación,
@@ -1886,11 +1887,6 @@ export async function POST(request: Request) {
   if (turn.intents.location_video) intentsToSend.add("location_video");
   if (turn.intents.payment_qr) intentsToSend.add("payment_qr");
   if (turn.intents.service_packages) intentsToSend.add("service_packages");
-
-  // Regla determinista de primer contacto: si los flyers de cursos nunca se han
-  // enviado a este teléfono, enviarlos ahora (saludo o cualquier primer turno).
-  // El dedup en sendMediaForIntent evita duplicados si el LLM ya lo marcó.
-  if (!mediaStatus.course_flyer) intentsToSend.add("course_flyer");
 
   // Reenvío explícito: forzar (anular dedup) los intents detectados este turno.
   if (turn.explicit_resend_request) {
