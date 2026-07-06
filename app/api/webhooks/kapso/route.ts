@@ -91,6 +91,8 @@ REDES SOCIALES:
 UBICACIÓN OFICINA:
 - Google Maps (texto plano, nunca markdown):
   https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+- Horario de atención en oficina: de 09:00 a 18:00, todos los días que el equipo atiende. Si preguntan
+  el horario de la oficina, da este horario junto con el link de Maps si corresponde.
 
 ═══════════════════════════════════════
 REGLAS DE TONO Y FORMATO (campo "reply")
@@ -202,13 +204,18 @@ GUÍA POR SITUACIÓN
   Si confirma que quiere salir él:
   "¡Perfecto! Justo eso es lo que recomendamos en ConectaPro para potenciar tu marca personal ✅"
 
-▸ PREGUNTA EXPLÍCITA POR LA OFICINA
-  Responde SIEMPRE con este formato exacto, texto plano sin markdown:
+▸ PREGUNTA EXPLÍCITA POR LA OFICINA (ubicación y/o horario)
+  Aplica tanto si preguntan por la ubicación/dirección de la oficina, como si preguntan por el
+  horario de atención, o ambas cosas — SIEMPRE responde con ubicación Y horario juntos en el
+  mismo mensaje (para no hacer que el cliente tenga que preguntar dos veces). Usa este formato
+  exacto, texto plano sin markdown:
 
   La oficina de Conecta Pro está aquí 📍
 
   Google Maps:
   https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+
+  Atendemos de 09:00 a 18:00 😊
 
 ▸ PREGUNTA POR TIKTOK O REDES SOCIALES
   - TikTok: da solo el nombre: @marketero7. NUNCA inventes una URL.
@@ -876,6 +883,45 @@ async function resumeBotIfPauseExpired(conversationId?: string) {
     await logSystemEvent({
       level: "error",
       eventType: "bot_auto_resume_failed",
+      conversationId,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+      },
+    });
+  }
+}
+
+// Pausa automática de la conversación cuando se sospecha un loop bot-contra-bot
+// (ej. el número del "usuario" en realidad pertenece a otro asistente automatizado
+// de otra empresa, y ambos bots se responden entre sí indefinidamente). Requiere
+// intervención manual (/resume) para reanudar.
+async function pauseBotForSuspectedLoop(conversationId?: string) {
+  if (!conversationId) return;
+
+  const supabase = getSupabaseClient();
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supabase
+    .from("kapso_conversations")
+    .update({
+      bot_paused: true,
+      bot_paused_at: nowIso,
+      bot_pause_expires_at: null,
+      bot_paused_reason: "suspected_bot_to_bot_loop",
+      bot_pause_mode: "auto",
+      bot_pause_duration_minutes: null,
+      updated_at: nowIso,
+    })
+    .eq("kapso_conversation_id", conversationId);
+
+  if (error) {
+    console.error("auto pause for suspected bot loop failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "bot_loop_auto_pause_failed",
       conversationId,
       errorMessage: error.message,
       metadata: {
@@ -1825,6 +1871,45 @@ export async function POST(request: Request) {
   });
 
   const replyText = turn.reply;
+
+  // Guardia anti-loop bot-contra-bot: si las últimas 2 respuestas ya enviadas en
+  // esta conversación son idénticas a la que se está por enviar ahora, es señal
+  // de que el "usuario" del otro lado es en realidad otro asistente automatizado
+  // respondiendo en bucle (ej. el número pertenece a otra empresa con su propio
+  // bot). Se pausa la conversación en vez de seguir enviando la misma respuesta
+  // indefinidamente, y se alerta al equipo para revisión manual.
+  const trailingAssistantReplies = history
+    .filter((message) => message.role === "assistant")
+    .slice(-2)
+    .map((message) => message.content.trim());
+
+  const isSuspectedBotLoop =
+    trailingAssistantReplies.length === 2 &&
+    trailingAssistantReplies.every((content) => content === replyText.trim());
+
+  if (isSuspectedBotLoop) {
+    console.warn("suspected bot-to-bot loop detected, pausing conversation", {
+      conversationId: lastMessage.conversationId,
+      phone: maskPhone(lastMessage.from),
+    });
+
+    await pauseBotForSuspectedLoop(lastMessage.conversationId);
+
+    await logSystemEvent({
+      level: "critical",
+      eventType: "bot_loop_suspected_paused",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        repeated_reply_preview: replyText.slice(0, 200),
+      },
+    });
+
+    return new Response("suspected bot loop, conversation paused", {
+      status: 200,
+    });
+  }
 
   try {
     await kapso.messages.sendText({
