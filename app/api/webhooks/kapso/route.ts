@@ -242,6 +242,12 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   FALSE si el flujo es exclusivamente de cursos.
 - service_intake_requested: true SOLO cuando incluyas el formulario de leads en tu respuesta
   (intención clara de contratar paquetes). NO lo marques para consultas generales ni cursos.
+- lead_data_submitted: true SOLO cuando el ÚLTIMO mensaje del usuario contiene los datos del
+  formulario de leads (nombre, empresa, cargo, contacto, rubro, redes, tipo de contenido, etc.).
+  NO lo marques cuando el sistema apenas pidió el formulario ni cuando el usuario solo pregunta algo.
+- appointment_scheduled: true SOLO cuando el usuario confirma una hora/fecha concreta para visitar
+  la oficina (ej. "voy el martes a las 10am", "paso mañana a las 3", "el jueves a las 5pm me viene bien").
+  NO lo marques si solo pregunta la ubicación u horario de atención sin confirmar que irá.
 
 REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   Los dos flujos activos (cursos, paquetes de producción) son canales independientes.
@@ -336,6 +342,31 @@ async function sendSlackAlert(params: {
     });
   } catch (error) {
     console.error("sendSlackAlert failed", error);
+  }
+}
+
+async function sendTelegramNotification(text: string): Promise<boolean> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (!token || !chatId) return false;
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+    });
+
+    if (!response.ok) {
+      console.error("sendTelegramNotification failed", response.status, await response.text());
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("sendTelegramNotification threw", error);
+    return false;
   }
 }
 
@@ -1018,6 +1049,8 @@ const AssistantTurnSchema = z.object({
   explicit_resend_request: z.boolean(),
   payment_confirmation: z.boolean(),
   service_intake_requested: z.boolean(),
+  lead_data_submitted: z.boolean().optional(),
+  appointment_scheduled: z.boolean().optional(),
   intents: z.object({
     course_flyer: z.boolean(),
     location_video: z.boolean(),
@@ -1035,6 +1068,8 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   explicit_resend_request: false,
   payment_confirmation: false,
   service_intake_requested: false,
+  lead_data_submitted: false,
+  appointment_scheduled: false,
   intents: {
     course_flyer: false,
     location_video: false,
@@ -1285,6 +1320,69 @@ async function hasIntakeFormBeenSent(conversationId?: string): Promise<boolean> 
       },
     });
 
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
+async function hasTelegramLeadBeenSent(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "[TELEGRAM_LEAD_SENT]%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check telegram lead sent failed", error);
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
+async function hasTelegramPaymentBeenSent(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "[TELEGRAM_PAYMENT_SENT]%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check telegram payment sent failed", error);
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
+async function hasTelegramAppointmentBeenSent(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "[TELEGRAM_APPOINTMENT_SENT]%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check telegram appointment sent failed", error);
     return false;
   }
 
@@ -1741,11 +1839,22 @@ export async function POST(request: Request) {
     }
   }
 
-  const [history, mediaStatus, paymentAcknowledged, intakeFormSent] = await Promise.all([
+  const [
+    history,
+    mediaStatus,
+    paymentAcknowledged,
+    intakeFormSent,
+    telegramLeadSent,
+    telegramPaymentSent,
+    telegramAppointmentSent,
+  ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
     hasPaymentBeenAcknowledged(lastMessage.conversationId),
     hasIntakeFormBeenSent(lastMessage.conversationId),
+    hasTelegramLeadBeenSent(lastMessage.conversationId),
+    hasTelegramPaymentBeenSent(lastMessage.conversationId),
+    hasTelegramAppointmentBeenSent(lastMessage.conversationId),
   ]);
 
   // Palabra clave de promoción del live (PROMO[monto]/PROMOCION[monto], con
@@ -2005,6 +2114,71 @@ export async function POST(request: Request) {
 
       if (sent) sentIntents.push(intent);
     }
+
+    // Lead: el cliente envió sus datos de contratación.
+    if (turn.lead_data_submitted && !telegramLeadSent) {
+      const notified = await sendTelegramNotification(
+        [
+          "🟢 <b>Nuevo lead — Conecta Pro</b>",
+          `👤 Contacto: ${lastMessage.contactName ?? "Sin nombre"}`,
+          `📱 WhatsApp: ${lastMessage.from}`,
+          `💬 Último mensaje:\n${lastMessage.text.slice(0, 500)}`,
+          `🆔 Conversación: ${mediaConversationId ?? "N/A"}`,
+        ].join("\n"),
+      );
+
+      if (notified) {
+        await saveOutboundMessage({
+          conversationId: mediaConversationId,
+          phone: lastMessage.from,
+          content: "[TELEGRAM_LEAD_SENT] notificación de lead enviada a Telegram",
+          rawPayload: { type: "telegram_notification", event: "lead" },
+        });
+      }
+    }
+
+    // Pago: el cliente confirmó pago (comprobante).
+    if (turn.payment_confirmation && !telegramPaymentSent) {
+      const notified = await sendTelegramNotification(
+        [
+          "💰 <b>Pago confirmado — Conecta Pro</b>",
+          `👤 Contacto: ${lastMessage.contactName ?? "Sin nombre"}`,
+          `📱 WhatsApp: ${lastMessage.from}`,
+          "🧾 El cliente envió un comprobante de pago. Verificar.",
+        ].join("\n"),
+      );
+
+      if (notified) {
+        await saveOutboundMessage({
+          conversationId: mediaConversationId,
+          phone: lastMessage.from,
+          content: "[TELEGRAM_PAYMENT_SENT] notificación de pago enviada a Telegram",
+          rawPayload: { type: "telegram_notification", event: "payment" },
+        });
+      }
+    }
+
+    // Cita: el cliente confirmó una hora para visitar la oficina.
+    if (turn.appointment_scheduled && !telegramAppointmentSent) {
+      const notified = await sendTelegramNotification(
+        [
+          "📅 <b>Cita en oficina — Conecta Pro</b>",
+          `👤 Contacto: ${lastMessage.contactName ?? "Sin nombre"}`,
+          `📱 WhatsApp: ${lastMessage.from}`,
+          `🕒 Hora confirmada (según el cliente):\n${lastMessage.text.slice(0, 500)}`,
+          `🆔 Conversación: ${mediaConversationId ?? "N/A"}`,
+        ].join("\n"),
+      );
+
+      if (notified) {
+        await saveOutboundMessage({
+          conversationId: mediaConversationId,
+          phone: lastMessage.from,
+          content: "[TELEGRAM_APPOINTMENT_SENT] notificación de cita enviada a Telegram",
+          rawPayload: { type: "telegram_notification", event: "appointment" },
+        });
+      }
+    }
   } catch (error) {
     console.error("supabase save outbound/lock/media threw", error);
 
@@ -2033,6 +2207,8 @@ export async function POST(request: Request) {
       explicit_resend_request: turn.explicit_resend_request,
       payment_confirmation: turn.payment_confirmation,
       service_intake_requested: turn.service_intake_requested,
+      lead_data_submitted: turn.lead_data_submitted ?? false,
+      appointment_scheduled: turn.appointment_scheduled ?? false,
       detected_intents: turn.intents,
       sent_intents: sentIntents,
     },
