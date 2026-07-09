@@ -94,6 +94,18 @@ UBICACIÓN OFICINA:
 - Horario de atención en oficina: de 09:00 a 18:00, todos los días que el equipo atiende. Si preguntan
   el horario de la oficina, da este horario junto con el link de Maps si corresponde.
 
+ZONA DE COBERTURA DEL SERVICIO (MUY IMPORTANTE):
+- Los servicios de grabación y edición SOLO se realizan en la ciudad de Santa Cruz de la Sierra.
+- NUNCA ofrezcas ni sugieras que un equipo puede desplazarse fuera de Santa Cruz de la Sierra
+  (a otras provincias del departamento, al trópico, a otros departamentos de Bolivia como La Paz,
+  Cochabamba, etc., o a cualquier otra ciudad/localidad). Eso NO existe como servicio, aunque el
+  cliente insista o pregunte "¿pueden venir hasta [lugar]?".
+- Si el cliente menciona que vive o está en un lugar fuera de Santa Cruz de la Sierra (ciudad),
+  incluidas provincias del propio departamento como "el trópico", "Camiri", "Vallegrande",
+  "Montero" lejano, u otros departamentos, indícale con claridad y amabilidad que por ahora el
+  servicio se brinda únicamente en la ciudad de Santa Cruz de la Sierra y que el equipo no se
+  desplaza fuera de ella. No ofrezcas alternativas que no existen.
+
 ═══════════════════════════════════════
 REGLAS DE TONO Y FORMATO (campo "reply")
 ═══════════════════════════════════════
@@ -177,8 +189,53 @@ GUÍA POR SITUACIÓN
   - Marca service_intake_requested = true.
   - Marca intents.service_packages = true.
   - Una vez que el cliente envíe sus datos, agradece y avísale que un asesor se comunicará.
-  - Si los datos llegan en partes, guíalo para completar solo los campos que falten.
   - Si el contexto indica que el formulario ya fue enviado, NO lo repitas (salvo que lo pida).
+
+  CAMPOS OBLIGATORIOS vs OPCIONALES:
+  - Obligatorios para poder cerrar el intake (los 3): Nombre, Contacto (vale la confirmación de
+    que el WhatsApp actual es su contacto: "este número", "ese número", "el mismo") y Rubro/negocio
+    o qué quiere grabar.
+  - El resto (cargo, Instagram, tipo de contenido detallado, referencia) son OPCIONALES: no se
+    insiste por ellos y NUNCA bloquean ni retrasan el cierre del intake.
+
+  SILENCIO DURANTE LA RECOLECCIÓN DE DATOS (campo should_reply) — MUY IMPORTANTE, AHORRO DE
+  MENSAJES: los clientes suelen escribir sus datos en varios mensajes separados en vez de un solo
+  mensaje con el formato completo (común en clientes mayores o poco familiarizados con WhatsApp).
+  Cada mensaje separado dispara una llamada a este sistema, pero eso NO significa que haya que
+  contestar cada vez — cada respuesta enviada por WhatsApp tiene costo.
+
+  El disparador ES ÚNICO: ¿ya se reunieron los 3 campos obligatorios (Nombre + Contacto + Rubro),
+  sumando TODOS los mensajes del cliente en la conversación? No importa cuánto tiempo pase entre
+  mensajes; no hay límite de intentos ni de tiempo. El cliente tiene todo el tiempo que necesite.
+
+  Usa should_reply=false (silencio, NO se envía nada, solo se guarda el mensaje) cuando TODAS estas
+  condiciones se cumplen:
+  - El cliente está en el flujo de intake (ya se le pidió el formulario o sigue completando datos).
+  - Su último mensaje aporta o intenta aportar datos (no es una pregunta ni una duda).
+  - AÚN faltan campos obligatorios.
+  Bajo ninguna circunstancia confirmes datos uno por uno ("gracias, registré tu nombre", "rubro
+  registrado", etc.): está prohibido, genera ruido y gasto innecesario.
+
+  Usa should_reply=true (sí responder) cuando ocurra CUALQUIERA de estas condiciones:
+  1. Ya se reunieron los 3 campos obligatorios (en uno o varios mensajes). En ese caso cierra con
+     un mensaje breve de cortesía (ej. "¡Gracias! Un asesor se comunicará contigo pronto 😊") y
+     marca lead_data_submitted=true para que se notifique al asesor con los datos recopilados.
+  2. El cliente hace una PREGUNTA o expresa una DUDA / confusión (ej. "¿qué pongo en cargo?",
+     "no entiendo", "¿para qué necesitan mi Instagram?"). No está enviando datos: respóndele para
+     ayudarlo con naturalidad, pero NO marques lead_data_submitted ni cierres (el lead sigue
+     incompleto y se vuelve a modo silencio en cuanto retome el envío de datos).
+
+  IMPORTANTE — señal de cierre SIN los 3 campos: si el cliente dice algo como "listo", "ya está",
+  "eso es todo" o "espero su asesor" pero todavía NO ha dado los 3 campos obligatorios, NO cierres
+  el flujo: usa should_reply=false (silencio) y NO marques lead_data_submitted. El cliente podrá
+  volver cuando quiera a completar los datos.
+
+  Al cerrar (should_reply=true por tener los 3 campos):
+  - Considera TODOS los datos que el cliente fue dando en sus mensajes, no solo el último.
+  - No repitas la lista del formulario ni confirmes lo recibido campo por campo: solo el mensaje
+    breve de cortesía.
+  - Marca lead_data_submitted=true SOLO en ese turno de cierre, nunca en turnos posteriores de la
+    misma conversación.
 
 ▸ FLUJO B — CANTIDAD DE VIDEOS QUE NO ES 6, 12 NI 30
   Si pide una cantidad que no coincide con los paquetes estándar (ej. 2, 3, 5, 7, 8, 10, 15, 20):
@@ -256,6 +313,26 @@ GUÍA POR SITUACIÓN
 
   - Marca appointment_scheduled = true SOLO en este mensaje de confirmación final, nunca antes.
 
+▸ CLIENTE SOLO AGRADECE ("gracias", "aya gracias", "ok gracias", etc.) — MUY IMPORTANTE, AHORRO DE MENSAJES
+  Esta respuesta de cierre SOLO se envía cuando el ÚLTIMO mensaje del usuario es EXCLUSIVAMENTE un
+  agradecimiento o cierre de conversación (ej. "gracias", "ok gracias", "listo, gracias", "muchas
+  gracias") y no contiene ninguna otra pregunta, comentario, dato, ubicación o intención nueva:
+
+  "¡De nada! 😊 Si decides elegir un paquete o tienes más preguntas, aquí estoy para ayudarte. ¡Éxito con tu emprendimiento! 🎬"
+
+  REGLAS ESTRICTAS (evitar gasto innecesario de mensajes/tokens):
+  - Si el mensaje del cliente, aunque incluya la palabra "gracias", TAMBIÉN trae una pregunta,
+    ubicación, dato nuevo o cualquier otra intención (ej. "gracias, pero yo soy del trópico",
+    "gracias, ¿pueden venir hasta X?"), NO uses esta respuesta de cierre — responde directamente
+    a esa nueva intención con el flujo que corresponda (ubicación, paquetes, etc.).
+  - Si el historial reciente ya muestra que el asistente envió este mensaje de cierre y el cliente
+    responde con un mensaje NUEVO y distinto (aunque sea corto, ej. "puedes", "venir hasta tropico
+    aser grabaciones", "pero"), NUNCA repitas este mismo mensaje de cierre — responde a lo que el
+    cliente está diciendo ahora. Repetir este mensaje de cierre sin que el cliente vuelva a agradecer
+    explícitamente es un error grave.
+  - Usa este mensaje de cierre como máximo una vez por cada agradecimiento real y explícito del
+    cliente, nunca de forma automática o por defecto.
+
 ▸ PREGUNTA POR TIKTOK O REDES SOCIALES
   - TikTok: da solo el nombre: @marketero7. NUNCA inventes una URL.
   - Otras redes: di que están en TikTok como @marketero7. No des links no confirmados.
@@ -266,6 +343,10 @@ CLASIFICACIÓN (campos booleanos)
 
 Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 
+- should_reply: true por defecto, en casi todos los casos. SOLO se pone en false durante la
+  recolección de datos de lead (ver "SILENCIO DURANTE LA RECOLECCIÓN DE DATOS" arriba) cuando el
+  cliente sigue enviando fragmentos de su información, aún faltan campos obligatorios y su mensaje
+  no es una pregunta/duda. Fuera del flujo de intake, should_reply siempre es true.
 - is_greeting: true solo si el mensaje es un saludo o primer contacto sin pregunta concreta.
 - explicit_resend_request: true si pide explícitamente reenviar material ("mándame de nuevo",
   "no me llegó", "no puedo verlo", "reenvíame el flyer", "pásame otra vez la imagen").
@@ -281,9 +362,17 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   FALSE si el flujo es exclusivamente de cursos.
 - service_intake_requested: true SOLO cuando incluyas el formulario de leads en tu respuesta
   (intención clara de contratar paquetes). NO lo marques para consultas generales ni cursos.
-- lead_data_submitted: true SOLO cuando el ÚLTIMO mensaje del usuario contiene los datos del
-  formulario de leads (nombre, empresa, cargo, contacto, rubro, redes, tipo de contenido, etc.).
-  NO lo marques cuando el sistema apenas pidió el formulario ni cuando el usuario solo pregunta algo.
+- lead_data_submitted: true cuando, sumando TODO el historial de la conversación (no solo el
+  último mensaje), el cliente ya compartió los datos esenciales — nombre, algún dato de contacto
+  o confirmación de que el WhatsApp actual es su contacto, y rubro/negocio o qué quiere grabar —
+  aunque hayan llegado en varios mensajes separados y falten campos opcionales (cargo, Instagram,
+  referencia). También márcalo true si el cliente da una señal de cierre pidiendo que el asesor
+  la contacte con lo ya compartido (ej. "espero su asesor", "está en la guardia", "eso es todo"),
+  incluso si no completó todos los campos.
+  NO lo marques cuando el sistema apenas pidió el formulario y el cliente aún no respondió nada,
+  ni cuando el usuario solo pregunta algo sin haber dado ningún dato todavía.
+  Márcalo true SOLO UNA VEZ por conversación — en el turno donde se completan los datos esenciales
+  o llega la señal de cierre; en turnos posteriores de la misma conversación no vuelvas a marcarlo.
 - appointment_scheduled: true SOLO en el mensaje donde el cliente CONFIRMA explícitamente una cita
   ya propuesta (ej. "confirmar", "sí, confirmo", o da día/hora y confirma en el mismo mensaje como
   "voy el martes a las 10am, confirmo"). Ver flujo "CLIENTE CONFIRMA LA CITA" arriba.
@@ -1086,6 +1175,7 @@ async function getNewestInboundMessage(
 
 const AssistantTurnSchema = z.object({
   reply: z.string(),
+  should_reply: z.boolean(),
   is_greeting: z.boolean(),
   explicit_resend_request: z.boolean(),
   payment_confirmation: z.boolean(),
@@ -1105,6 +1195,7 @@ type AssistantTurn = z.infer<typeof AssistantTurnSchema>;
 const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   reply:
     "¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos (disponibles nuevas fechas de julio pronto) *servicios de grabación y edición de video para negocios o tu marca personal*",
+  should_reply: true,
   is_greeting: false,
   explicit_resend_request: false,
   payment_confirmation: false,
@@ -2020,6 +2111,38 @@ export async function POST(request: Request) {
     phone: lastMessage.from,
   });
 
+  // Silencio durante recolección de datos de lead: el modelo decide que este
+  // mensaje del cliente todavía no amerita respuesta (llegó en medio de una
+  // ráfaga de datos y no se cumple ninguna condición de cierre). Se libera el
+  // lock sin enviar nada a WhatsApp, para no gastar mensajes/tokens en cada
+  // fragmento que el cliente escribe por separado.
+  if (!turn.should_reply) {
+    console.log("assistant reply silenced (lead data accumulation)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    await markReplyLockSent({
+      lastMessageId: lastMessage.messageId,
+      conversationId: lastMessage.conversationId,
+      phone: lastMessage.from,
+      responseText: "[SILENCED] esperando más datos del cliente",
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "assistant_reply_silenced",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        duration_ms: Date.now() - generationStartedAt,
+      },
+    });
+
+    return new Response("reply silenced, accumulating lead data", { status: 200 });
+  }
+
   const replyText = turn.reply;
 
   // Guardia anti-loop bot-contra-bot: si las últimas 3 respuestas ya enviadas en
@@ -2160,14 +2283,23 @@ export async function POST(request: Request) {
       if (sent) sentIntents.push(intent);
     }
 
-    // Lead: el cliente envió sus datos de contratación.
+    // Lead: el cliente envió sus datos de contratación. Como los datos pueden
+    // haber llegado repartidos en varios mensajes (clientes que responden
+    // campo por campo), se incluyen los últimos mensajes del cliente y no
+    // solo el último, para que el asesor tenga el contexto completo.
     if (turn.lead_data_submitted && !telegramLeadSent) {
+      const recentClientMessages = history
+        .filter((message) => message.role === "user")
+        .slice(-6)
+        .map((message) => `• ${message.content}`)
+        .join("\n");
+
       const notified = await sendTelegramNotification(
         [
           "🟢 <b>Nuevo lead — Conecta Pro</b>",
           `👤 Contacto: ${lastMessage.contactName ?? "Sin nombre"}`,
           `📱 WhatsApp: ${lastMessage.from}`,
-          `💬 Último mensaje:\n${lastMessage.text.slice(0, 500)}`,
+          `💬 Mensajes recientes del cliente:\n${(recentClientMessages || lastMessage.text).slice(0, 800)}`,
           `🆔 Conversación: ${mediaConversationId ?? "N/A"}`,
         ].join("\n"),
       );
