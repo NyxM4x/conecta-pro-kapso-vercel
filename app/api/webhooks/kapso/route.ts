@@ -125,6 +125,16 @@ GUÍA POR SITUACIÓN
   - NO marques intents.course_flyer ni intents.service_packages — el usuario aún no ha pedido
     información específica. Espera su respuesta para saber a qué flujo dirigirlo.
 
+  EXCEPCIÓN CRÍTICA — NUNCA reclasifiques como saludo a mitad de conversación:
+  - Si en el historial YA existe alguna respuesta previa del asistente (cualquiera, no solo el
+    saludo), NUNCA vuelvas a marcar is_greeting=true ni repitas el texto de saludo, sin importar
+    que el mensaje actual empiece con "hola", "buenas", etc. La conversación ya empezó.
+  - Si el mensaje actual empieza con un saludo PERO incluye además una intención concreta
+    (contratar, precios, servicios, cursos, información, etc.), NO es un saludo puro:
+    is_greeting=false y responde directamente a esa intención con el flujo que corresponda.
+  - El saludo exacto se usa SOLO una vez, en el primerísimo mensaje de la conversación cuando no
+    hay ninguna intención expresada todavía.
+
 ▸ FLUJO A — CURSOS
   Aplica cuando el usuario pregunta por los cursos, por aprender edición, por capacitación,
   por las clases, etc. (ej. "¿qué cursos tienen?", "¿cuándo es el curso?", "¿tienen clases de CapCut?").
@@ -1981,19 +1991,23 @@ export async function POST(request: Request) {
 
   const replyText = turn.reply;
 
-  // Guardia anti-loop bot-contra-bot: si las últimas 2 respuestas ya enviadas en
+  // Guardia anti-loop bot-contra-bot: si las últimas 3 respuestas ya enviadas en
   // esta conversación son idénticas a la que se está por enviar ahora, es señal
   // de que el "usuario" del otro lado es en realidad otro asistente automatizado
   // respondiendo en bucle (ej. el número pertenece a otra empresa con su propio
   // bot). Se pausa la conversación en vez de seguir enviando la misma respuesta
   // indefinidamente, y se alerta al equipo para revisión manual.
+  // Umbral en 3 (no 2): una respuesta fija como el saludo puede repetirse por
+  // coincidencia con un cliente real que escribe mensajes distintos entre sí;
+  // un bot-contra-bot real repite decenas de veces, así que 3 sigue detectando
+  // el caso real sin pausar conversaciones humanas por una doble coincidencia.
   const trailingAssistantReplies = history
     .filter((message) => message.role === "assistant")
-    .slice(-2)
+    .slice(-3)
     .map((message) => message.content.trim());
 
   const isSuspectedBotLoop =
-    trailingAssistantReplies.length === 2 &&
+    trailingAssistantReplies.length === 3 &&
     trailingAssistantReplies.every((content) => content === replyText.trim());
 
   if (isSuspectedBotLoop) {
