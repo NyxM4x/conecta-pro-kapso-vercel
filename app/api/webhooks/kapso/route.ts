@@ -716,6 +716,36 @@ async function extractIncomingFromEvent(
           phone,
         });
       }
+
+      // Guardar el mensaje humano en el historial (para dar contexto al bot si se
+      // reanuda y para la captura de lead durante el apagado). Si el texto es el
+      // formulario de intake enviado a mano, dejar el marcador [INTAKE_FORM_SENT].
+      const humanText = extractMessageText(event.message, event.conversation);
+      const humanPhone = event.conversation?.phone_number ?? event.message?.to ?? null;
+
+      if (humanText && humanPhone) {
+        try {
+          await saveOutboundMessage({
+            conversationId,
+            phone: humanPhone,
+            content: humanText,
+            rawPayload: { source: "business_app_manual", origin, message_id: messageId },
+          });
+
+          // Formulario de intake (laxo): contiene varios 📌 (los campos del formulario).
+          const intakeFieldCount = (humanText.match(/📌/g) ?? []).length;
+          if (intakeFieldCount >= 3) {
+            await saveOutboundMessage({
+              conversationId,
+              phone: humanPhone,
+              content: "[INTAKE_FORM_SENT] formulario de datos enviado manualmente (business_app)",
+              rawPayload: { type: "intake_form", source: "business_app_manual" },
+            });
+          }
+        } catch (saveError) {
+          console.error("save manual business_app message failed", saveError);
+        }
+      }
     }
 
     return null;
@@ -923,6 +953,59 @@ async function saveOutboundMessage(params: {
       },
     });
   }
+}
+
+// Detecta de forma determinista si el texto contiene datos de lead: un teléfono
+// plausible (7+ dígitos seguidos, tolerando espacios/guiones) más algo de texto.
+// Respaldo del LLM SOLO en el flujo de apagado con formulario ya pedido (ver POST),
+// donde un teléfono es, casi con certeza, el dato real del cliente.
+function detectLeadDataHeuristic(text: string): boolean {
+  if (!text) return false;
+  // Junta dígitos separados por espacios/guiones/paréntesis para contar la longitud real.
+  const digitRuns = text.match(/[\d][\d\s().-]{5,}\d/g) ?? [];
+  const hasPhone = digitRuns.some(
+    (run) => run.replace(/\D/g, "").length >= 7,
+  );
+  const hasText = /[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(text);
+  return hasPhone && hasText;
+}
+
+// Notifica un nuevo lead al grupo de Telegram y, si tuvo éxito, guarda el marcador
+// [TELEGRAM_LEAD_SENT] para no repetir. Centralizado para reutilizarse desde el flujo
+// normal, el de silencio y el de apagado del bot.
+async function notifyLeadToTelegram(params: {
+  history: HistoryMessage[];
+  phone: string;
+  contactName?: string | null;
+  conversationId?: string;
+  fallbackText?: string;
+}): Promise<boolean> {
+  const recentClientMessages = params.history
+    .filter((message) => message.role === "user")
+    .slice(-6)
+    .map((message) => `• ${message.content}`)
+    .join("\n");
+
+  const notified = await sendTelegramNotification(
+    [
+      "🟢 <b>Nuevo lead — Conecta Pro</b>",
+      `👤 Contacto: ${params.contactName ?? "Sin nombre"}`,
+      `📱 WhatsApp: ${params.phone}`,
+      `💬 Mensajes recientes del cliente:\n${(recentClientMessages || params.fallbackText || "").slice(0, 800)}`,
+      `🆔 Conversación: ${params.conversationId ?? "N/A"}`,
+    ].join("\n"),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: "[TELEGRAM_LEAD_SENT] notificación de lead enviada a Telegram",
+      rawPayload: { type: "telegram_notification", event: "lead" },
+    });
+  }
+
+  return notified;
 }
 
 async function acquireReplyLock(params: {
@@ -2082,6 +2165,72 @@ export async function POST(request: Request) {
       expiresAt: pauseState.expiresAt ?? null,
     });
 
+    // Aunque el bot esté apagado (humano tomó el chat), la captura del lead debe
+    // seguir funcionando: si ya se pidió el formulario y aún no se notificó el lead,
+    // detectamos si el cliente envió sus datos y notificamos a Telegram — SIN responder
+    // por WhatsApp. Gate para no gastar llamadas de OpenAI en cada mensaje pausado.
+    let leadNotifiedWhilePaused = false;
+    try {
+      const [intakeFormSentPaused, telegramLeadSentPaused] = await Promise.all([
+        hasIntakeFormBeenSent(lastMessage.conversationId),
+        hasTelegramLeadBeenSent(lastMessage.conversationId),
+      ]);
+
+      if (intakeFormSentPaused && !telegramLeadSentPaused) {
+        const pausedHistory = await getRecentConversationHistory(
+          lastMessage.conversationId,
+          12,
+        );
+
+        // Respaldo determinista acotado: un teléfono + texto tras haber pedido el
+        // formulario es, casi con certeza, el dato real del cliente.
+        const heuristicLead = detectLeadDataHeuristic(lastMessage.text);
+
+        let llmLead = false;
+        if (!heuristicLead) {
+          const pausedTurn = await generateAssistantTurn({
+            history: pausedHistory,
+            conversationId: lastMessage.conversationId,
+            messageId: lastMessage.messageId,
+            phone: lastMessage.from,
+          });
+          llmLead = pausedTurn.lead_data_submitted;
+        }
+
+        if (heuristicLead || llmLead) {
+          leadNotifiedWhilePaused = await notifyLeadToTelegram({
+            history: pausedHistory,
+            phone: lastMessage.from,
+            contactName: lastMessage.contactName,
+            conversationId: lastMessage.conversationId,
+            fallbackText: lastMessage.text,
+          });
+
+          await logSystemEvent({
+            level: "info",
+            eventType: "lead_notified_while_paused",
+            conversationId: lastMessage.conversationId,
+            messageId: lastMessage.messageId,
+            contactPhone: lastMessage.from,
+            metadata: {
+              detection: heuristicLead ? "heuristic" : "llm",
+              notified: leadNotifiedWhilePaused,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      console.error("lead capture while paused failed", error);
+      await logSystemEvent({
+        level: "error",
+        eventType: "lead_capture_while_paused_failed",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        errorMessage: getErrorMessage(error),
+      });
+    }
+
     await logSystemEvent({
       level: "info",
       eventType: "bot_reply_skipped_paused",
@@ -2091,6 +2240,7 @@ export async function POST(request: Request) {
       metadata: {
         reason: pauseState.reason ?? null,
         expires_at: pauseState.expiresAt ?? null,
+        lead_notified_while_paused: leadNotifiedWhilePaused,
       },
     });
 
@@ -2376,6 +2526,19 @@ export async function POST(request: Request) {
       messageId: lastMessage.messageId,
     });
 
+    // Aunque el bot guarde silencio, si el modelo detectó que el lead quedó completo
+    // en este turno, se notifica igual al asesor (la notificación no debe depender de
+    // que se responda por WhatsApp).
+    if (turn.lead_data_submitted && !telegramLeadSent) {
+      await notifyLeadToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: lastMessage.conversationId,
+        fallbackText: lastMessage.text,
+      });
+    }
+
     await markReplyLockSent({
       lastMessageId: lastMessage.messageId,
       conversationId: lastMessage.conversationId,
@@ -2391,6 +2554,7 @@ export async function POST(request: Request) {
       contactPhone: lastMessage.from,
       metadata: {
         duration_ms: Date.now() - generationStartedAt,
+        lead_notified: turn.lead_data_submitted && !telegramLeadSent,
       },
     });
 
@@ -2542,30 +2706,13 @@ export async function POST(request: Request) {
     // campo por campo), se incluyen los últimos mensajes del cliente y no
     // solo el último, para que el asesor tenga el contexto completo.
     if (turn.lead_data_submitted && !telegramLeadSent) {
-      const recentClientMessages = history
-        .filter((message) => message.role === "user")
-        .slice(-6)
-        .map((message) => `• ${message.content}`)
-        .join("\n");
-
-      const notified = await sendTelegramNotification(
-        [
-          "🟢 <b>Nuevo lead — Conecta Pro</b>",
-          `👤 Contacto: ${lastMessage.contactName ?? "Sin nombre"}`,
-          `📱 WhatsApp: ${lastMessage.from}`,
-          `💬 Mensajes recientes del cliente:\n${(recentClientMessages || lastMessage.text).slice(0, 800)}`,
-          `🆔 Conversación: ${mediaConversationId ?? "N/A"}`,
-        ].join("\n"),
-      );
-
-      if (notified) {
-        await saveOutboundMessage({
-          conversationId: mediaConversationId,
-          phone: lastMessage.from,
-          content: "[TELEGRAM_LEAD_SENT] notificación de lead enviada a Telegram",
-          rawPayload: { type: "telegram_notification", event: "lead" },
-        });
-      }
+      await notifyLeadToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: mediaConversationId,
+        fallbackText: lastMessage.text,
+      });
     }
 
     // Pago: el cliente confirmó pago (comprobante).
