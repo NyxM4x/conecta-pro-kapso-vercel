@@ -69,8 +69,13 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   NUNCA ofrezcas cotización a medida: ese servicio no existe.
 - Incluye producción profesional (grabación + edición) orientada a redes sociales (TikTok, Instagram).
 - También se trabaja con dron según el paquete.
-- Los precios los confirma el equipo asesor — no los inventes. Si preguntan, di que un asesor
-  les confirmará según su caso.
+- Los precios los confirma el equipo asesor — no los inventes ni los recites. El flyer de
+  paquetes ya muestra los precios; si preguntan, di que un asesor les confirmará según su caso.
+- DISPARADORES POR PRECIO: los montos 2500 y 5000 (Bs, al mes) son los precios conocidos de
+  los paquetes (6 videos = 2500, 14 videos = 5000). Si el cliente menciona "2500" o "5000"
+  (ej. "vengo del anuncio de los 2500"), viene interesado en paquetes → activa este flujo.
+  NO trates 2500/5000 como "cantidad de videos no estándar" (son precios, no cantidades) y
+  NO recites el monto: el flyer lo muestra.
 - Este flujo activa intents.service_packages = true.
 
 SERVICIO DESCONTINUADO — Promo de edición de un video por 50 Bs:
@@ -144,6 +149,9 @@ GUÍA POR SITUACIÓN
   - Si el mensaje actual empieza con un saludo PERO incluye además una intención concreta
     (contratar, precios, servicios, cursos, información, etc.), NO es un saludo puro:
     is_greeting=false y responde directamente a esa intención con el flujo que corresponda.
+    EJEMPLO: "Buenas noches, vengo del anuncio de TikTok de los 2500 al mes, quería más
+    información" NO es un saludo puro — el cliente ya viene interesado en paquetes:
+    is_greeting=false y responde con el FLUJO B (consulta general de paquetes), NO con el saludo.
   - El saludo exacto se usa SOLO una vez, en el primerísimo mensaje de la conversación cuando no
     hay ninguna intención expresada todavía.
 
@@ -176,6 +184,16 @@ GUÍA POR SITUACIÓN
 
   Incluye el formulario de leads EXACTAMENTE como aparece abajo, con intro antes
   (ej. "¡Con gusto! Para coordinar todo, necesito algunos datos 📋"):
+
+  DISPARADORES DE INTENCIÓN CLARA (además de "quiero contratar"): una respuesta afirmativa
+  que ELIGE un paquete tras haber ofrecido elegir cuenta como intención clara de contratar y
+  DEBE incluir el formulario + service_intake_requested=true. Ejemplos: "sí, de 6", "el de 6",
+  "6 videos", "las 6", "quiero el de 14", "el de 14", "las 14", "me interesa el de 14".
+
+  MONTOS EN BS NO SON CANTIDADES: si el cliente menciona un precio (ej. "2500", "el de 2500",
+  "el de 3000"), eso es un PRECIO, no una cantidad de videos. NO lo trates como "cantidad no
+  estándar" ni pidas otra cantidad: guíalo con naturalidad a elegir entre los paquetes de
+  6 o 14 videos.
 
   📌 Nombre:
   📌 Nombre de tu empresa o emprendimiento:
@@ -237,7 +255,7 @@ GUÍA POR SITUACIÓN
   - Marca lead_data_submitted=true SOLO en ese turno de cierre, nunca en turnos posteriores de la
     misma conversación.
 
-▸ FLUJO B — CANTIDAD DE VIDEOS QUE NO ES 6, 12 NI 30
+▸ FLUJO B — CANTIDAD DE VIDEOS QUE NO ES 6 NI 14
   Si pide una cantidad que no coincide con los paquetes estándar (ej. 2, 3, 5, 7, 8, 10, 15, 20):
 
   "Entendido. Nuestros paquetes son fijos: 6 o 14 videos, no manejamos otras cantidades ni
@@ -387,6 +405,27 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   La promo de 50 Bs ya NO existe — nunca la ofrezcas. Solo si el cliente la menciona
   explícitamente, informa que ya no está disponible (cupos agotados).
 `;
+
+// Texto EXACTO del formulario de intake de leads (mismo contenido que el bloque
+// "intención clara de contratar" del SYSTEM_PROMPT). Se centraliza aquí para que la
+// red de seguridad determinista pueda enviar el mismo formulario si el LLM lo omite.
+const LEAD_INTAKE_FORM = `¡Con gusto! Para coordinar todo, necesito algunos datos 📋
+
+📌 Nombre:
+📌 Nombre de tu empresa o emprendimiento:
+📌 Cargo dentro de la empresa:
+📌 Número de contacto personal:
+📌 Rubro o sector: (Ej. gastronomía, belleza, moda, salud, etc.)
+📌 Instagram o redes sociales:
+📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
+📌 ¿Tienes alguna referencia de contenido que te guste? (Opcional)`;
+
+// Texto EXACTO del Flujo B — consulta general de paquetes (mismo contenido que el
+// SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual
+// cuando el LLM devuelve el saludo genérico pese a haber intención de paquetes.
+const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales. Puedes elegir entre 6 o 14 videos, todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
+
+Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.`;
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -1412,6 +1451,88 @@ function detectPromoKeyword(text: string): boolean {
   );
 }
 
+// --- Red de seguridad: elección de paquete -------------------------------
+// Cantidades de video válidas de los paquetes (hoy 6 y 14). Pueden cambiar en el
+// futuro: editar esta lista cuando cambie la oferta.
+const VALID_PACKAGE_SIZES = [6, 14];
+
+// Palabras afirmativas / de selección que, junto a un tamaño de paquete válido,
+// indican que el cliente ESTÁ eligiendo un paquete (intención clara de contratar).
+const AFFIRMATIVE_CHOICE_REGEX =
+  /\b(SI|QUIERO|EL DE|LOS DE|LAS|ME INTERESA|DAME|VA|DALE|ESE|ESA)\b/;
+
+// Keywords de consulta de precio: si aparecen (o hay "?"), NO es una selección
+// de paquete sino una pregunta, y la red de seguridad no debe dispararse.
+const PRICE_QUESTION_REGEX = /(\bCUANTO\b|\bPRECIO\b|\bCOSTO\b|\bCOSTA\b|\?)/;
+
+// Devuelve true si el texto contiene alguno de los números EXACTOS buscados como
+// grupo de dígitos completo (no como subcadena de otro número). Ej: buscar 2500 en
+// "25000" o "14000" da false; en "2500bs" o "2.500 bs" da true. Tolera separadores
+// de miles (2.500 / 2,500) quitándolos antes de tokenizar.
+function containsExactNumber(text: string, values: number[]): boolean {
+  const cleaned = text.replace(/(\d)[.,](\d)/g, "$1$2");
+  const groups: string[] = cleaned.match(/\d+/g) ?? [];
+  return values.some((value) => groups.includes(String(value)));
+}
+
+// Detecta si el mensaje del cliente es una elección afirmativa de un paquete
+// válido (6 o 14), excluyendo preguntas de precio y montos en Bs (2500/14000 no
+// cuentan como cantidad porque no son el número exacto 6 o 14).
+function detectPackageChoice(text: string): boolean {
+  if (!text) return false;
+
+  const normalized = normalizeForMatch(text);
+
+  if (PRICE_QUESTION_REGEX.test(normalized)) return false;
+  if (!AFFIRMATIVE_CHOICE_REGEX.test(normalized)) return false;
+
+  return containsExactNumber(normalized, VALID_PACKAGE_SIZES);
+}
+
+// Precios conocidos de los paquetes (6 videos=2500, 14 videos=5000). Se usan SOLO
+// como disparadores de intención: si el cliente menciona uno de estos montos, viene
+// interesado en paquetes. El bot nunca recita estos precios (el flyer los muestra).
+const PACKAGE_PRICES = [2500, 5000];
+
+// Detecta la mención de un precio de paquete (2500 o 5000) como monto exacto.
+// Excluye números mayores que lo contengan ("25000", "50000") por tokenización.
+function detectPackagePriceMention(text: string): boolean {
+  if (!text) return false;
+  return containsExactNumber(normalizeForMatch(text), PACKAGE_PRICES);
+}
+
+// Palabras que denotan intención de cada línea, para suprimir el saludo genérico
+// cuando el primer mensaje ya trae contexto claro (ahorro de mensajes).
+const SERVICE_PACKAGES_KEYWORDS =
+  /\b(PAQUETE|PAQUETES|GRABACION|GRABACIONES|EDICION|SERVICIO|SERVICIOS|VIDEOS|PRODUCCION|CONTENIDO|DRON)\b/;
+const COURSE_KEYWORDS =
+  /\b(CURSO|CURSOS|TALLER|TALLERES|CAPACITACION|FORMACION|APRENDER|CAPCUT|CLASE|CLASES)\b/;
+const APPOINTMENT_KEYWORDS =
+  /\b(CITA|VISITA|OFICINA|AGENDAR|UBICACION|DIRECCION|HORARIO)\b/;
+
+type DetectedIntent = "service_packages" | "course" | "appointment";
+
+// Detecta de forma determinista si el mensaje del cliente ya expresa una intención
+// concreta (para no responder con el saludo genérico). Devuelve la primera que
+// aplique según prioridad: paquetes > cursos > cita.
+function detectExplicitIntent(text: string): DetectedIntent | null {
+  if (!text) return null;
+
+  const normalized = normalizeForMatch(text);
+
+  if (
+    detectPackagePriceMention(text) ||
+    detectPackageChoice(text) ||
+    SERVICE_PACKAGES_KEYWORDS.test(normalized)
+  ) {
+    return "service_packages";
+  }
+  if (COURSE_KEYWORDS.test(normalized)) return "course";
+  if (APPOINTMENT_KEYWORDS.test(normalized)) return "appointment";
+
+  return null;
+}
+
 // --- Toggle manual de la promo del live ---------------------------------
 // Valores fijos en código a propósito (sin env var, sin columna en BD): el
 // equipo los cambia a mano aquí antes/durante cada transmisión live.
@@ -2065,6 +2186,25 @@ export async function POST(request: Request) {
     );
   }
 
+  // Anti-saludo: si es el primer contacto (aún no hay respuesta del asistente) pero
+  // el mensaje ya trae intención concreta, se le indica al LLM que NO use el saludo
+  // genérico y vaya directo al flujo. Ahorra un mensaje de WhatsApp (costo Meta).
+  const hasAssistantHistory = history.some((message) => message.role === "assistant");
+  const detectedIntent = detectExplicitIntent(lastMessage.text);
+
+  if (!hasAssistantHistory && detectedIntent) {
+    const intentDirective: Record<DetectedIntent, string> = {
+      service_packages:
+        "El cliente YA expresó intención de paquetes de producción en su mensaje (menciona precio 2500/5000, cantidad 6/14, o palabras como paquetes/grabación/edición/videos). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (párrafo de paquetes) y marca intents.service_packages=true. NO recites precios: el flyer los muestra.",
+      course:
+        "El cliente YA preguntó por cursos en su mensaje. NO es un saludo puro: marca is_greeting=false, responde con el FLUJO A (cursos) y marca intents.course_flyer=true.",
+      appointment:
+        "El cliente YA preguntó por la oficina/cita en su mensaje. NO es un saludo puro: marca is_greeting=false y responde con el flujo de oficina (ubicación + horario + ofrecer agendar).",
+    };
+
+    contextParts.push(intentDirective[detectedIntent]);
+  }
+
   const extraContext = contextParts.join("\n\n");
 
   const newerInbound = await getNewestInboundMessage(
@@ -2110,6 +2250,72 @@ export async function POST(request: Request) {
     messageId: lastMessage.messageId,
     phone: lastMessage.from,
   });
+
+  // Red de seguridad determinista: si el cliente eligió explícitamente un paquete
+  // válido (6 o 14) pero el LLM NO marcó service_intake_requested, forzamos el envío
+  // del formulario. Cubre respuestas cortas/elípticas ("Si de 6 videos", "el de 14")
+  // que el modelo chico a veces no clasifica como intención clara de contratar.
+  // Guardas: no interferir con el silencio de intake, no duplicar si el LLM ya lo
+  // marcó, y no reenviar si el formulario ya se envió antes en esta conversación.
+  if (
+    turn.should_reply &&
+    !turn.service_intake_requested &&
+    !intakeFormSent &&
+    detectPackageChoice(lastMessage.text)
+  ) {
+    console.log("intake form forced by safety net (package choice detected)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.service_intake_requested = true;
+    turn.reply = LEAD_INTAKE_FORM;
+    turn.intents.service_packages = true;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "intake_form_forced_by_safety_net",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
+  // Red de seguridad anti-saludo: si pese a la directiva el LLM devolvió el saludo
+  // genérico (is_greeting=true) en el primer contacto pero el mensaje trae intención
+  // de paquetes por precio/keywords, forzamos el Flujo B (info + flyer) en vez del
+  // saludo. No pisa el caso de elección explícita de paquete (ya cubierto arriba, que
+  // marca service_intake_requested). Solo aplica al caso de alta confianza (paquetes).
+  if (
+    turn.should_reply &&
+    turn.is_greeting &&
+    !turn.service_intake_requested &&
+    !hasAssistantHistory &&
+    detectedIntent === "service_packages"
+  ) {
+    console.log("generic greeting suppressed by safety net (package intent detected)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.is_greeting = false;
+    turn.reply = SERVICE_PACKAGES_INFO;
+    turn.intents.service_packages = true;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "greeting_suppressed_by_safety_net",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
 
   // Silencio durante recolección de datos de lead: el modelo decide que este
   // mensaje del cliente todavía no amerita respuesta (llegó en medio de una
