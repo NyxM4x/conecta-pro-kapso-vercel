@@ -3,7 +3,9 @@
     "allow": [
       "Bash(npm install *)",
       "Bash(node -e ' *)",
-      "Bash(rm -f /tmp/t.mjs /tmp/t2.mjs /tmp/t3.mjs)"
+      "Bash(rm -f /tmp/t.mjs /tmp/t2.mjs /tmp/t3.mjs)",
+      "Bash(node \"C:/Users/HP/AppData/Local/Temp/claude/c--Users-HP-Desktop-ConectaPro-conecta-pro-kapso-vercel/7de9302d-c406-45bb-a8a3-e7e7a9718188/scratchpad/detectors.test.mjs\")",
+      "Bash(echo \"exit=$?\")"
     ],
     "additionalDirectories": [
       "\\tmp"

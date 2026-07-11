@@ -67,6 +67,9 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
 - Conecta Pro ofrece paquetes de grabación y edición de video para negocios y marcas personales.
 - Paquetes disponibles: 6 o 14 videos. NO existen otras cantidades ni cotizaciones a medida/personalizadas.
   NUNCA ofrezcas cotización a medida: ese servicio no existe.
+- Los paquetes tienen NOMBRE en el flyer: "Exprés" = paquete de 6 videos; "Premium" = paquete de 14 videos.
+  Si el cliente menciona un nombre ("me interesa el exprés", "quiero el premium"), está eligiendo ese
+  paquete → es intención clara de contratar (enviar el formulario de datos).
 - Incluye producción profesional (grabación + edición) orientada a redes sociales (TikTok, Instagram).
 - También se trabaja con dron según el paquete.
 - Los precios los confirma el equipo asesor — no los inventes ni los recites. El flyer de
@@ -189,6 +192,10 @@ GUÍA POR SITUACIÓN
   que ELIGE un paquete tras haber ofrecido elegir cuenta como intención clara de contratar y
   DEBE incluir el formulario + service_intake_requested=true. Ejemplos: "sí, de 6", "el de 6",
   "6 videos", "las 6", "quiero el de 14", "el de 14", "las 14", "me interesa el de 14".
+  También cuenta elegir el paquete por su NOMBRE: "me interesa el exprés", "quiero el premium",
+  "el exprés", "el premium" (Exprés=6 videos, Premium=14 videos). Y si el flyer de paquetes ya
+  se envió y el cliente responde eligiendo ("me interesa ese", "quiero ese", "dame ese"), también
+  es intención clara → enviar el formulario.
 
   MONTOS EN BS NO SON CANTIDADES: si el cliente menciona un precio (ej. "2500", "el de 2500",
   "el de 3000"), eso es un PRECIO, no una cantidad de videos. NO lo trates como "cantidad no
@@ -1475,6 +1482,13 @@ function containsExactNumber(text: string, values: number[]): boolean {
   return values.some((value) => groups.includes(String(value)));
 }
 
+// Nombres propios de los paquetes tal como salen en el flyer (Exprés=6, Premium=14).
+// Como el cliente solo puede conocer estos nombres DESPUÉS de ver el flyer, mencionar
+// uno equivale a elegir un paquete → intención clara de contratar. Normalizados sin
+// tilde/mayúsculas (normalizeForMatch). Editar si cambian los nombres.
+const PACKAGE_NAMES = ["EXPRES", "PREMIUM"];
+const PACKAGE_NAME_REGEX = new RegExp(`\\b(${PACKAGE_NAMES.join("|")})\\b`);
+
 // Detecta si el mensaje del cliente es una elección afirmativa de un paquete
 // válido (6 o 14), excluyendo preguntas de precio y montos en Bs (2500/14000 no
 // cuentan como cantidad porque no son el número exacto 6 o 14).
@@ -1487,6 +1501,38 @@ function detectPackageChoice(text: string): boolean {
   if (!AFFIRMATIVE_CHOICE_REGEX.test(normalized)) return false;
 
   return containsExactNumber(normalized, VALID_PACKAGE_SIZES);
+}
+
+// Detecta si el cliente menciona el NOMBRE de un paquete (Exprés/Premium). Basta
+// con nombrarlo (no requiere frase afirmativa): conocer el nombre implica haber
+// visto el flyer. Se excluye si es una consulta de precio ("cuánto cuesta el exprés").
+function detectPackageNameChoice(text: string): boolean {
+  if (!text) return false;
+  const normalized = normalizeForMatch(text);
+  if (PRICE_QUESTION_REGEX.test(normalized)) return false;
+  return PACKAGE_NAME_REGEX.test(normalized);
+}
+
+// Elección de paquete tras el flyer: si el flyer de paquetes YA se envió y el cliente
+// responde con una frase de selección afirmativa ("me interesa el ___", "quiero el
+// ___", "ese", "dame ese"), está eligiendo un paquete aunque no diga número ni nombre
+// exacto. Respaldo independiente de los nombres (sobrevive a renombres).
+function detectFlyerFollowupChoice(text: string, flyerAlreadySent: boolean): boolean {
+  if (!text || !flyerAlreadySent) return false;
+  const normalized = normalizeForMatch(text);
+  if (PRICE_QUESTION_REGEX.test(normalized)) return false;
+  return AFFIRMATIVE_CHOICE_REGEX.test(normalized);
+}
+
+// Decisión unificada para forzar el formulario de intake: cualquiera de las señales
+// de elección de paquete (por cantidad 6/14, por nombre Exprés/Premium, o afirmación
+// tras haber visto el flyer).
+function shouldForceIntakeForm(text: string, flyerAlreadySent: boolean): boolean {
+  return (
+    detectPackageChoice(text) ||
+    detectPackageNameChoice(text) ||
+    detectFlyerFollowupChoice(text, flyerAlreadySent)
+  );
 }
 
 // Precios conocidos de los paquetes (6 videos=2500, 14 videos=5000). Se usan SOLO
@@ -1523,6 +1569,7 @@ function detectExplicitIntent(text: string): DetectedIntent | null {
   if (
     detectPackagePriceMention(text) ||
     detectPackageChoice(text) ||
+    detectPackageNameChoice(text) ||
     SERVICE_PACKAGES_KEYWORDS.test(normalized)
   ) {
     return "service_packages";
@@ -2251,17 +2298,18 @@ export async function POST(request: Request) {
     phone: lastMessage.from,
   });
 
-  // Red de seguridad determinista: si el cliente eligió explícitamente un paquete
-  // válido (6 o 14) pero el LLM NO marcó service_intake_requested, forzamos el envío
-  // del formulario. Cubre respuestas cortas/elípticas ("Si de 6 videos", "el de 14")
-  // que el modelo chico a veces no clasifica como intención clara de contratar.
+  // Red de seguridad determinista: si el cliente eligió un paquete pero el LLM NO
+  // marcó service_intake_requested, forzamos el envío del formulario. Cubre elección
+  // por cantidad ("Si de 6 videos", "el de 14"), por nombre ("me interesa el exprés",
+  // "el premium") y afirmación tras ver el flyer ("me interesa ese") — casos que el
+  // modelo chico a veces no clasifica como intención clara de contratar.
   // Guardas: no interferir con el silencio de intake, no duplicar si el LLM ya lo
   // marcó, y no reenviar si el formulario ya se envió antes en esta conversación.
   if (
     turn.should_reply &&
     !turn.service_intake_requested &&
     !intakeFormSent &&
-    detectPackageChoice(lastMessage.text)
+    shouldForceIntakeForm(lastMessage.text, mediaStatus.service_packages)
   ) {
     console.log("intake form forced by safety net (package choice detected)", {
       conversationId: lastMessage.conversationId,
