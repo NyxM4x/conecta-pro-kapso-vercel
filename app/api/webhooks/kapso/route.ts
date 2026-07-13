@@ -197,6 +197,20 @@ GUÍA POR SITUACIÓN
   se envió y el cliente responde eligiendo ("me interesa ese", "quiero ese", "dame ese"), también
   es intención clara → enviar el formulario.
 
+  REGLA GENERAL — SELECCIONAR UN PAQUETE ES INTENCIÓN COMERCIAL SUFICIENTE:
+  Si YA presentaste los paquetes (por texto o por flyer) y el cliente responde señalando UNO
+  de ellos de cualquier forma, es una elección → responde con el formulario y marca
+  service_intake_requested=true. No hace falta que diga "quiero contratar". Cuenta si lo
+  identifica por cantidad ("el de 6", "el de 14"), por nombre ("el exprés", "el premium"),
+  por precio ("el de 2500", "el paquete de 5000"), por referencia ("ese", "ese mismo",
+  "me interesa ese") o por posición/atributo ("el primero", "el básico", "el más económico",
+  "el completo"). Ante una elección inequívoca NUNCA respondas solo "¡excelente elección!"
+  ni sigas dando detalles: envía el formulario en ese mismo mensaje.
+
+  PERO SI ES UNA PREGUNTA, NO ES UNA ELECCIÓN: "¿cuánto cuesta el de 6?", "¿qué incluye el
+  premium?", "¿cuál me conviene?", "¿el de 6 tiene dron?" son consultas → respóndelas con
+  naturalidad y NO envíes el formulario todavía.
+
   MONTOS EN BS NO SON CANTIDADES: si el cliente menciona un precio (ej. "2500", "el de 2500",
   "el de 3000"), eso es un PRECIO, no una cantidad de videos. NO lo trates como "cantidad no
   estándar" ni pidas otra cantidad: guíalo con naturalidad a elegir entre los paquetes de
@@ -338,6 +352,21 @@ GUÍA POR SITUACIÓN
 
   - Marca appointment_scheduled = true SOLO en este mensaje de confirmación final, nunca antes.
 
+▸ CLIENTE PIDE UNA LLAMADA / QUIERE CERRAR POR TELÉFONO
+  Aplica cuando el cliente pide hablar por teléfono o que lo llamen para cerrar la contratación
+  (ej. "quiero llamar para confirmar el paquete de grabación de videos", "que me llamen",
+  "prefiero hablar por llamada", "pásame un número para llamar", "llámenme para pagar").
+
+  Es una intención de contratación clara: NO envíes el formulario de leads ni pidas más datos —
+  el asesor se comunica directamente. Responde con este tono, texto plano:
+
+  "En un momento un asesor se comunicará a este número 📞"
+
+  - Marca call_request = true SOLO en ese turno, para que el asesor sea notificado de inmediato.
+  - Si el cliente pasa OTRO número distinto al del WhatsApp actual para que lo llamen, repítelo en
+    tu respuesta ("Un asesor te llamará al [número] 📞") y marca call_request = true igual.
+  - No lo marques en turnos posteriores de la misma conversación.
+
 ▸ CLIENTE SOLO AGRADECE ("gracias", "aya gracias", "ok gracias", etc.) — MUY IMPORTANTE, AHORRO DE MENSAJES
   Esta respuesta de cierre SOLO se envía cuando el ÚLTIMO mensaje del usuario es EXCLUSIVAMENTE un
   agradecimiento o cierre de conversación (ej. "gracias", "ok gracias", "listo, gracias", "muchas
@@ -398,6 +427,12 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   ni cuando el usuario solo pregunta algo sin haber dado ningún dato todavía.
   Márcalo true SOLO UNA VEZ por conversación — en el turno donde se completan los datos esenciales
   o llega la señal de cierre; en turnos posteriores de la misma conversación no vuelvas a marcarlo.
+- call_request: true cuando el cliente pide una llamada telefónica o quiere cerrar/contratar por
+  teléfono (ej. "quiero llamar para confirmar el paquete", "que me llamen", "prefiero una llamada").
+  Ver flujo "CLIENTE PIDE UNA LLAMADA" arriba. Es una intención de contratación: dispara el aviso
+  al asesor aunque el cliente nunca haya llenado el formulario de leads.
+  NO lo marques si el cliente solo pregunta el número de la oficina sin pedir que lo llamen.
+  Márcalo SOLO UNA VEZ por conversación, en el turno donde lo pide.
 - appointment_scheduled: true SOLO en el mensaje donde el cliente CONFIRMA explícitamente una cita
   ya propuesta (ej. "confirmar", "sí, confirmo", o da día/hora y confirma en el mismo mensaje como
   "voy el martes a las 10am, confirmo"). Ver flujo "CLIENTE CONFIRMA LA CITA" arriba.
@@ -689,6 +724,23 @@ async function extractIncomingFromEvent(
       status: event.message?.kapso?.status ?? null,
     });
 
+    // Diagnóstico: registrar el origin de CADA saliente en system_logs para poder
+    // ver en Supabase con qué origin llegan los mensajes manuales del celular vs los
+    // del bot. Sirve para confirmar/ajustar la condición de apagado automático.
+    await logSystemEvent({
+      level: "info",
+      eventType: "outbound_origin_seen",
+      conversationId: conversationId ?? undefined,
+      messageId: messageId ?? undefined,
+      contactPhone: phone ?? undefined,
+      metadata: {
+        origin,
+        direction: kapsoDirection,
+        will_auto_pause: origin === "business_app",
+        status: event.message?.kapso?.status ?? null,
+      },
+    });
+
     // Respuesta humana desde la app de WhatsApp Business: apaga el bot
     // para esta conversación hasta que se reanude manualmente (/resume).
     if (origin === "business_app" && conversationId) {
@@ -970,10 +1022,111 @@ function detectLeadDataHeuristic(text: string): boolean {
   return hasPhone && hasText;
 }
 
-// Notifica un nuevo lead al grupo de Telegram y, si tuvo éxito, guarda el marcador
+// Detecta de forma determinista que el cliente pide una llamada telefónica para
+// cerrar la contratación ("quiero llamar para confirmar el paquete", "que me llamen").
+// Respaldo del LLM: sirve incluso con el bot apagado, donde no se generan turnos.
+function detectCallRequestHeuristic(text: string): boolean {
+  if (!text) return false;
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+
+  // Exclusiones primero: el cliente pide NUESTRO número o rechaza las llamadas.
+  // Estas frases contienen "llamar"/"numero" pero NO son una solicitud de llamada.
+  const isExcluded =
+    /\b(cual es|cuales son|me pasan|me pasas|me das|pasame|dame)\b[^.?!]{0,20}\b(su |el |un )?(numero|telefono|celular|contacto)\b/.test(
+      normalized,
+    ) ||
+    /\bdonde (puedo|podria) llamar\b/.test(normalized) ||
+    /\ba que numero (puedo |podria )?llamo?\b/.test(normalized) ||
+    /\bno (quiero|deseo|me interesan?)\b[^.?!]{0,15}\bllamad/.test(normalized) ||
+    /\bprefiero que no me llamen\b/.test(normalized) ||
+    /\bno me llamen\b/.test(normalized);
+
+  if (isExcluded) return false;
+
+  // Pide una llamada / quiere cerrar por teléfono con un asesor.
+  return (
+    /\b(quiero|queria|puedo|podria|deseo|necesito|me gustaria|prefiero|quisiera)\s+(hacer\s+una\s+)?llamar\b/.test(
+      normalized,
+    ) ||
+    /\b(llamenme|llamame|me pueden llamar|pueden llamarme|que me llamen|me pueden contactar|pueden contactarme|comuniquense conmigo)\b/.test(
+      normalized,
+    ) ||
+    /\b(por|una|hacer una|mediante|en|mandar|manden)\s+(video)?llamada\b/.test(
+      normalized,
+    ) ||
+    /\b(coordinar|cerrar|hablar|conversar|contratar|confirmar)\s+(por|via|mediante)\s+(telefono|llamada|celular)\b/.test(
+      normalized,
+    ) ||
+    /\b(quiero|queria|deseo|necesito|me gustaria|quisiera|prefiero)\s+(hablar|conversar)\b/.test(
+      normalized,
+    ) ||
+    /\bhablar\s+(por|con)\s+(telefono|llamada|un asesor|una asesora|alguien)\b/.test(
+      normalized,
+    )
+  );
+}
+
+// Origen del disparo del lead, para auditoría en los logs.
+type LeadTrigger = "intake_form" | "call_request_assistant" | "call_request_heuristic";
+
+// Notifica un lead al grupo de Telegram y, si tuvo éxito, guarda el marcador
 // [TELEGRAM_LEAD_SENT] para no repetir. Centralizado para reutilizarse desde el flujo
 // normal, el de silencio y el de apagado del bot.
+// `kind: "call_request"` cambia el encabezado a prioridad alta (el asesor debe llamar).
 async function notifyLeadToTelegram(params: {
+  history: HistoryMessage[];
+  phone: string;
+  contactName?: string | null;
+  conversationId?: string;
+  fallbackText?: string;
+  kind?: "intake" | "call_request";
+  trigger?: LeadTrigger;
+}): Promise<boolean> {
+  const recentClientMessages = params.history
+    .filter((message) => message.role === "user")
+    .slice(-6)
+    .map((message) => `• ${message.content}`)
+    .join("\n");
+
+  const headline =
+    params.kind === "call_request"
+      ? "🔴 <b>PRIORIDAD ALTA</b>\n📞 <b>Lead — Solicita llamada</b>"
+      : "🟢 <b>Nuevo lead — Conecta Pro</b>";
+
+  const notified = await sendTelegramNotification(
+    [
+      headline,
+      `👤 Contacto: ${params.contactName ?? "Sin nombre"}`,
+      `📱 WhatsApp: ${params.phone}`,
+      `💬 Mensajes recientes del cliente:\n${(recentClientMessages || params.fallbackText || "").slice(0, 800)}`,
+      `🆔 Conversación: ${params.conversationId ?? "N/A"}`,
+    ].join("\n"),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: "[TELEGRAM_LEAD_SENT] notificación de lead enviada a Telegram",
+      rawPayload: {
+        type: "telegram_notification",
+        event: "lead",
+        kind: params.kind ?? "intake",
+        trigger: params.trigger ?? "intake_form",
+      },
+    });
+  }
+
+  return notified;
+}
+
+// Actualización de un lead YA notificado: el cliente pidió llamada primero y después
+// completó el formulario. Evita un segundo lead independiente en Telegram; se envía
+// una sola vez, protegida por su propio marcador [TELEGRAM_LEAD_UPDATE_SENT].
+async function notifyLeadUpdateToTelegram(params: {
   history: HistoryMessage[];
   phone: string;
   contactName?: string | null;
@@ -988,10 +1141,10 @@ async function notifyLeadToTelegram(params: {
 
   const notified = await sendTelegramNotification(
     [
-      "🟢 <b>Nuevo lead — Conecta Pro</b>",
+      "🔄 <b>Lead actualizado — datos completos</b>",
       `👤 Contacto: ${params.contactName ?? "Sin nombre"}`,
       `📱 WhatsApp: ${params.phone}`,
-      `💬 Mensajes recientes del cliente:\n${(recentClientMessages || params.fallbackText || "").slice(0, 800)}`,
+      `💬 Datos enviados por el cliente:\n${(recentClientMessages || params.fallbackText || "").slice(0, 800)}`,
       `🆔 Conversación: ${params.conversationId ?? "N/A"}`,
     ].join("\n"),
   );
@@ -1000,8 +1153,9 @@ async function notifyLeadToTelegram(params: {
     await saveOutboundMessage({
       conversationId: params.conversationId,
       phone: params.phone,
-      content: "[TELEGRAM_LEAD_SENT] notificación de lead enviada a Telegram",
-      rawPayload: { type: "telegram_notification", event: "lead" },
+      content:
+        "[TELEGRAM_LEAD_UPDATE_SENT] actualización de lead enviada a Telegram",
+      rawPayload: { type: "telegram_notification", event: "lead_update" },
     });
   }
 
@@ -1310,6 +1464,7 @@ const AssistantTurnSchema = z.object({
   payment_confirmation: z.boolean(),
   service_intake_requested: z.boolean(),
   lead_data_submitted: z.boolean(),
+  call_request: z.boolean(),
   appointment_scheduled: z.boolean(),
   intents: z.object({
     course_flyer: z.boolean(),
@@ -1330,6 +1485,7 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   payment_confirmation: false,
   service_intake_requested: false,
   lead_data_submitted: false,
+  call_request: false,
   appointment_scheduled: false,
   intents: {
     course_flyer: false,
@@ -1551,9 +1707,25 @@ const VALID_PACKAGE_SIZES = [6, 14];
 const AFFIRMATIVE_CHOICE_REGEX =
   /\b(SI|QUIERO|EL DE|LOS DE|LAS|ME INTERESA|DAME|VA|DALE|ESE|ESA)\b/;
 
-// Keywords de consulta de precio: si aparecen (o hay "?"), NO es una selección
-// de paquete sino una pregunta, y la red de seguridad no debe dispararse.
-const PRICE_QUESTION_REGEX = /(\bCUANTO\b|\bPRECIO\b|\bCOSTO\b|\bCOSTA\b|\?)/;
+// Selección por REFERENCIA, sin decir número ni nombre: deícticos ("ese mismo"),
+// ordinales ("el primero") y superlativos ("el más económico", "el básico"). Estas
+// frases NO tienen sentido por sí solas: solo son una elección si el asistente ya
+// presentó los paquetes en la conversación (ver detectPackagesPresented). Por eso
+// viven separadas de AFFIRMATIVE_CHOICE_REGEX y nunca disparan sin contexto.
+const CONTEXTUAL_CHOICE_REGEX =
+  /\b(ESE|ESA|ESE MISMO|ESA MISMA|EL PRIMERO|LA PRIMERA|EL SEGUNDO|LA SEGUNDA|EL ULTIMO|EL BASICO|EL SENCILLO|EL SIMPLE|EL COMPLETO|EL GRANDE|EL CHICO|EL MENOR|EL MAYOR|EL MAS ECONOMICO|EL MAS BARATO|EL MAS CARO|EL MAS COMPLETO|EL ECONOMICO|EL BARATO)\b/;
+
+// Petición de información genérica: "quiero información", "quiero saber más", "dame
+// detalles". Contiene un verbo afirmativo ("quiero", "dame") pero NO señala ningún
+// paquete concreto → no es una selección y no debe abrir el formulario.
+const GENERIC_INFO_REGEX =
+  /\b(INFORMACION|INFO|INFORMES|DETALLES|SABER|CONOCER|CONSULTAR|COTIZACION|PRESUPUESTO)\b/;
+
+// Keywords de consulta: si aparecen (o hay "?"), el cliente está PREGUNTANDO, no
+// eligiendo, y la red de seguridad no debe dispararse. Cubre precio ("cuánto cuesta
+// el de 6") y consultas de contenido ("¿qué incluye el premium?", "cuál me conviene").
+const PRICE_QUESTION_REGEX =
+  /(\bCUANTO\b|\bCUANTOS\b|\bPRECIO\b|\bPRECIOS\b|\bCOSTO\b|\bCUESTA\b|\bCOSTA\b|\bVALE\b|\bQUE INCLUYE\b|\bQUE TRAE\b|\bCUAL\b|\bCUALES\b|\bDIFERENCIA\b|\?)/;
 
 // Devuelve true si el texto contiene alguno de los números EXACTOS buscados como
 // grupo de dígitos completo (no como subcadena de otro número). Ej: buscar 2500 en
@@ -1569,7 +1741,7 @@ function containsExactNumber(text: string, values: number[]): boolean {
 // Como el cliente solo puede conocer estos nombres DESPUÉS de ver el flyer, mencionar
 // uno equivale a elegir un paquete → intención clara de contratar. Normalizados sin
 // tilde/mayúsculas (normalizeForMatch). Editar si cambian los nombres.
-const PACKAGE_NAMES = ["EXPRES", "PREMIUM"];
+const PACKAGE_NAMES = ["EXPRES", "EXPRESS", "PREMIUM"];
 const PACKAGE_NAME_REGEX = new RegExp(`\\b(${PACKAGE_NAMES.join("|")})\\b`);
 
 // Detecta si el mensaje del cliente es una elección afirmativa de un paquete
@@ -1596,25 +1768,102 @@ function detectPackageNameChoice(text: string): boolean {
   return PACKAGE_NAME_REGEX.test(normalized);
 }
 
-// Elección de paquete tras el flyer: si el flyer de paquetes YA se envió y el cliente
-// responde con una frase de selección afirmativa ("me interesa el ___", "quiero el
-// ___", "ese", "dame ese"), está eligiendo un paquete aunque no diga número ni nombre
-// exacto. Respaldo independiente de los nombres (sobrevive a renombres).
-function detectFlyerFollowupChoice(text: string, flyerAlreadySent: boolean): boolean {
-  if (!text || !flyerAlreadySent) return false;
-  const normalized = normalizeForMatch(text);
-  if (PRICE_QUESTION_REGEX.test(normalized)) return false;
-  return AFFIRMATIVE_CHOICE_REGEX.test(normalized);
+// ¿La respuesta que se va a enviar ES el formulario de intake? Se detecta por los
+// campos obligatorios del formulario, no por igualdad exacta, para tolerar que el LLM
+// lo reproduzca con un intro distinto. Reemplaza a la guarda por flag del LLM, que
+// podía marcar service_intake_requested=true sin incluir realmente el formulario.
+function replyContainsIntakeForm(reply: string): boolean {
+  if (!reply) return false;
+  const normalized = normalizeForMatch(reply);
+  return (
+    normalized.includes("NOMBRE DE TU EMPRESA") &&
+    normalized.includes("NUMERO DE CONTACTO")
+  );
 }
 
-// Decisión unificada para forzar el formulario de intake: cualquiera de las señales
-// de elección de paquete (por cantidad 6/14, por nombre Exprés/Premium, o afirmación
-// tras haber visto el flyer).
-function shouldForceIntakeForm(text: string, flyerAlreadySent: boolean): boolean {
+// ¿El asistente ya PRESENTÓ los paquetes de producción en esta conversación?
+// Es el contexto que habilita las selecciones por referencia ("ese", "el primero").
+// Antes esto dependía solo de que se hubiera enviado el flyer como imagen; pero el
+// bot también presenta los paquetes por TEXTO (SERVICE_PACKAGES_INFO), y en ese caso
+// el cliente elige igual. Se mira el historial ya cargado en memoria: sin queries ni
+// llamadas extra a OpenAI.
+// Importante: exige contexto de PAQUETES (no de cursos), para que "el primero" o
+// "el básico" en una conversación de cursos NO dispare el formulario.
+function detectPackagesPresented(
+  history: HistoryMessage[],
+  flyerAlreadySent: boolean,
+): boolean {
+  if (flyerAlreadySent) return true;
+
+  return history
+    .filter((message) => message.role === "assistant")
+    .some((message) => {
+      const normalized = normalizeForMatch(message.content);
+
+      // El marcador del flyer de paquetes también cuenta como presentación.
+      if (normalized.includes("MEDIA_SENT:SERVICE_PACKAGES")) return true;
+
+      const talksAboutPackages = SERVICE_PACKAGES_KEYWORDS.test(normalized);
+      const showsTheOffer =
+        containsExactNumber(normalized, VALID_PACKAGE_SIZES) ||
+        containsExactNumber(normalized, PACKAGE_PRICES) ||
+        PACKAGE_NAME_REGEX.test(normalized);
+
+      return talksAboutPackages && showsTheOffer;
+    });
+}
+
+// Selección de un paquete por parte del cliente. Dos niveles de confianza:
+//
+//  1. Autosuficiente (no necesita contexto): el cliente nombra el paquete de forma
+//     inequívoca — cantidad exacta 6/14 con frase afirmativa, nombre propio del
+//     paquete (Exprés/Premium), o el precio exacto (2500/5000). Solo puede conocer
+//     estos datos si ya vio la oferta, así que mencionarlos ES elegir.
+//  2. Por referencia (requiere packagesPresented): deícticos, ordinales y superlativos
+//     ("ese quiero", "el primero", "el más económico"). Sin la oferta a la vista no
+//     significan nada, por eso se exige que el asistente ya haya presentado paquetes.
+//
+// En ambos niveles, una pregunta NUNCA es una selección (PRICE_QUESTION_REGEX).
+function detectPackageSelection(
+  text: string,
+  packagesPresented: boolean,
+): boolean {
+  if (!text) return false;
+
+  const normalized = normalizeForMatch(text);
+  if (PRICE_QUESTION_REGEX.test(normalized)) return false;
+
+  const selectsByName = detectPackageChoice(text) || detectPackageNameChoice(text);
+
+  // "El paquete de 2500" / "el de 5000": el precio exacto identifica el paquete.
+  const selectsByPrice =
+    containsExactNumber(normalized, PACKAGE_PRICES) &&
+    (AFFIRMATIVE_CHOICE_REGEX.test(normalized) ||
+      SERVICE_PACKAGES_KEYWORDS.test(normalized));
+
+  if (selectsByName || selectsByPrice) return true;
+
+  if (!packagesPresented) return false;
+
+  // "Quiero información" también es afirmativo, pero no señala ningún paquete.
+  if (GENERIC_INFO_REGEX.test(normalized)) return false;
+
   return (
-    detectPackageChoice(text) ||
-    detectPackageNameChoice(text) ||
-    detectFlyerFollowupChoice(text, flyerAlreadySent)
+    CONTEXTUAL_CHOICE_REGEX.test(normalized) ||
+    AFFIRMATIVE_CHOICE_REGEX.test(normalized)
+  );
+}
+
+// Decisión unificada para forzar el formulario de intake: el cliente seleccionó un
+// paquete de forma inequívoca (por número, nombre, precio o referencia en contexto).
+function shouldForceIntakeForm(
+  text: string,
+  history: HistoryMessage[],
+  flyerAlreadySent: boolean,
+): boolean {
+  return detectPackageSelection(
+    text,
+    detectPackagesPresented(history, flyerAlreadySent),
   );
 }
 
@@ -1724,6 +1973,29 @@ async function hasTelegramLeadBeenSent(conversationId?: string): Promise<boolean
 
   if (error) {
     console.error("supabase check telegram lead sent failed", error);
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
+async function hasTelegramLeadUpdateBeenSent(
+  conversationId?: string,
+): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "[TELEGRAM_LEAD_UPDATE_SENT]%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check telegram lead update sent failed", error);
     return false;
   }
 
@@ -2176,7 +2448,11 @@ export async function POST(request: Request) {
         hasTelegramLeadBeenSent(lastMessage.conversationId),
       ]);
 
-      if (intakeFormSentPaused && !telegramLeadSentPaused) {
+      // El pedido de llamada es 100% determinista: dispara el lead aunque nunca se
+      // haya pedido el formulario y sin gastar una llamada a OpenAI.
+      const callRequestPaused = detectCallRequestHeuristic(lastMessage.text);
+
+      if (!telegramLeadSentPaused && (callRequestPaused || intakeFormSentPaused)) {
         const pausedHistory = await getRecentConversationHistory(
           lastMessage.conversationId,
           12,
@@ -2184,10 +2460,11 @@ export async function POST(request: Request) {
 
         // Respaldo determinista acotado: un teléfono + texto tras haber pedido el
         // formulario es, casi con certeza, el dato real del cliente.
-        const heuristicLead = detectLeadDataHeuristic(lastMessage.text);
+        const heuristicLead =
+          intakeFormSentPaused && detectLeadDataHeuristic(lastMessage.text);
 
         let llmLead = false;
-        if (!heuristicLead) {
+        if (!callRequestPaused && !heuristicLead) {
           const pausedTurn = await generateAssistantTurn({
             history: pausedHistory,
             conversationId: lastMessage.conversationId,
@@ -2197,13 +2474,19 @@ export async function POST(request: Request) {
           llmLead = pausedTurn.lead_data_submitted;
         }
 
-        if (heuristicLead || llmLead) {
+        if (callRequestPaused || heuristicLead || llmLead) {
+          const trigger: LeadTrigger = callRequestPaused
+            ? "call_request_heuristic"
+            : "intake_form";
+
           leadNotifiedWhilePaused = await notifyLeadToTelegram({
             history: pausedHistory,
             phone: lastMessage.from,
             contactName: lastMessage.contactName,
             conversationId: lastMessage.conversationId,
             fallbackText: lastMessage.text,
+            kind: callRequestPaused ? "call_request" : "intake",
+            trigger,
           });
 
           await logSystemEvent({
@@ -2213,7 +2496,13 @@ export async function POST(request: Request) {
             messageId: lastMessage.messageId,
             contactPhone: lastMessage.from,
             metadata: {
-              detection: heuristicLead ? "heuristic" : "llm",
+              detection: callRequestPaused
+                ? "heuristic"
+                : heuristicLead
+                  ? "heuristic"
+                  : "llm",
+              trigger,
+              call_request: callRequestPaused,
               notified: leadNotifiedWhilePaused,
             },
           });
@@ -2295,6 +2584,7 @@ export async function POST(request: Request) {
     paymentAcknowledged,
     intakeFormSent,
     telegramLeadSent,
+    telegramLeadUpdateSent,
     telegramPaymentSent,
     telegramAppointmentSent,
   ] = await Promise.all([
@@ -2303,6 +2593,7 @@ export async function POST(request: Request) {
     hasPaymentBeenAcknowledged(lastMessage.conversationId),
     hasIntakeFormBeenSent(lastMessage.conversationId),
     hasTelegramLeadBeenSent(lastMessage.conversationId),
+    hasTelegramLeadUpdateBeenSent(lastMessage.conversationId),
     hasTelegramPaymentBeenSent(lastMessage.conversationId),
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
   ]);
@@ -2448,6 +2739,12 @@ export async function POST(request: Request) {
     phone: lastMessage.from,
   });
 
+  // Pedido de llamada: se acepta tanto la clasificación del LLM como el respaldo
+  // determinista, para que un "quiero llamar para confirmar el paquete" nunca se
+  // quede sin avisar al asesor aunque el modelo chico no lo clasifique.
+  const callRequestHeuristic = detectCallRequestHeuristic(lastMessage.text);
+  const callRequested = turn.call_request || callRequestHeuristic;
+
   // Red de seguridad determinista: si el cliente eligió un paquete pero el LLM NO
   // marcó service_intake_requested, forzamos el envío del formulario. Cubre elección
   // por cantidad ("Si de 6 videos", "el de 14"), por nombre ("me interesa el exprés",
@@ -2455,11 +2752,14 @@ export async function POST(request: Request) {
   // modelo chico a veces no clasifica como intención clara de contratar.
   // Guardas: no interferir con el silencio de intake, no duplicar si el LLM ya lo
   // marcó, y no reenviar si el formulario ya se envió antes en esta conversación.
+  // La guarda mira el TEXTO que se va a enviar, no el flag del LLM: el modelo chico
+  // a veces marca service_intake_requested=true pero responde otra cosa ("¡excelente
+  // elección!"), y en ese caso el cliente se quedaba sin formulario.
   if (
     turn.should_reply &&
-    !turn.service_intake_requested &&
+    !replyContainsIntakeForm(turn.reply) &&
     !intakeFormSent &&
-    shouldForceIntakeForm(lastMessage.text, mediaStatus.service_packages)
+    shouldForceIntakeForm(lastMessage.text, history, mediaStatus.service_packages)
   ) {
     console.log("intake form forced by safety net (package choice detected)", {
       conversationId: lastMessage.conversationId,
@@ -2527,10 +2827,28 @@ export async function POST(request: Request) {
     });
 
     // Aunque el bot guarde silencio, si el modelo detectó que el lead quedó completo
-    // en este turno, se notifica igual al asesor (la notificación no debe depender de
-    // que se responda por WhatsApp).
-    if (turn.lead_data_submitted && !telegramLeadSent) {
+    // en este turno —o si el cliente pidió una llamada—, se notifica igual al asesor
+    // (la notificación no debe depender de que se responda por WhatsApp).
+    if ((turn.lead_data_submitted || callRequested) && !telegramLeadSent) {
       await notifyLeadToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: lastMessage.conversationId,
+        fallbackText: lastMessage.text,
+        kind: callRequested && !turn.lead_data_submitted ? "call_request" : "intake",
+        trigger: turn.call_request
+          ? "call_request_assistant"
+          : callRequestHeuristic
+            ? "call_request_heuristic"
+            : "intake_form",
+      });
+    } else if (
+      turn.lead_data_submitted &&
+      telegramLeadSent &&
+      !telegramLeadUpdateSent
+    ) {
+      await notifyLeadUpdateToTelegram({
         history,
         phone: lastMessage.from,
         contactName: lastMessage.contactName,
@@ -2554,7 +2872,14 @@ export async function POST(request: Request) {
       contactPhone: lastMessage.from,
       metadata: {
         duration_ms: Date.now() - generationStartedAt,
-        lead_notified: turn.lead_data_submitted && !telegramLeadSent,
+        lead_notified:
+          (turn.lead_data_submitted || callRequested) && !telegramLeadSent,
+        call_request: callRequested,
+        lead_trigger: turn.call_request
+          ? "call_request_assistant"
+          : callRequestHeuristic
+            ? "call_request_heuristic"
+            : "intake_form",
       },
     });
 
@@ -2701,12 +3026,38 @@ export async function POST(request: Request) {
       if (sent) sentIntents.push(intent);
     }
 
-    // Lead: el cliente envió sus datos de contratación. Como los datos pueden
-    // haber llegado repartidos en varios mensajes (clientes que responden
-    // campo por campo), se incluyen los últimos mensajes del cliente y no
-    // solo el último, para que el asesor tenga el contexto completo.
-    if (turn.lead_data_submitted && !telegramLeadSent) {
+    // Lead: el cliente envió sus datos de contratación, o pidió que un asesor lo
+    // llame (intención de cierre igual de fuerte, sin pasar por el formulario).
+    // Como los datos pueden haber llegado repartidos en varios mensajes (clientes
+    // que responden campo por campo), se incluyen los últimos mensajes del cliente
+    // y no solo el último, para que el asesor tenga el contexto completo.
+    // Ambos disparadores comparten el marcador [TELEGRAM_LEAD_SENT]: el mismo
+    // contacto nunca genera dos leads.
+    if ((turn.lead_data_submitted || callRequested) && !telegramLeadSent) {
+      const trigger: LeadTrigger = turn.call_request
+        ? "call_request_assistant"
+        : callRequestHeuristic
+          ? "call_request_heuristic"
+          : "intake_form";
+
       await notifyLeadToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: mediaConversationId,
+        fallbackText: lastMessage.text,
+        kind: callRequested && !turn.lead_data_submitted ? "call_request" : "intake",
+        trigger,
+      });
+    } else if (
+      // El lead ya se notificó (típicamente por pedido de llamada) y recién ahora
+      // el cliente completó el formulario: se envía UNA sola actualización en vez
+      // de un segundo lead, para no duplicar en Telegram.
+      turn.lead_data_submitted &&
+      telegramLeadSent &&
+      !telegramLeadUpdateSent
+    ) {
+      await notifyLeadUpdateToTelegram({
         history,
         phone: lastMessage.from,
         contactName: lastMessage.contactName,
@@ -2786,6 +3137,12 @@ export async function POST(request: Request) {
       payment_confirmation: turn.payment_confirmation,
       service_intake_requested: turn.service_intake_requested,
       lead_data_submitted: turn.lead_data_submitted,
+      call_request: callRequested,
+      call_request_source: turn.call_request
+        ? "assistant"
+        : callRequestHeuristic
+          ? "heuristic"
+          : null,
       appointment_scheduled: turn.appointment_scheduled,
       detected_intents: turn.intents,
       sent_intents: sentIntents,
