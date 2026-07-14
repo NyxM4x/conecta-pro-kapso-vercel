@@ -42,6 +42,17 @@ const MEDIA_SEND_ORDER: MediaIntent[] = [
   "payment_qr",
 ];
 
+// Ventana de agrupación: al recibir un mensaje se espera este tiempo antes de
+// generar la respuesta. Si en ese lapso el cliente manda otro mensaje, este
+// turno se descarta y responde el webhook del mensaje más nuevo — con ambos
+// mensajes ya en el historial. Evita la doble respuesta cuando el cliente
+// escribe en ráfaga (dos webhooks concurrentes, un candado distinto cada uno).
+const INBOUND_DEBOUNCE_MS = 5000;
+
+// El debounce se suma a la latencia de OpenAI y del envío por Kapso; el default
+// de Vercel (10 s) queda justo, así que se amplía explícitamente.
+export const maxDuration = 60;
+
 type SystemLogLevel = "info" | "warning" | "error" | "critical";
 
 const SYSTEM_PROMPT = `
@@ -1237,6 +1248,47 @@ async function markReplyLockSent(params: {
       metadata: {
         code: error.code,
         details: error.details,
+      },
+    });
+  }
+}
+
+// Un turno queda obsoleto cuando el cliente sigue escribiendo mientras se
+// procesaba: se descarta sin responder y su candado se marca como reemplazado,
+// para no dejarlo colgado en "processing".
+async function markReplyLockSuperseded(params: {
+  lastMessageId?: string;
+  conversationId?: string;
+  phone?: string;
+  stage: "debounce" | "pre_send";
+}) {
+  if (!params.lastMessageId) return;
+
+  const supabase = getSupabaseClient();
+
+  const { error } = await supabase
+    .from("kapso_response_locks")
+    .update({
+      status: "superseded",
+      response_text: `[SUPERSEDED:${params.stage}] llegó un mensaje más nuevo del cliente`,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("last_kapso_message_id", params.lastMessageId);
+
+  if (error) {
+    console.error("supabase supersede kapso_response_locks failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "reply_lock_update_failed",
+      conversationId: params.conversationId,
+      messageId: params.lastMessageId,
+      contactPhone: params.phone,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+        stage: params.stage,
       },
     });
   }
@@ -2695,13 +2747,27 @@ export async function POST(request: Request) {
 
   const extraContext = contextParts.join("\n\n");
 
-  const newerInbound = await getNewestInboundMessage(
-    lastMessage.conversationId,
-    lastMessage.messageId,
-    lastMessageCreatedAt,
-  );
+  // Ventana de agrupación: si el cliente sigue escribiendo, este turno se
+  // descarta y responde el webhook del mensaje más nuevo, que ya verá ambos
+  // mensajes en el historial.
+  await new Promise((resolve) => setTimeout(resolve, INBOUND_DEBOUNCE_MS));
 
-  if (newerInbound) {
+  const isStale = async (stage: "debounce" | "pre_send"): Promise<boolean> => {
+    const newerInbound = await getNewestInboundMessage(
+      lastMessage.conversationId,
+      lastMessage.messageId,
+      lastMessageCreatedAt,
+    );
+
+    if (!newerInbound) return false;
+
+    await markReplyLockSuperseded({
+      lastMessageId: lastMessage.messageId,
+      conversationId: lastMessage.conversationId,
+      phone: lastMessage.from,
+      stage,
+    });
+
     await logSystemEvent({
       level: "info",
       eventType: "bot_reply_skipped_newer_inbound",
@@ -2709,6 +2775,7 @@ export async function POST(request: Request) {
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
       metadata: {
+        stage,
         current_kapso_message_id: lastMessage.messageId ?? null,
         current_created_at: lastMessageCreatedAt,
         newer_kapso_message_id: newerInbound.kapso_message_id,
@@ -2716,6 +2783,10 @@ export async function POST(request: Request) {
       },
     });
 
+    return true;
+  };
+
+  if (await isStale("debounce")) {
     return new Response("newer inbound message exists, skipping stale reply", {
       status: 200,
     });
@@ -2927,6 +2998,15 @@ export async function POST(request: Request) {
     });
 
     return new Response("suspected bot loop, conversation paused", {
+      status: 200,
+    });
+  }
+
+  // Último control antes de enviar: cierra la ventana abierta durante la
+  // generación (varios segundos de OpenAI). Si el cliente escribió mientras
+  // tanto, esta respuesta ya nació vieja y la manda el turno del mensaje nuevo.
+  if (await isStale("pre_send")) {
+    return new Response("newer inbound message exists, skipping stale reply", {
       status: 200,
     });
   }
