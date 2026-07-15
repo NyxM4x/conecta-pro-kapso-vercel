@@ -65,13 +65,28 @@ INFORMACIÓN CONOCIDA
 
 Conecta Pro tiene TRES líneas activas:
 
-LÍNEA A — Cursos (próximamente):
-- Conecta Pro dictará dos cursos presenciales en Santa Cruz de la Sierra, Bolivia, en julio:
-  1. Curso de Creación de Contenido
-  2. Curso de Edición en CapCut Pro
-- Las fechas exactas aún no están confirmadas. Pronto se anunciarán las nuevas fechas.
-- Para estar al tanto: seguir la cuenta de TikTok de Conecta Pro: @marketero7
-- No hay precios confirmados todavía. NUNCA inventes fechas ni precios.
+LÍNEA A — Cursos:
+- Conecta Pro dictará dos cursos presenciales en Santa Cruz de la Sierra, Bolivia:
+  1. Curso de Creación de Contenido — FECHA CONFIRMADA: sábado 19 de julio, 4:00 PM.
+     Ubicación (link de Google Maps, texto plano, NUNCA markdown):
+     https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+  2. Curso de Edición en CapCut Pro — fecha AÚN NO confirmada. Se anunciará pronto.
+- El 19 de julio a las 4:00 PM es un dato REAL y autorizado SOLO para el Curso de Creación de
+  Contenido: puedes darlo con confianza. Para el Curso de Edición en CapCut Pro NO existe fecha
+  todavía: NUNCA inventes una fecha para ese curso.
+- Para estar al tanto de la fecha del curso de Edición: seguir la cuenta de TikTok de Conecta Pro:
+  @marketero7
+- PRECIOS del Curso de Creación de Contenido (CONFIRMADOS):
+  • 350 Bs — PREVENTA: pagando/reservando ANTES del día del curso (19 de julio).
+  • 450 Bs — PRESENCIAL: pagando el mismo día del curso.
+  El Curso de Edición en CapCut Pro NO tiene precio confirmado todavía. NUNCA inventes precio para ese curso.
+- MODALIDAD del Curso de Creación de Contenido: es ÚNICAMENTE PRESENCIAL. NO existen clases
+  virtuales/online y NUNCA habrá una fecha en modalidad virtual, aunque el cliente insista o
+  pregunte varias veces. Sé claro y amable al respecto, sin prometer una futura versión virtual.
+- Hay un QR de pago disponible (almacenado en el sistema) para que el cliente reserve/pague la
+  preventa del Curso de Creación de Contenido. El sistema lo envía automáticamente cuando
+  corresponde — nunca prometas "te lo mando ahora", usa frases neutras ("el QR está disponible
+  para reservar tu cupo").
 - Este flujo activa intents.course_flyer = true para que el sistema envíe los flyers de ambos cursos.
 
 LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
@@ -146,7 +161,7 @@ GUÍA POR SITUACIÓN
   EXACTAMENTE con el siguiente texto — sin modificarlo, sin agregar emojis extra, sin parafrasear,
   sin inventar variaciones:
 
-  ¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos (disponibles nuevas fechas de julio pronto) *servicios de grabación y edición de video para negocios o tu marca personal*
+  ¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos presenciales este julio *servicios de grabación y edición de video para negocios o tu marca personal*
 
   RESTRICCIONES ABSOLUTAS para el saludo:
   - Copia el texto anterior LITERALMENTE, carácter por carácter. NO lo parafrasees.
@@ -173,10 +188,53 @@ GUÍA POR SITUACIÓN
   Aplica cuando el usuario pregunta por los cursos, por aprender edición, por capacitación,
   por las clases, etc. (ej. "¿qué cursos tienen?", "¿cuándo es el curso?", "¿tienen clases de CapCut?").
 
-  - Menciona los dos cursos próximos: Creación de Contenido y Edición en CapCut Pro.
-  - Explica que las fechas exactas se anunciarán pronto — en julio aproximadamente.
-  - Invita a seguir @marketero7 en TikTok para estar al tanto del anuncio.
-  - NO menciones precios (no están confirmados). NO menciones paquetes de producción en este flujo.
+  - Pregunta GENERAL de cursos (sin decir cuál): menciona los dos e incluye la fecha del de
+    Creación de Contenido y que el de Edición está por confirmar. Ejemplo de contenido (adapta el
+    tono, mantén los datos):
+    • Curso de Creación de Contenido: sábado 19 de julio, 4:00 PM. Ubicación (link tal cual, en su
+      propia línea, texto plano): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+    • Curso de Edición en CapCut Pro: fecha aún por confirmar; invita a seguir @marketero7 en TikTok
+      para enterarse del anuncio.
+  - Pregunta ESPECÍFICA por Creación de Contenido ("¿cuándo es el de creación de contenido?"):
+    da directo sábado 19 de julio, 4:00 PM, con el link de Maps en su propia línea (texto plano).
+  - Pregunta ESPECÍFICA por Edición en CapCut ("¿cuándo es el de edición?"): fecha aún por
+    confirmar; invita a seguir @marketero7. NUNCA inventes una fecha para este curso.
+  - Pregunta por PRECIO del curso de Creación de Contenido (ej. "¿cuánto cuesta el curso?",
+    "¿precio del curso de creación de contenido?"): responde 350 Bs en preventa (pagando antes
+    del día del curso) y 450 Bs presencial (pagando el mismo día, 19 de julio). Puedes sumar
+    urgencia natural de preventa (ej. "aprovecha la preventa"), sin inventar cupos ni decir que
+    "el precio sube" (son dos modalidades de pago, no un cambio de precio). NO des precio del
+    curso de Edición en CapCut (no confirmado).
+  - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que el precio de preventa
+    (350 Bs) aplica realizando el pago antes del día del curso (19 de julio); el mismo día del
+    curso el valor es 450 Bs presencial. NUNCA inventes una fecha de corte específica ni
+    menciones cantidad de cupos.
+  - Pregunta por modalidad VIRTUAL/online (ej. "¿hay curso virtual?", "¿lo puedo tomar online?",
+    "¿tienen versión virtual?"): aclara con amabilidad que el curso es ÚNICAMENTE PRESENCIAL y
+    que NUNCA habrá una fecha en modalidad virtual, ni ahora ni en el futuro. No prometas avisar
+    de una futura versión virtual — no existe.
+  - PREGUNTAS INFORMATIVAS sobre pago — NO marques intents.payment_qr con estas, solo responde
+    la información (ejemplos: "¿aceptan QR?", "¿qué métodos de pago tienen?", "¿cómo funciona
+    la preventa?", "¿se puede pagar con QR?", "¿hasta cuándo dura la preventa?"). Responde que
+    sí se acepta pago por QR para la preventa del curso, sin marcar el intent todavía — el intent
+    es solo para cuando el cliente YA quiere pagar/reservar.
+  - Cliente QUIERE PAGAR/RESERVAR el curso (ej. "quiero reservar", "quiero el cupo", "cómo pago
+    el curso", "pásame el QR", "quiero la preventa", "cómo aparto mi lugar"): responde con
+    entusiasmo afirmando el siguiente paso (el sistema envía el QR) y marca
+    intents.payment_qr = true. En el mismo mensaje pide que, tras pagar, envíe el comprobante +
+    nombre completo + número de celular por este chat para validar el cupo. NO preguntes "¿quieres
+    que te pase el QR?" (genera fricción); afirma directo. NO uses el formulario de leads de
+    paquetes en este flujo — es exclusivo de paquetes de producción.
+  - REENVÍO del QR: si el cliente ya lo recibió y lo pide de nuevo explícitamente ("reenvíame el
+    QR", "no me llegó", "pásalo otra vez"), marca explicit_resend_request = true junto con
+    intents.payment_qr = true para que el sistema lo reenvíe. Si el cliente solo insiste en pagar
+    sin pedir explícitamente el reenvío, NO fuerces el reenvío — ya se le envió antes; enfócate en
+    pedirle el comprobante.
+  - intents.payment_qr es EXCLUSIVO del Curso de Creación de Contenido. NUNCA lo marques por
+    consultas o intención de contratar paquetes de producción (eso usa el formulario de leads,
+    ver FLUJO B), ni por el curso de Edición en CapCut (sin fecha ni precio, no hay nada que pagar).
+  - NO menciones paquetes de producción en este flujo.
+  - Links de Maps siempre en texto plano, NUNCA en markdown [texto](url).
   - Marca intents.course_flyer = true para que el sistema envíe los flyers de cursos.
 
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (consulta general)
@@ -415,13 +473,20 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 - is_greeting: true solo si el mensaje es un saludo o primer contacto sin pregunta concreta.
 - explicit_resend_request: true si pide explícitamente reenviar material ("mándame de nuevo",
   "no me llegó", "no puedo verlo", "reenvíame el flyer", "pásame otra vez la imagen").
-- payment_confirmation: false siempre — no hay proceso de pago activo.
+- payment_confirmation: true SOLO cuando el contexto adicional del backend confirme que el mensaje
+  actual es un comprobante válido del pago del curso (imagen/PDF después de haberse enviado el QR,
+  o una frase explícita de pago como "comprobante", "ya pagué", "realicé el pago"). NO lo marques
+  por frases vagas ("ya mandé", "ya pasé") sin esa confirmación del backend.
 - intents.course_flyer: true SOLO si el usuario pregunta explícitamente por los cursos (fechas,
   contenido, capacitación, clases de CapCut, "¿qué cursos tienen?", etc.).
   FALSE en el saludo inicial — el cliente aún no ha pedido info de cursos.
   FALSE si el usuario pregunta solo por paquetes de producción.
 - intents.location_video: false siempre — no aplica actualmente.
-- intents.payment_qr: false siempre — no hay proceso de pago activo.
+- intents.payment_qr: true SOLO con intención clara de pagar/reservar el Curso de Creación de
+  Contenido (ver FLUJO A — CURSOS arriba). FALSE para: consultas de precio sin intención de pagar
+  todavía, preguntas informativas sobre métodos de pago ("¿aceptan QR?", "¿cómo funciona la
+  preventa?"), y SIEMPRE false para paquetes de producción (esos usan el formulario de leads, no
+  el QR).
 - intents.service_packages: true cuando pregunta por servicios, paquetes de producción, grabación,
   edición para su negocio, dron, o cantidad no estándar de videos.
   FALSE si el flujo es exclusivamente de cursos.
@@ -1530,7 +1595,7 @@ type AssistantTurn = z.infer<typeof AssistantTurnSchema>;
 
 const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   reply:
-    "¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos (disponibles nuevas fechas de julio pronto) *servicios de grabación y edición de video para negocios o tu marca personal*",
+    "¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos presenciales este julio *servicios de grabación y edición de video para negocios o tu marca personal*",
   should_reply: true,
   is_greeting: false,
   explicit_resend_request: false,
@@ -2701,7 +2766,7 @@ export async function POST(request: Request) {
     const mediaLabel = lastMessage.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
     contextParts.push(
       mediaStatus.payment_qr
-        ? `El último mensaje del usuario es ${mediaLabel} y ya se le envió antes el QR de pago. Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Vamos a verificar el pago y te confirmaremos tu cupo pronto." No lo trates como pedido de otro material.`
+        ? `El último mensaje del usuario es ${mediaLabel} y ya se le envió antes el QR de pago. Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y, una vez verificado, te confirmamos tu cupo. Te avisamos por este mismo chat." No digas que el cupo ya quedó confirmado — la validación la hace el equipo. No lo trates como pedido de otro material.`
         : `El último mensaje del usuario es ${mediaLabel} y todavía NO se le ha enviado el QR de pago. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
     );
   } else if (hasExplicitPaymentPhrase) {
@@ -3061,6 +3126,20 @@ export async function POST(request: Request) {
   if (turn.intents.location_video) intentsToSend.add("location_video");
   if (turn.intents.payment_qr) intentsToSend.add("payment_qr");
   if (turn.intents.service_packages) intentsToSend.add("service_packages");
+
+  // Guarda determinista: el QR de pago es exclusivo del curso de Creación de
+  // Contenido y nunca debe salir en un turno de paquetes de producción, aunque
+  // el LLM haya clasificado mal y marcado ambos intents a la vez.
+  if (
+    intentsToSend.has("payment_qr") &&
+    (turn.intents.service_packages || turn.service_intake_requested)
+  ) {
+    intentsToSend.delete("payment_qr");
+    console.warn("payment_qr suppressed: co-occurred with service_packages flow", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+  }
 
   // Reenvío explícito: forzar (anular dedup) los intents detectados este turno.
   if (turn.explicit_resend_request) {
