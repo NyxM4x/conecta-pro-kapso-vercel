@@ -106,6 +106,10 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   NO trates 2500/5000 como "cantidad de videos no estándar" (son precios, no cantidades) y
   NO recites el monto: el flyer lo muestra.
 - Este flujo activa intents.service_packages = true.
+- FACTURACIÓN: Conecta Pro NO emite factura. Si preguntan si el precio/pago incluye factura, o por
+  facturación en general, responde con naturalidad que por el momento no emitimos factura — sin
+  inventar condiciones, sin ofrecer alternativas no confirmadas, y sin derivar a un asesor (es
+  información ya conocida, no marques advisor_handoff por esto).
 
 SERVICIO DESCONTINUADO — Promo de edición de un video por 50 Bs:
 - Este servicio ya NO está disponible. Los cupos eran limitados y se agotaron.
@@ -295,6 +299,12 @@ GUÍA POR SITUACIÓN
   estándar" ni pidas otra cantidad: guíalo con naturalidad a elegir entre los paquetes de
   6 o 14 videos.
 
+  "UN SOLO VIDEO" NO ES INTERÉS GENÉRICO SUFICIENTE: si el cliente LIMITA la cantidad a uno ("un
+  solo video", "solo uno", "un video nomás") o pide un número ≠ 6/14, NO cuenta como "interés
+  genérico" para enviar el formulario — usa el flujo "CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR"
+  de abajo. (Ojo: "un spot", "un video publicitario", "videos" SIN limitar la cantidad SÍ van al
+  flujo normal de paquetes — no los trates como cantidad singular.)
+
   📌 Nombre:
   📌 Nombre de tu empresa o emprendimiento:
   📌 Cargo dentro de la empresa:
@@ -355,16 +365,34 @@ GUÍA POR SITUACIÓN
   - Marca lead_data_submitted=true SOLO en ese turno de cierre, nunca en turnos posteriores de la
     misma conversación.
 
-▸ FLUJO B — CANTIDAD DE VIDEOS QUE NO ES 6 NI 14
-  Si pide una cantidad que no coincide con los paquetes estándar (ej. 2, 3, 5, 7, 8, 10, 15, 20):
+▸ FLUJO B — CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR (fuera de catálogo)
+  El disparador de este flujo es LA CANTIDAD, nunca el tipo o propósito del video. Aplica cuando el
+  cliente limita explícitamente la cantidad a UNO o a un número que no es 6 ni 14:
+  - Cantidad singular explícita: "un SOLO video", "solo uno", "un video NOMÁS", "únicamente uno",
+    "quiero uno solo", "un ÚNICO video".
+  - Un número concreto distinto de 6 o 14 (ej. 2, 3, 5, 7, 8, 10, 15, 20).
+
+  IMPORTANTE — NO confundas el TIPO/PROPÓSITO del video con una cantidad: palabras como "spot",
+  "spot comercial", "video publicitario", "videos", "un spot", "un comercial", "un video para mi
+  negocio/campaña/lanzamiento" son solo la forma natural en que los clientes piden grabación y
+  edición. Por sí solas NO son fuera de catálogo — van al flujo NORMAL de paquetes (Flujo B consulta
+  general: presenta 6 o 14). IGNORA esas palabras al decidir; fíjate ÚNICAMENTE en si el cliente
+  limita la cantidad a uno/indefinido o pide un número ≠ 6/14. Ej.: "quiero un spot" → flujo normal
+  de paquetes; "quiero un SOLO video para mi spot" → este flujo (fuera de catálogo).
+
+  Cuando SÍ aplica (cantidad singular/no estándar), responde EXACTAMENTE:
 
   "Entendido. Nuestros paquetes son fijos: 6 o 14 videos, no manejamos otras cantidades ni
   cotizaciones a medida 📋 ¿Te gustaría elegir uno de estos dos paquetes?"
 
   - NUNCA ofrezcas "cotización a medida", "precio personalizado" ni que "un asesor analice su caso"
-    para cantidades distintas a 6 o 14. Ese servicio NO existe.
+    para una cantidad distinta a 6 o 14 (ni para un video suelto). Ese servicio NO existe.
   - Marca intents.service_packages = true para que el sistema envíe el flyer de paquetes.
-  - NO incluyas el formulario hasta que el usuario confirme interés en 6 o 14 videos.
+  - NO incluyas el formulario hasta que el usuario confirme interés en 6 o 14 videos. Pedir "un solo
+    video" NUNCA es intención suficiente para el formulario de intake — antes debe elegir 6 o 14.
+  - Marca advisor_handoff = true con advisor_handoff_reason = "out_of_catalog": aunque la respuesta
+    ya resuelve al cliente, es una oportunidad comercial fuera de catálogo que un asesor debe revisar.
+    Esto es ADEMÁS de responder con el texto de arriba, no en vez de responder.
 
 ▸ CLIENTE PREGUNTA POR LA PROMO DE EDICIÓN DE 50 BS
   Si el cliente menciona explícitamente la edición de 50 Bs, la promo de edición puntual o
@@ -524,6 +552,32 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   "voy el martes a las 10am, confirmo"). Ver flujo "CLIENTE CONFIRMA LA CITA" arriba.
   NO lo marques cuando el cliente solo pregunta la ubicación/horario, ni cuando solo da un día/hora
   sin confirmar todavía (ese caso usa el flujo "CLIENTE INDICA DÍA/HORA... aún sin confirmar").
+- advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
+  conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
+  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Dos motivos
+  posibles, mutuamente excluyentes:
+
+  (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide un
+      número que no es 6 ni 14 — ver flujo "CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR" arriba
+      ("un solo video", "solo uno", "nomás", "único", o un número ≠ 6/14). NO lo marques por
+      palabras de tipo/propósito por sí solas (spot, comercial, video publicitario, videos): esas
+      van al flujo normal de paquetes. En este caso SÍ respondes con normalidad (el texto de paquetes
+      fijos) y ADEMÁS marcas advisor_handoff=true: es una oportunidad comercial que un asesor debe
+      revisar, no un caso sin respuesta.
+
+  (2) advisor_handoff_reason = "undocumented_info": el cliente hace una pregunta CONCRETA sobre
+      servicios, políticas, condiciones o datos de Conecta Pro que NO están en esta guía (todo lo
+      cubierto arriba — precios, fechas, ubicación, paquetes, facturación, promo descontinuada,
+      TikTok, etc. — NO cuenta como "no documentado"). Si tuvieras que inventar un dato para
+      responder, en vez de eso marca advisor_handoff=true con este motivo y deja "reply" vacío o
+      un string neutro corto (no se enviará al cliente: el sistema guarda silencio y deriva al
+      asesor). NUNCA inventes, NUNCA adivines. Ante la duda de si algo ya está cubierto, revisa de
+      nuevo esta guía antes de marcar este motivo — es la excepción, no la regla.
+
+  Si ninguno de los dos casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
+  NUNCA marques advisor_handoff por leads, llamadas, citas o pagos — esos flujos ya tienen su
+  propio aviso al asesor y son independientes de este campo.
+  Márcalo como máximo una vez por conversación (el backend controla el dedup).
 
 REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   Los dos flujos activos (cursos, paquetes de producción) son canales independientes.
@@ -1256,6 +1310,59 @@ async function notifyLeadUpdateToTelegram(params: {
   return notified;
 }
 
+type AdvisorHandoffReason = "undocumented_info" | "out_of_catalog";
+
+const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
+  out_of_catalog: "Servicio fuera del catálogo estándar",
+  undocumented_info: "Información no documentada",
+};
+
+// Aviso genérico "blanco" al asesor: cualquier situación (fuera de leads, llamadas, citas o
+// pagos, que ya tienen su propio aviso) donde el bot necesita intervención humana. Se envía UNA
+// sola vez por conversación, protegido por el marcador [TELEGRAM_HANDOFF_SENT], sin importar el
+// motivo — ver hasTelegramHandoffBeenSent.
+async function notifyAdvisorHandoffToTelegram(params: {
+  history: HistoryMessage[];
+  phone: string;
+  contactName?: string | null;
+  conversationId?: string;
+  reason: AdvisorHandoffReason;
+  lastMessageText: string;
+}): Promise<boolean> {
+  const recentClientMessages = params.history
+    .filter((message) => message.role === "user")
+    .slice(-6)
+    .map((message) => `• ${message.content}`)
+    .join("\n");
+
+  const notified = await sendTelegramNotification(
+    [
+      "⚪ <b>Requiere asesor — Conecta Pro</b>",
+      `🏷️ Motivo: ${ADVISOR_HANDOFF_REASON_LABEL[params.reason]}`,
+      `👤 Contacto: ${params.contactName ?? "Sin nombre"}`,
+      `📱 WhatsApp: ${params.phone}`,
+      `❓ Último mensaje del cliente:\n"${params.lastMessageText.slice(0, 500)}"`,
+      `💬 Contexto reciente:\n${(recentClientMessages || "Sin historial reciente").slice(0, 800)}`,
+      `🆔 Conversación: ${params.conversationId ?? "N/A"}`,
+    ].join("\n"),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: "[TELEGRAM_HANDOFF_SENT] aviso de derivación a asesor enviado a Telegram",
+      rawPayload: {
+        type: "telegram_notification",
+        event: "advisor_handoff",
+        reason: params.reason,
+      },
+    });
+  }
+
+  return notified;
+}
+
 async function acquireReplyLock(params: {
   conversationId?: string;
   lastMessageId?: string;
@@ -1601,6 +1708,8 @@ const AssistantTurnSchema = z.object({
   lead_data_submitted: z.boolean(),
   call_request: z.boolean(),
   appointment_scheduled: z.boolean(),
+  advisor_handoff: z.boolean(),
+  advisor_handoff_reason: z.enum(["undocumented_info", "out_of_catalog"]).nullable(),
   intents: z.object({
     course_flyer: z.boolean(),
     location_video: z.boolean(),
@@ -1622,6 +1731,8 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   lead_data_submitted: false,
   call_request: false,
   appointment_scheduled: false,
+  advisor_handoff: false,
+  advisor_handoff_reason: null,
   intents: {
     course_flyer: false,
     location_video: false,
@@ -2224,6 +2335,27 @@ async function hasTelegramAppointmentBeenSent(conversationId?: string): Promise<
   return (data ?? []).length > 0;
 }
 
+async function hasTelegramHandoffBeenSent(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "[TELEGRAM_HANDOFF_SENT]%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check telegram handoff sent failed", error);
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
 async function hasPaymentBeenAcknowledged(conversationId?: string): Promise<boolean> {
   if (!conversationId) return false;
 
@@ -2767,6 +2899,7 @@ export async function POST(request: Request) {
     telegramLeadUpdateSent,
     telegramPaymentSent,
     telegramAppointmentSent,
+    telegramHandoffSent,
   ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
@@ -2776,6 +2909,7 @@ export async function POST(request: Request) {
     hasTelegramLeadUpdateBeenSent(lastMessage.conversationId),
     hasTelegramPaymentBeenSent(lastMessage.conversationId),
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
+    hasTelegramHandoffBeenSent(lastMessage.conversationId),
   ]);
 
   // Palabra clave de promoción del live (PROMO[monto]/PROMOCION[monto], con
@@ -3012,6 +3146,49 @@ export async function POST(request: Request) {
         client_message: lastMessage.text.slice(0, 200),
       },
     });
+  }
+
+  // Derivación silenciosa a asesor: el cliente preguntó algo que no está en la guía y el
+  // modelo prefirió no inventar. El bot NO responde por WhatsApp; se avisa una sola vez
+  // al asesor por Telegram (marcador [TELEGRAM_HANDOFF_SENT]) para que un humano atienda.
+  // Tiene prioridad sobre el resto del flujo y hace su propio return.
+  if (turn.advisor_handoff && turn.advisor_handoff_reason === "undocumented_info") {
+    console.log("assistant reply silenced (advisor handoff, undocumented info)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    if (!telegramHandoffSent) {
+      await notifyAdvisorHandoffToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: lastMessage.conversationId,
+        reason: "undocumented_info",
+        lastMessageText: lastMessage.text,
+      });
+    }
+
+    await markReplyLockSent({
+      lastMessageId: lastMessage.messageId,
+      conversationId: lastMessage.conversationId,
+      phone: lastMessage.from,
+      responseText: "[SILENCED] derivado a asesor (información no documentada)",
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "assistant_handoff_no_reply",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        duration_ms: Date.now() - generationStartedAt,
+        advisor_notified: !telegramHandoffSent,
+      },
+    });
+
+    return new Response("advisor handoff, no reply sent", { status: 200 });
   }
 
   // Silencio durante recolección de datos de lead: el modelo decide que este
@@ -3330,6 +3507,25 @@ export async function POST(request: Request) {
         });
       }
     }
+
+    // Oportunidad comercial fuera de catálogo (ej. "un solo video"/spot/comercial): el bot
+    // ya respondió con normalidad (paquetes fijos 6/14), pero se avisa también al asesor
+    // por si vale la pena revisar el caso. Comparte el marcador [TELEGRAM_HANDOFF_SENT] con
+    // el caso de silencio por información no documentada — un solo aviso por conversación.
+    if (
+      turn.advisor_handoff &&
+      turn.advisor_handoff_reason === "out_of_catalog" &&
+      !telegramHandoffSent
+    ) {
+      await notifyAdvisorHandoffToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: mediaConversationId,
+        reason: "out_of_catalog",
+        lastMessageText: lastMessage.text,
+      });
+    }
   } catch (error) {
     console.error("supabase save outbound/lock/media threw", error);
 
@@ -3366,6 +3562,8 @@ export async function POST(request: Request) {
           ? "heuristic"
           : null,
       appointment_scheduled: turn.appointment_scheduled,
+      advisor_handoff: turn.advisor_handoff,
+      advisor_handoff_reason: turn.advisor_handoff_reason,
       detected_intents: turn.intents,
       sent_intents: sentIntents,
     },
