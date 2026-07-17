@@ -67,7 +67,7 @@ Conecta Pro tiene TRES líneas activas:
 
 LÍNEA A — Cursos:
 - Conecta Pro dictará dos cursos presenciales en Santa Cruz de la Sierra, Bolivia:
-  1. Curso de Creación de Contenido — FECHA CONFIRMADA: sábado 19 de julio, 4:00 PM.
+  1. Curso de Creación de Contenido — FECHA CONFIRMADA: domingo 19 de julio, 4:00 PM.
      Ubicación (link de Google Maps, texto plano, NUNCA markdown):
      https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
   2. Curso de Edición en CapCut Pro — fecha AÚN NO confirmada. Se anunciará pronto.
@@ -191,12 +191,12 @@ GUÍA POR SITUACIÓN
   - Pregunta GENERAL de cursos (sin decir cuál): menciona los dos e incluye la fecha del de
     Creación de Contenido y que el de Edición está por confirmar. Ejemplo de contenido (adapta el
     tono, mantén los datos):
-    • Curso de Creación de Contenido: sábado 19 de julio, 4:00 PM. Ubicación (link tal cual, en su
+    • Curso de Creación de Contenido: domingo 19 de julio, 4:00 PM. Ubicación (link tal cual, en su
       propia línea, texto plano): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
     • Curso de Edición en CapCut Pro: fecha aún por confirmar; invita a seguir @marketero7 en TikTok
       para enterarse del anuncio.
   - Pregunta ESPECÍFICA por Creación de Contenido ("¿cuándo es el de creación de contenido?"):
-    da directo sábado 19 de julio, 4:00 PM, con el link de Maps en su propia línea (texto plano).
+    da directo domingo 19 de julio, 4:00 PM, con el link de Maps en su propia línea (texto plano).
   - Pregunta ESPECÍFICA por Edición en CapCut ("¿cuándo es el de edición?"): fecha aún por
     confirmar; invita a seguir @marketero7. NUNCA inventes una fecha para este curso.
   - Pregunta por PRECIO del curso de Creación de Contenido (ej. "¿cuánto cuesta el curso?",
@@ -279,6 +279,16 @@ GUÍA POR SITUACIÓN
   PERO SI ES UNA PREGUNTA, NO ES UNA ELECCIÓN: "¿cuánto cuesta el de 6?", "¿qué incluye el
   premium?", "¿cuál me conviene?", "¿el de 6 tiene dron?" son consultas → respóndelas con
   naturalidad y NO envíes el formulario todavía.
+
+  INTERÉS GENÉRICO (sin elegir 6 ni 14) TAMBIÉN ES INTENCIÓN SUFICIENTE: si YA presentaste
+  los paquetes (por texto o flyer) y el cliente responde con interés general de contratar
+  ("me interesa", "sí quiero", "quiero contratar", "pa mi negocio", "pa mi tienda", "adelante"),
+  aunque NO diga cuál paquete elige, envía el formulario de una vez y marca
+  service_intake_requested=true — el formulario no pregunta qué paquete, el asesor lo define
+  después. NUNCA respondas con una pregunta de confirmación intermedia ("¿te gustaría
+  proceder?", "¿te gustaría elegir un paquete?", "¿6 o 14?"): eso genera fricción y pierde el
+  lead. La única excepción es si el mensaje es una PREGUNTA real (precio, contenido,
+  diferencia): en ese caso respóndela primero y no envíes el formulario todavía.
 
   MONTOS EN BS NO SON CANTIDADES: si el cliente menciona un precio (ej. "2500", "el de 2500",
   "el de 3000"), eso es un PRECIO, no una cantidad de videos. NO lo trates como "cantidad no
@@ -522,6 +532,14 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   service_packages solo para paquetes de producción.
   La promo de 50 Bs ya NO existe — nunca la ofrezcas. Solo si el cliente la menciona
   explícitamente, informa que ya no está disponible (cupos agotados).
+
+  CLIENTE PIDE CURSOS Y PAQUETES EN EL MISMO MENSAJE: si el cliente pide información de
+  cursos Y de paquetes de producción a la vez (ej. "los cursos y también paquetes de
+  grabación"), NUNCA combines ambos en un solo bloque de texto corrido. Prioriza el flujo de
+  PAQUETES de producción (es el embudo principal): responde con el texto exacto del Flujo B
+  (consulta general o formulario, según corresponda) y marca intents.service_packages=true.
+  Marca también intents.course_flyer=true para que el sistema envíe el material de cursos por
+  separado — no describas los cursos con texto propio en el mismo mensaje.
 `;
 
 // Texto EXACTO del formulario de intake de leads (mismo contenido que el bloque
@@ -1844,6 +1862,47 @@ const GENERIC_INFO_REGEX =
 const PRICE_QUESTION_REGEX =
   /(\bCUANTO\b|\bCUANTOS\b|\bPRECIO\b|\bPRECIOS\b|\bCOSTO\b|\bCUESTA\b|\bCOSTA\b|\bVALE\b|\bQUE INCLUYE\b|\bQUE TRAE\b|\bCUAL\b|\bCUALES\b|\bDIFERENCIA\b|\?)/;
 
+// Igual que PRICE_QUESTION_REGEX pero SIN el "?" suelto: un cliente que escribe
+// "????" por impaciencia no está haciendo una pregunta de precio/contenido, y no
+// debe suprimir la red de seguridad de interés genérico (ver detectGeneralPurchaseIntent).
+const SPECIFIC_QUESTION_REGEX =
+  /(\bCUANTO\b|\bCUANTOS\b|\bPRECIO\b|\bPRECIOS\b|\bCOSTO\b|\bCUESTA\b|\bCOSTA\b|\bVALE\b|\bQUE INCLUYE\b|\bQUE TRAE\b|\bCUAL\b|\bCUALES\b|\bDIFERENCIA\b|\bCOMO FUNCIONA\b)/;
+
+// Verbos de contratación inequívocos: no requieren que se hayan presentado los
+// paquetes en la conversación, porque contratar/coordinar/empezar ya expresa
+// intención comercial por sí solo.
+const CONTRACT_INTENT_REGEX =
+  /\b(CONTRATAR|CONTRATARLOS|CONTRATO|COORDINAR|EMPEZAR|EMPIEZO|COMENZAR|COMIENZO|INICIAR)\b/;
+
+// Señales de interés genérico (sin elegir 6 vs 14) que, DESPUÉS de haberse
+// presentado los paquetes, ya valen como intención de compra suficiente para
+// forzar el formulario. Excluye deliberadamente "SI" y "VA" sueltos (demasiado
+// ambiguos como respuesta de sí/no genérica fuera de contexto de paquetes).
+const GENERIC_INTEREST_REGEX =
+  /\b(ME INTERESA|ME INTERESAN|QUIERO|LO QUIERO|LOS QUIERO|DAME|DALE|ADELANTE|PROCEDAMOS|EMPECEMOS)\b/;
+
+// Red de seguridad: interés genérico de contratar paquetes, sin elegir un
+// paquete específico (6/14, nombre, precio o referencia). Complementa a
+// detectPackageSelection para no perder leads que dicen "me interesa" o
+// "quiero contratar" sin especificar cantidad. A diferencia de
+// detectPackageSelection, NO se suprime por GENERIC_INFO_REGEX: los paquetes ya
+// se mostraron, así que "quiero saber los paquetes" + interés debe convertir,
+// no volver a informar.
+function detectGeneralPurchaseIntent(
+  text: string,
+  packagesPresented: boolean,
+): boolean {
+  if (!text) return false;
+
+  const normalized = normalizeForMatch(text);
+
+  if (SPECIFIC_QUESTION_REGEX.test(normalized)) return false;
+  if (CONTRACT_INTENT_REGEX.test(normalized)) return true;
+  if (!packagesPresented) return false;
+
+  return GENERIC_INTEREST_REGEX.test(normalized);
+}
+
 // Devuelve true si el texto contiene alguno de los números EXACTOS buscados como
 // grupo de dígitos completo (no como subcadena de otro número). Ej: buscar 2500 en
 // "25000" o "14000" da false; en "2500bs" o "2.500 bs" da true. Tolera separadores
@@ -1972,15 +2031,19 @@ function detectPackageSelection(
 }
 
 // Decisión unificada para forzar el formulario de intake: el cliente seleccionó un
-// paquete de forma inequívoca (por número, nombre, precio o referencia en contexto).
+// paquete de forma inequívoca (por número, nombre, precio o referencia en contexto)
+// O expresó interés genérico de contratar sin especificar paquete (ver
+// detectGeneralPurchaseIntent).
 function shouldForceIntakeForm(
   text: string,
   history: HistoryMessage[],
   flyerAlreadySent: boolean,
 ): boolean {
-  return detectPackageSelection(
-    text,
-    detectPackagesPresented(history, flyerAlreadySent),
+  const presented = detectPackagesPresented(history, flyerAlreadySent);
+
+  return (
+    detectPackageSelection(text, presented) ||
+    detectGeneralPurchaseIntent(text, presented)
   );
 }
 
