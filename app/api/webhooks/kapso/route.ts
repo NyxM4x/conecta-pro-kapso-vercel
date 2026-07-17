@@ -578,6 +578,13 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   NUNCA marques advisor_handoff por leads, llamadas, citas o pagos — esos flujos ya tienen su
   propio aviso al asesor y son independientes de este campo.
   Márcalo como máximo una vez por conversación (el backend controla el dedup).
+- conversation_summary: un resumen de UNA sola línea, en tercera persona, pensado para que un
+  asesor humano entienda de un vistazo lo que está pasando en el chat cuando se le derive por
+  Telegram. Resume lo que el cliente pidió y/o lo que tú respondiste o hiciste en este turno
+  (ej. "Confirmó que hacen envíos a provincias y pidió el costo", "Pidió un solo video para un
+  spot; se le explicó que solo hay paquetes de 6 o 14", "Envió su comprobante de pago para el
+  curso"). Escríbelo SIEMPRE, breve y concreto (máx. ~140 caracteres), sin emojis ni saludos.
+  Este texto NUNCA se le envía al cliente — es solo para el asesor.
 
 REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   Los dos flujos activos (cursos, paquetes de producción) son canales independientes.
@@ -727,6 +734,47 @@ async function sendTelegramNotification(text: string): Promise<boolean> {
     console.error("sendTelegramNotification threw", error);
     return false;
   }
+}
+
+// Escapa los caracteres que Telegram interpreta como HTML (parse_mode: "HTML"),
+// para que el texto libre del cliente o el resumen no rompa el formato.
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// Formato ÚNICO de los mensajes a Telegram: título propio (se conserva por tipo de
+// aviso) + teléfono + link directo al chat + último mensaje del cliente + resumen de
+// la IA (opcional). A propósito NO incluye el ID de conversación ni el nombre del
+// contacto: el asesor abre el chat con el link y ve todo el contexto ahí.
+function buildTelegramBody(params: {
+  headline: string;
+  phone: string;
+  clientMessage?: string;
+  summary?: string;
+}): string {
+  const digits = String(params.phone ?? "").replace(/\D/g, "");
+  const clientMessage = (params.clientMessage ?? "").trim();
+  const summary = (params.summary ?? "").trim();
+
+  const lines = [
+    params.headline,
+    "",
+    `📱 ${digits}`,
+    `👉 Abrir chat: https://wa.me/${digits}`,
+  ];
+
+  if (clientMessage) {
+    lines.push("", `👤 Cliente:\n${escapeTelegramHtml(clientMessage.slice(0, 500))}`);
+  }
+
+  if (summary) {
+    lines.push("", `🤖 IA:\n${escapeTelegramHtml(summary.slice(0, 500))}`);
+  }
+
+  return lines.join("\n");
 }
 
 async function logSystemEvent(params: {
@@ -1230,14 +1278,13 @@ async function notifyLeadToTelegram(params: {
   contactName?: string | null;
   conversationId?: string;
   fallbackText?: string;
+  summary?: string;
   kind?: "intake" | "call_request";
   trigger?: LeadTrigger;
 }): Promise<boolean> {
-  const recentClientMessages = params.history
-    .filter((message) => message.role === "user")
-    .slice(-6)
-    .map((message) => `• ${message.content}`)
-    .join("\n");
+  const lastClientMessage =
+    params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
+    params.fallbackText;
 
   const headline =
     params.kind === "call_request"
@@ -1245,13 +1292,12 @@ async function notifyLeadToTelegram(params: {
       : "🟢 <b>Nuevo lead — Conecta Pro</b>";
 
   const notified = await sendTelegramNotification(
-    [
+    buildTelegramBody({
       headline,
-      `👤 Contacto: ${params.contactName ?? "Sin nombre"}`,
-      `📱 WhatsApp: ${params.phone}`,
-      `💬 Mensajes recientes del cliente:\n${(recentClientMessages || params.fallbackText || "").slice(0, 800)}`,
-      `🆔 Conversación: ${params.conversationId ?? "N/A"}`,
-    ].join("\n"),
+      phone: params.phone,
+      clientMessage: lastClientMessage,
+      summary: params.summary,
+    }),
   );
 
   if (notified) {
@@ -1280,21 +1326,19 @@ async function notifyLeadUpdateToTelegram(params: {
   contactName?: string | null;
   conversationId?: string;
   fallbackText?: string;
+  summary?: string;
 }): Promise<boolean> {
-  const recentClientMessages = params.history
-    .filter((message) => message.role === "user")
-    .slice(-6)
-    .map((message) => `• ${message.content}`)
-    .join("\n");
+  const lastClientMessage =
+    params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
+    params.fallbackText;
 
   const notified = await sendTelegramNotification(
-    [
-      "🔄 <b>Lead actualizado — datos completos</b>",
-      `👤 Contacto: ${params.contactName ?? "Sin nombre"}`,
-      `📱 WhatsApp: ${params.phone}`,
-      `💬 Datos enviados por el cliente:\n${(recentClientMessages || params.fallbackText || "").slice(0, 800)}`,
-      `🆔 Conversación: ${params.conversationId ?? "N/A"}`,
-    ].join("\n"),
+    buildTelegramBody({
+      headline: "🔄 <b>Lead actualizado — datos completos</b>",
+      phone: params.phone,
+      clientMessage: lastClientMessage,
+      summary: params.summary,
+    }),
   );
 
   if (notified) {
@@ -1328,23 +1372,15 @@ async function notifyAdvisorHandoffToTelegram(params: {
   conversationId?: string;
   reason: AdvisorHandoffReason;
   lastMessageText: string;
+  summary?: string;
 }): Promise<boolean> {
-  const recentClientMessages = params.history
-    .filter((message) => message.role === "user")
-    .slice(-6)
-    .map((message) => `• ${message.content}`)
-    .join("\n");
-
   const notified = await sendTelegramNotification(
-    [
-      "⚪ <b>Requiere asesor — Conecta Pro</b>",
-      `🏷️ Motivo: ${ADVISOR_HANDOFF_REASON_LABEL[params.reason]}`,
-      `👤 Contacto: ${params.contactName ?? "Sin nombre"}`,
-      `📱 WhatsApp: ${params.phone}`,
-      `❓ Último mensaje del cliente:\n"${params.lastMessageText.slice(0, 500)}"`,
-      `💬 Contexto reciente:\n${(recentClientMessages || "Sin historial reciente").slice(0, 800)}`,
-      `🆔 Conversación: ${params.conversationId ?? "N/A"}`,
-    ].join("\n"),
+    buildTelegramBody({
+      headline: `⚪ <b>Requiere asesor — Conecta Pro</b>\n🏷️ Motivo: ${ADVISOR_HANDOFF_REASON_LABEL[params.reason]}`,
+      phone: params.phone,
+      clientMessage: params.lastMessageText,
+      summary: params.summary,
+    }),
   );
 
   if (notified) {
@@ -1710,6 +1746,7 @@ const AssistantTurnSchema = z.object({
   appointment_scheduled: z.boolean(),
   advisor_handoff: z.boolean(),
   advisor_handoff_reason: z.enum(["undocumented_info", "out_of_catalog"]).nullable(),
+  conversation_summary: z.string(),
   intents: z.object({
     course_flyer: z.boolean(),
     location_video: z.boolean(),
@@ -1733,6 +1770,7 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   appointment_scheduled: false,
   advisor_handoff: false,
   advisor_handoff_reason: null,
+  conversation_summary: "",
   intents: {
     course_flyer: false,
     location_video: false,
@@ -3166,6 +3204,7 @@ export async function POST(request: Request) {
         conversationId: lastMessage.conversationId,
         reason: "undocumented_info",
         lastMessageText: lastMessage.text,
+        summary: turn.conversation_summary,
       });
     }
 
@@ -3212,6 +3251,7 @@ export async function POST(request: Request) {
         contactName: lastMessage.contactName,
         conversationId: lastMessage.conversationId,
         fallbackText: lastMessage.text,
+        summary: turn.conversation_summary,
         kind: callRequested && !turn.lead_data_submitted ? "call_request" : "intake",
         trigger: turn.call_request
           ? "call_request_assistant"
@@ -3230,6 +3270,7 @@ export async function POST(request: Request) {
         contactName: lastMessage.contactName,
         conversationId: lastMessage.conversationId,
         fallbackText: lastMessage.text,
+        summary: turn.conversation_summary,
       });
     }
 
@@ -3445,6 +3486,7 @@ export async function POST(request: Request) {
         contactName: lastMessage.contactName,
         conversationId: mediaConversationId,
         fallbackText: lastMessage.text,
+        summary: turn.conversation_summary,
         kind: callRequested && !turn.lead_data_submitted ? "call_request" : "intake",
         trigger,
       });
@@ -3462,18 +3504,19 @@ export async function POST(request: Request) {
         contactName: lastMessage.contactName,
         conversationId: mediaConversationId,
         fallbackText: lastMessage.text,
+        summary: turn.conversation_summary,
       });
     }
 
     // Pago: el cliente confirmó pago (comprobante).
     if (turn.payment_confirmation && !telegramPaymentSent) {
       const notified = await sendTelegramNotification(
-        [
-          "💰 <b>Pago confirmado — Conecta Pro</b>",
-          `👤 Contacto: ${lastMessage.contactName ?? "Sin nombre"}`,
-          `📱 WhatsApp: ${lastMessage.from}`,
-          "🧾 El cliente envió un comprobante de pago. Verificar.",
-        ].join("\n"),
+        buildTelegramBody({
+          headline: "💰 <b>Pago confirmado — Conecta Pro</b>",
+          phone: lastMessage.from,
+          clientMessage: lastMessage.text,
+          summary: turn.conversation_summary || "El cliente envió un comprobante de pago. Verificar.",
+        }),
       );
 
       if (notified) {
@@ -3489,13 +3532,12 @@ export async function POST(request: Request) {
     // Cita: el cliente confirmó una hora para visitar la oficina.
     if (turn.appointment_scheduled && !telegramAppointmentSent) {
       const notified = await sendTelegramNotification(
-        [
-          "📅 <b>Cita en oficina — Conecta Pro</b>",
-          `👤 Contacto: ${lastMessage.contactName ?? "Sin nombre"}`,
-          `📱 WhatsApp: ${lastMessage.from}`,
-          `🕒 Hora confirmada (según el cliente):\n${lastMessage.text.slice(0, 500)}`,
-          `🆔 Conversación: ${mediaConversationId ?? "N/A"}`,
-        ].join("\n"),
+        buildTelegramBody({
+          headline: "📅 <b>Cita en oficina — Conecta Pro</b>",
+          phone: lastMessage.from,
+          clientMessage: lastMessage.text,
+          summary: turn.conversation_summary,
+        }),
       );
 
       if (notified) {
@@ -3524,6 +3566,7 @@ export async function POST(request: Request) {
         conversationId: mediaConversationId,
         reason: "out_of_catalog",
         lastMessageText: lastMessage.text,
+        summary: turn.conversation_summary,
       });
     }
   } catch (error) {
