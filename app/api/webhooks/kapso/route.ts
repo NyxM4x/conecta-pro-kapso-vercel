@@ -67,17 +67,17 @@ Conecta Pro tiene TRES líneas activas:
 
 LÍNEA A — Cursos:
 - Conecta Pro dictará dos cursos presenciales en Santa Cruz de la Sierra, Bolivia:
-  1. Curso de Creación de Contenido — FECHA CONFIRMADA: domingo 19 de julio, 4:00 PM.
+  1. Curso de Creación de Contenido — FECHA CONFIRMADA: domingo 26 de julio, 4:00 PM.
      Ubicación (link de Google Maps, texto plano, NUNCA markdown):
      https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
   2. Curso de Edición en CapCut Pro — fecha AÚN NO confirmada. Se anunciará pronto.
-- El 19 de julio a las 4:00 PM es un dato REAL y autorizado SOLO para el Curso de Creación de
+- El 26 de julio a las 4:00 PM es un dato REAL y autorizado SOLO para el Curso de Creación de
   Contenido: puedes darlo con confianza. Para el Curso de Edición en CapCut Pro NO existe fecha
   todavía: NUNCA inventes una fecha para ese curso.
 - Para estar al tanto de la fecha del curso de Edición: seguir la cuenta de TikTok de Conecta Pro:
   @marketero7
 - PRECIOS del Curso de Creación de Contenido (CONFIRMADOS):
-  • 350 Bs — PREVENTA: pagando/reservando ANTES del día del curso (19 de julio).
+  • 350 Bs — PREVENTA: pagando/reservando ANTES del día del curso (26 de julio).
   • 450 Bs — PRESENCIAL: pagando el mismo día del curso.
   El Curso de Edición en CapCut Pro NO tiene precio confirmado todavía. NUNCA inventes precio para ese curso.
 - MODALIDAD del Curso de Creación de Contenido: es ÚNICAMENTE PRESENCIAL. NO existen clases
@@ -195,22 +195,22 @@ GUÍA POR SITUACIÓN
   - Pregunta GENERAL de cursos (sin decir cuál): menciona los dos e incluye la fecha del de
     Creación de Contenido y que el de Edición está por confirmar. Ejemplo de contenido (adapta el
     tono, mantén los datos):
-    • Curso de Creación de Contenido: domingo 19 de julio, 4:00 PM. Ubicación (link tal cual, en su
+    • Curso de Creación de Contenido: domingo 26 de julio, 4:00 PM. Ubicación (link tal cual, en su
       propia línea, texto plano): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
     • Curso de Edición en CapCut Pro: fecha aún por confirmar; invita a seguir @marketero7 en TikTok
       para enterarse del anuncio.
   - Pregunta ESPECÍFICA por Creación de Contenido ("¿cuándo es el de creación de contenido?"):
-    da directo domingo 19 de julio, 4:00 PM, con el link de Maps en su propia línea (texto plano).
+    da directo domingo 26 de julio, 4:00 PM, con el link de Maps en su propia línea (texto plano).
   - Pregunta ESPECÍFICA por Edición en CapCut ("¿cuándo es el de edición?"): fecha aún por
     confirmar; invita a seguir @marketero7. NUNCA inventes una fecha para este curso.
   - Pregunta por PRECIO del curso de Creación de Contenido (ej. "¿cuánto cuesta el curso?",
     "¿precio del curso de creación de contenido?"): responde 350 Bs en preventa (pagando antes
-    del día del curso) y 450 Bs presencial (pagando el mismo día, 19 de julio). Puedes sumar
+    del día del curso) y 450 Bs presencial (pagando el mismo día, 26 de julio). Puedes sumar
     urgencia natural de preventa (ej. "aprovecha la preventa"), sin inventar cupos ni decir que
     "el precio sube" (son dos modalidades de pago, no un cambio de precio). NO des precio del
     curso de Edición en CapCut (no confirmado).
   - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que el precio de preventa
-    (350 Bs) aplica realizando el pago antes del día del curso (19 de julio); el mismo día del
+    (350 Bs) aplica realizando el pago antes del día del curso (26 de julio); el mismo día del
     curso el valor es 450 Bs presencial. NUNCA inventes una fecha de corte específica ni
     menciones cantidad de cupos.
   - Pregunta por modalidad VIRTUAL/online (ej. "¿hay curso virtual?", "¿lo puedo tomar online?",
@@ -1201,6 +1201,235 @@ async function saveOutboundMessage(params: {
       },
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Máquina de estados del flujo de paquetes (fuente de verdad en kapso_conversations)
+// browsing -> package_selected -> intake_sent -> lead_captured -> advisor_notified
+// Reemplaza la inferencia frágil por marcadores de texto: el código decide el
+// siguiente paso según el stage guardado, no el LLM.
+// ---------------------------------------------------------------------------
+type FlowStage =
+  | "browsing"
+  | "package_selected"
+  | "intake_sent"
+  | "lead_captured"
+  | "advisor_notified";
+
+const FLOW_STAGE_RANK: Record<FlowStage, number> = {
+  browsing: 0,
+  package_selected: 1,
+  intake_sent: 2,
+  lead_captured: 3,
+  advisor_notified: 4,
+};
+
+type ConversationFlowState = {
+  flowStage: FlowStage;
+  selectedPackage: string | null;
+  intakeFormSentAt: string | null;
+  leadCapturedAt: string | null;
+  advisorNotifiedAt: string | null;
+};
+
+const DEFAULT_FLOW_STATE: ConversationFlowState = {
+  flowStage: "browsing",
+  selectedPackage: null,
+  intakeFormSentAt: null,
+  leadCapturedAt: null,
+  advisorNotifiedAt: null,
+};
+
+// Minutos tras enviar el formulario antes de reactivar al cliente que no completó
+// sus datos (ataca directamente la caída del funnel intake_sent -> asesor).
+const FOLLOWUP_DELAY_MINUTES = Number(process.env.FOLLOWUP_DELAY_MINUTES ?? 180);
+
+async function getConversationFlowState(
+  conversationId?: string,
+): Promise<ConversationFlowState> {
+  if (!conversationId) return { ...DEFAULT_FLOW_STATE };
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from("kapso_conversations")
+    .select(
+      "flow_stage, selected_package, intake_form_sent_at, lead_captured_at, advisor_notified_at",
+    )
+    .eq("kapso_conversation_id", conversationId)
+    .maybeSingle();
+
+  if (error || !data) {
+    if (error) console.error("supabase get flow state failed", error);
+    return { ...DEFAULT_FLOW_STATE };
+  }
+
+  return {
+    flowStage: (data.flow_stage as FlowStage) ?? "browsing",
+    selectedPackage: data.selected_package ?? null,
+    intakeFormSentAt: data.intake_form_sent_at ?? null,
+    leadCapturedAt: data.lead_captured_at ?? null,
+    advisorNotifiedAt: data.advisor_notified_at ?? null,
+  };
+}
+
+// Actualiza el estado de flujo sin retroceder de etapa: si el stage objetivo tiene
+// menor rango que el actual, se conservan el resto de campos del patch pero NO se
+// baja flow_stage (evita que un mensaje tardío regrese de advisor_notified a intake_sent).
+async function advanceConversationFlowState(params: {
+  conversationId?: string;
+  phone: string;
+  targetStage?: FlowStage;
+  currentStage?: FlowStage;
+  patch?: Record<string, any>;
+}): Promise<void> {
+  if (!params.conversationId) return;
+
+  const supabase = getSupabaseClient();
+  const patch: Record<string, any> = { ...(params.patch ?? {}) };
+
+  if (params.targetStage) {
+    const current = params.currentStage ?? "browsing";
+    if (FLOW_STAGE_RANK[params.targetStage] > FLOW_STAGE_RANK[current]) {
+      patch.flow_stage = params.targetStage;
+    }
+  }
+
+  const { error } = await supabase.from("kapso_conversations").upsert(
+    {
+      kapso_conversation_id: params.conversationId,
+      contact_phone: params.phone,
+      updated_at: new Date().toISOString(),
+      ...patch,
+    },
+    { onConflict: "kapso_conversation_id" },
+  );
+
+  if (error) {
+    console.error("supabase advance flow state failed", error);
+    await logSystemEvent({
+      level: "error",
+      eventType: "supabase_flow_state_update_failed",
+      conversationId: params.conversationId,
+      contactPhone: params.phone,
+      errorMessage: error.message,
+      metadata: { code: error.code, details: error.details },
+    });
+  }
+}
+
+// Etiqueta best-effort del paquete elegido a partir del texto del cliente.
+// Solo para reporting/contexto; no condiciona el envío del formulario.
+function detectSelectedPackageName(text: string): string | null {
+  if (!text) return null;
+  const normalized = normalizeForMatch(text);
+  if (
+    /\bPREMIUM\b/.test(normalized) ||
+    containsExactNumber(normalized, [14]) ||
+    containsExactNumber(normalized, [5000])
+  ) {
+    return "premium";
+  }
+  if (
+    /\bEXPRESS?\b/.test(normalized) ||
+    containsExactNumber(normalized, [6]) ||
+    containsExactNumber(normalized, [2500])
+  ) {
+    return "express";
+  }
+  return null;
+}
+
+// Mensaje puramente de continuación ("ok", "y ahora", "cómo empezamos") sin datos
+// ni preguntas concretas. Con el formulario ya enviado (flow_stage='intake_sent'),
+// estos nudges se responden de forma determinista, sin depender del LLM.
+const INTAKE_NUDGE_REGEX =
+  /^(ok(ay)?|oka|listo|dale|ya|si|sí|bueno|bien|perfecto|de acuerdo|me parece( bien)?|y ahora|ahora que|y luego|entonces|y despues|y despu[eé]s|que sigue|como (empezamos|empiezo|seguimos|sigo|continuamos|procedemos|es|hago|hacemos|inicio|iniciamos))[\s?!.]*$/;
+
+function isIntakeNudge(text: string): boolean {
+  if (!text) return false;
+  const normalized = text.trim().toLowerCase();
+  if (normalized.length > 40) return false;
+  return INTAKE_NUDGE_REGEX.test(normalized);
+}
+
+// Recordatorio conciso de los datos clave. Se envía como respuesta determinista a un
+// nudge cuando el formulario ya fue enviado, para no repetir el formulario completo.
+const INTAKE_REMINDER = `¡Genial! 🙌 Para avanzar solo necesito estos datos y un asesor te contacta enseguida:
+
+📌 Nombre
+📌 Nombre de tu empresa o emprendimiento
+📌 Número de contacto
+📌 Rubro
+📌 ¿Qué tipo de contenido te interesa?`;
+
+// Programa un follow-up para reactivar al cliente que recibió el formulario pero no
+// completó sus datos. No duplica: si ya hay uno pendiente para la conversación, no crea otro.
+async function scheduleFollowupIfNeeded(params: {
+  conversationId?: string;
+  phone: string;
+  triggerInboundAt: string | null;
+}): Promise<void> {
+  if (!params.conversationId) return;
+
+  const supabase = getSupabaseClient();
+
+  const { data: existing, error: existingError } = await supabase
+    .from("kapso_followups")
+    .select("id")
+    .eq("kapso_conversation_id", params.conversationId)
+    .eq("status", "pending")
+    .limit(1);
+
+  if (existingError) {
+    console.error("supabase check pending followup failed", existingError);
+    return;
+  }
+
+  if ((existing ?? []).length > 0) return;
+
+  const nowIso = new Date().toISOString();
+  const scheduledAt = new Date(
+    Date.now() + FOLLOWUP_DELAY_MINUTES * 60 * 1000,
+  ).toISOString();
+
+  const { error } = await supabase.from("kapso_followups").insert({
+    kapso_conversation_id: params.conversationId,
+    contact_phone: params.phone,
+    trigger_inbound_at: params.triggerInboundAt ?? nowIso,
+    scheduled_at: scheduledAt,
+    status: "pending",
+  });
+
+  if (error) {
+    console.error("supabase insert followup failed", error);
+  }
+}
+
+// El lead llegó al asesor: avanza a advisor_notified y cancela cualquier follow-up
+// pendiente (ya no hay que reactivar a un cliente que ya fue derivado).
+async function markLeadCapturedAndCancelFollowups(
+  conversationId?: string,
+  phone?: string,
+  currentStage?: FlowStage,
+): Promise<void> {
+  if (!conversationId || !phone) return;
+
+  const nowIso = new Date().toISOString();
+
+  await advanceConversationFlowState({
+    conversationId,
+    phone,
+    targetStage: "advisor_notified",
+    currentStage,
+    patch: { lead_captured_at: nowIso, advisor_notified_at: nowIso },
+  });
+
+  const supabase = getSupabaseClient();
+  await supabase
+    .from("kapso_followups")
+    .update({ status: "skipped", skip_reason: "lead_captured", updated_at: nowIso })
+    .eq("kapso_conversation_id", conversationId)
+    .eq("status", "pending");
 }
 
 // Detecta de forma determinista si el texto contiene datos de lead: un teléfono
@@ -2259,6 +2488,16 @@ async function hasIntakeFormBeenSent(conversationId?: string): Promise<boolean> 
 
   const supabase = getSupabaseClient();
 
+  // Fuente de verdad: columna de estado. Fallback al marcador de texto para
+  // conversaciones anteriores a la migración (o si la columna aún no se pobló).
+  const { data: conv } = await supabase
+    .from("kapso_conversations")
+    .select("intake_form_sent_at")
+    .eq("kapso_conversation_id", conversationId)
+    .maybeSingle();
+
+  if (conv?.intake_form_sent_at) return true;
+
   const { data, error } = await supabase
     .from("kapso_messages")
     .select("id")
@@ -2291,6 +2530,16 @@ async function hasTelegramLeadBeenSent(conversationId?: string): Promise<boolean
   if (!conversationId) return false;
 
   const supabase = getSupabaseClient();
+
+  // Fuente de verdad: columna advisor_notified_at. Fallback al marcador de texto
+  // para conversaciones anteriores a la migración.
+  const { data: conv } = await supabase
+    .from("kapso_conversations")
+    .select("advisor_notified_at")
+    .eq("kapso_conversation_id", conversationId)
+    .maybeSingle();
+
+  if (conv?.advisor_notified_at) return true;
 
   const { data, error } = await supabase
     .from("kapso_messages")
@@ -2839,6 +3088,13 @@ export async function POST(request: Request) {
             trigger,
           });
 
+          if (leadNotifiedWhilePaused) {
+            await markLeadCapturedAndCancelFollowups(
+              lastMessage.conversationId,
+              lastMessage.from,
+            );
+          }
+
           await logSystemEvent({
             level: "info",
             eventType: "lead_notified_while_paused",
@@ -2938,6 +3194,7 @@ export async function POST(request: Request) {
     telegramPaymentSent,
     telegramAppointmentSent,
     telegramHandoffSent,
+    flowState,
   ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
@@ -2948,6 +3205,7 @@ export async function POST(request: Request) {
     hasTelegramPaymentBeenSent(lastMessage.conversationId),
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
     hasTelegramHandoffBeenSent(lastMessage.conversationId),
+    getConversationFlowState(lastMessage.conversationId),
   ]);
 
   // Palabra clave de promoción del live (PROMO[monto]/PROMOCION[monto], con
@@ -3102,13 +3360,44 @@ export async function POST(request: Request) {
 
   const generationStartedAt = Date.now();
 
-  const turn = await generateAssistantTurn({
-    history,
-    extraContext,
-    conversationId: lastMessage.conversationId,
-    messageId: lastMessage.messageId,
-    phone: lastMessage.from,
-  });
+  // Guardia determinista de la máquina de estados: si el formulario ya fue enviado
+  // (flow_stage='intake_sent') y el lead aún no llegó al asesor, un mensaje de pura
+  // continuación ("ok", "cómo empezamos") NO se manda al LLM — se responde con un
+  // recordatorio fijo de los datos que faltan. Elimina la inconsistencia del modelo
+  // ante mensajes similares en este punto del flujo.
+  const isDeterministicIntakeNudge =
+    flowState.flowStage === "intake_sent" &&
+    !flowState.advisorNotifiedAt &&
+    isIntakeNudge(lastMessage.text);
+
+  let turn: AssistantTurn;
+
+  if (isDeterministicIntakeNudge) {
+    turn = {
+      ...FALLBACK_ASSISTANT_TURN,
+      reply: INTAKE_REMINDER,
+      should_reply: true,
+      is_greeting: false,
+      conversation_summary: "",
+    };
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "deterministic_intake_nudge",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: { client_message: lastMessage.text.slice(0, 200) },
+    });
+  } else {
+    turn = await generateAssistantTurn({
+      history,
+      extraContext,
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      phone: lastMessage.from,
+    });
+  }
 
   // Pedido de llamada: se acepta tanto la clasificación del LLM como el respaldo
   // determinista, para que un "quiero llamar para confirmar el paquete" nunca se
@@ -3259,6 +3548,12 @@ export async function POST(request: Request) {
             ? "call_request_heuristic"
             : "intake_form",
       });
+
+      await markLeadCapturedAndCancelFollowups(
+        lastMessage.conversationId,
+        lastMessage.from,
+        flowState.flowStage,
+      );
     } else if (
       turn.lead_data_submitted &&
       telegramLeadSent &&
@@ -3450,6 +3745,28 @@ export async function POST(request: Request) {
         content: "[INTAKE_FORM_SENT] formulario de datos para paquetes de producción",
         rawPayload: { type: "intake_form", source: "service_packages_intake" },
       });
+
+      // Transición de estado: el formulario fue enviado -> intake_sent, y se programa
+      // un follow-up para reactivar al cliente si no completa sus datos.
+      await advanceConversationFlowState({
+        conversationId: mediaConversationId,
+        phone: lastMessage.from,
+        targetStage: "intake_sent",
+        currentStage: flowState.flowStage,
+        patch: {
+          intake_form_sent_at: new Date().toISOString(),
+          selected_package:
+            detectSelectedPackageName(lastMessage.text) ??
+            flowState.selectedPackage ??
+            null,
+        },
+      });
+
+      await scheduleFollowupIfNeeded({
+        conversationId: mediaConversationId,
+        phone: lastMessage.from,
+        triggerInboundAt: lastMessageCreatedAt,
+      });
     }
 
     for (const intent of MEDIA_SEND_ORDER) {
@@ -3490,6 +3807,12 @@ export async function POST(request: Request) {
         kind: callRequested && !turn.lead_data_submitted ? "call_request" : "intake",
         trigger,
       });
+
+      await markLeadCapturedAndCancelFollowups(
+        mediaConversationId,
+        lastMessage.from,
+        flowState.flowStage,
+      );
     } else if (
       // El lead ya se notificó (típicamente por pedido de llamada) y recién ahora
       // el cliente completó el formulario: se envía UNA sola actualización en vez
