@@ -754,10 +754,12 @@ function buildTelegramBody(params: {
   phone: string;
   clientMessage?: string;
   summary?: string;
+  contextLabel?: string;
 }): string {
   const digits = String(params.phone ?? "").replace(/\D/g, "");
   const clientMessage = (params.clientMessage ?? "").trim();
   const summary = (params.summary ?? "").trim();
+  const contextLabel = (params.contextLabel ?? "").trim();
 
   const lines = [
     params.headline,
@@ -765,6 +767,10 @@ function buildTelegramBody(params: {
     `📱 ${digits}`,
     `👉 Abrir chat: https://wa.me/${digits}`,
   ];
+
+  if (contextLabel) {
+    lines.push(`🗂️ Contexto: ${contextLabel}`);
+  }
 
   if (clientMessage) {
     lines.push("", `👤 Cliente:\n${escapeTelegramHtml(clientMessage.slice(0, 500))}`);
@@ -3041,11 +3047,15 @@ export async function POST(request: Request) {
     // detectamos si el cliente envió sus datos y notificamos a Telegram — SIN responder
     // por WhatsApp. Gate para no gastar llamadas de OpenAI en cada mensaje pausado.
     let leadNotifiedWhilePaused = false;
+    // Elevado fuera del try de leads para reutilizarlo también en la detección de
+    // pago pausada (evita una segunda query idéntica).
+    let intakeFormSentPaused = false;
     try {
-      const [intakeFormSentPaused, telegramLeadSentPaused] = await Promise.all([
+      const [intakeFormSentPausedResult, telegramLeadSentPaused] = await Promise.all([
         hasIntakeFormBeenSent(lastMessage.conversationId),
         hasTelegramLeadBeenSent(lastMessage.conversationId),
       ]);
+      intakeFormSentPaused = intakeFormSentPausedResult;
 
       // El pedido de llamada es 100% determinista: dispara el lead aunque nunca se
       // haya pedido el formulario y sin gastar una llamada a OpenAI.
@@ -3126,6 +3136,78 @@ export async function POST(request: Request) {
       });
     }
 
+    // Igual que con el lead, el comprobante de pago debe detectarse aunque un
+    // humano ya haya tomado el chat — SIN responder por WhatsApp (reactivar al
+    // bot mientras la secretaria está conversando generaría respuestas cruzadas).
+    // 100% determinista: no llama a generateAssistantTurn, cero costo extra de OpenAI.
+    let paymentNotifiedWhilePaused = false;
+    try {
+      const telegramPaymentSentPaused = await hasTelegramPaymentBeenSent(
+        lastMessage.conversationId,
+      );
+
+      if (!telegramPaymentSentPaused) {
+        const mediaStatusPaused = await getMediaSentStatus(lastMessage.from);
+        const normalizedPausedText = normalizeForMatch(lastMessage.text);
+        const hasExplicitPaymentPhrasePaused =
+          EXPLICIT_PAYMENT_PHRASES.test(normalizedPausedText);
+        const isPlausibleReceiptPaused =
+          (lastMessage.isImage || lastMessage.isDocument) &&
+          (mediaStatusPaused.payment_qr || intakeFormSentPaused);
+
+        if (isPlausibleReceiptPaused || hasExplicitPaymentPhrasePaused) {
+          const paymentContextLabelPaused = mediaStatusPaused.payment_qr
+            ? "Curso de Creación de Contenido"
+            : intakeFormSentPaused
+              ? "Paquetes de producción"
+              : "Sin contexto claro — revisar chat";
+
+          paymentNotifiedWhilePaused = await sendTelegramNotification(
+            buildTelegramBody({
+              headline: "💰 <b>Pago confirmado — Conecta Pro</b>",
+              phone: lastMessage.from,
+              clientMessage: lastMessage.text,
+              summary:
+                "El cliente envió un comprobante de pago mientras el chat estaba en atención humana.",
+              contextLabel: paymentContextLabelPaused,
+            }),
+          );
+
+          if (paymentNotifiedWhilePaused) {
+            await saveOutboundMessage({
+              conversationId: lastMessage.conversationId,
+              phone: lastMessage.from,
+              content: "[TELEGRAM_PAYMENT_SENT] notificación de pago enviada a Telegram",
+              rawPayload: { type: "telegram_notification", event: "payment" },
+            });
+          }
+
+          await logSystemEvent({
+            level: "info",
+            eventType: "payment_notified_while_paused",
+            conversationId: lastMessage.conversationId,
+            messageId: lastMessage.messageId,
+            contactPhone: lastMessage.from,
+            metadata: {
+              detection: isPlausibleReceiptPaused ? "media_heuristic" : "explicit_phrase",
+              context_label: paymentContextLabelPaused,
+              notified: paymentNotifiedWhilePaused,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      console.error("payment capture while paused failed", error);
+      await logSystemEvent({
+        level: "error",
+        eventType: "payment_capture_while_paused_failed",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        errorMessage: getErrorMessage(error),
+      });
+    }
+
     await logSystemEvent({
       level: "info",
       eventType: "bot_reply_skipped_paused",
@@ -3136,6 +3218,7 @@ export async function POST(request: Request) {
         reason: pauseState.reason ?? null,
         expires_at: pauseState.expiresAt ?? null,
         lead_notified_while_paused: leadNotifiedWhilePaused,
+        payment_notified_while_paused: paymentNotifiedWhilePaused,
       },
     });
 
@@ -3252,16 +3335,26 @@ export async function POST(request: Request) {
   ];
 
   // Comprobante de pago: solo se trata como confirmación válida si (a) es
-  // imagen/PDF y ya se envió el QR antes, o (b) el texto usa una frase
-  // explícita de pago. Frases vagas ("ya mandé/pasé/envié") sin archivo NO
-  // cuentan como comprobante.
+  // imagen/PDF y ya se envió el QR del curso antes, o (a') es imagen/PDF y el
+  // cliente ya completó el formulario de intake (contexto de paquetes, donde
+  // nunca se envía QR por el bot), o (b) el texto usa una frase explícita de
+  // pago. Frases vagas ("ya mandé/pasé/envié") sin archivo NO cuentan como
+  // comprobante. Sin QR y sin intake (cero contexto) tampoco cuenta.
   if (lastMessage.isImage || lastMessage.isDocument) {
     const mediaLabel = lastMessage.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
-    contextParts.push(
-      mediaStatus.payment_qr
-        ? `El último mensaje del usuario es ${mediaLabel} y ya se le envió antes el QR de pago. Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y, una vez verificado, te confirmamos tu cupo. Te avisamos por este mismo chat." No digas que el cupo ya quedó confirmado — la validación la hace el equipo. No lo trates como pedido de otro material.`
-        : `El último mensaje del usuario es ${mediaLabel} y todavía NO se le ha enviado el QR de pago. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
-    );
+    if (mediaStatus.payment_qr) {
+      contextParts.push(
+        `El último mensaje del usuario es ${mediaLabel} y ya se le envió antes el QR de pago del curso. Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y, una vez verificado, te confirmamos tu cupo. Para agregarte al grupo de participantes del curso, indícame tu nombre completo (verifica que esté bien escrito) y tu número de teléfono." No digas que el cupo ya quedó confirmado — la validación la hace el equipo. No lo trates como pedido de otro material.`,
+      );
+    } else if (intakeFormSent) {
+      contextParts.push(
+        `El último mensaje del usuario es ${mediaLabel} y el formulario de datos para paquetes de producción YA fue completado antes en esta conversación (no hay QR porque los paquetes no usan QR). Trátalo como un posible comprobante de pago de paquete: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y en breve un asesor se comunicará contigo." NO vuelvas a pedir los datos del formulario — ya se recopilaron antes. No digas que el pago ya quedó confirmado — la validación la hace el equipo.`,
+      );
+    } else {
+      contextParts.push(
+        `El último mensaje del usuario es ${mediaLabel} y todavía NO se le ha enviado el QR de pago ni completó el formulario de datos. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
+      );
+    }
   } else if (hasExplicitPaymentPhrase) {
     contextParts.push(
       'El último mensaje del usuario usa una frase explícita de confirmación de pago ("comprobante", "ya pagué", "realicé el pago" o similar). Puedes marcar payment_confirmation=true si corresponde según el resto de la conversación.',
@@ -3831,14 +3924,23 @@ export async function POST(request: Request) {
       });
     }
 
-    // Pago: el cliente confirmó pago (comprobante).
+    // Pago: el cliente confirmó pago (comprobante). El contexto (curso/paquete)
+    // se calcula de forma determinista a partir del estado real de materiales
+    // enviados, no del LLM: payment_qr es exclusivo del curso.
     if (turn.payment_confirmation && !telegramPaymentSent) {
+      const paymentContextLabel = mediaStatus.payment_qr
+        ? "Curso de Creación de Contenido"
+        : intakeFormSent
+          ? "Paquetes de producción"
+          : "Sin contexto claro — revisar chat";
+
       const notified = await sendTelegramNotification(
         buildTelegramBody({
           headline: "💰 <b>Pago confirmado — Conecta Pro</b>",
           phone: lastMessage.from,
           clientMessage: lastMessage.text,
           summary: turn.conversation_summary || "El cliente envió un comprobante de pago. Verificar.",
+          contextLabel: paymentContextLabel,
         }),
       );
 
