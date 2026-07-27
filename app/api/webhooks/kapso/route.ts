@@ -240,6 +240,17 @@ GUÍA POR SITUACIÓN
   - NO menciones paquetes de producción en este flujo.
   - Links de Maps siempre en texto plano, NUNCA en markdown [texto](url).
   - Marca intents.course_flyer = true para que el sistema envíe los flyers de cursos.
+  - RECLAMO DE REEMBOLSO por cambio de fecha (ej. "pagué para el curso del 26 de julio y ya no
+    puedo ir", "cambiaron la fecha y yo pagué para el domingo pasado", "quiero que me devuelvan mi
+    dinero porque movieron la fecha del curso"): el curso de Creación de Contenido tenía
+    originalmente fecha domingo 26 de julio y se cambió a domingo 2 de agosto. Si el cliente dice
+    que pagó para esa fecha anterior (26 de julio) y no podrá asistir a la nueva fecha, responde
+    con empatía confirmando que tomaste nota y que en un momento un asesor humano atenderá la
+    conversación para revisar el reembolso. NO prometas el reembolso ni un monto, NO digas que ya
+    se procesó, NO pidas más datos de pago — solo confirma que un asesor lo revisará pronto. Marca
+    advisor_handoff = true con advisor_handoff_reason = "refund_old_date". Esto aplica solo a
+    quienes pagaron para el 26 de julio; si el reclamo es sobre la nueva fecha (2 o 9 de agosto) o
+    no menciona pago previo, no es este caso.
 
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (consulta general)
   Aplica cuando preguntan por servicios, grabación, edición para su negocio, paquetes, planes,
@@ -554,7 +565,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   sin confirmar todavía (ese caso usa el flujo "CLIENTE INDICA DÍA/HORA... aún sin confirmar").
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
-  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Dos motivos
+  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Tres motivos
   posibles, mutuamente excluyentes:
 
   (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide un
@@ -574,7 +585,12 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       asesor). NUNCA inventes, NUNCA adivines. Ante la duda de si algo ya está cubierto, revisa de
       nuevo esta guía antes de marcar este motivo — es la excepción, no la regla.
 
-  Si ninguno de los dos casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
+  (3) advisor_handoff_reason = "refund_old_date": el cliente pagó para el curso de Creación de
+      Contenido con su fecha anterior (domingo 26 de julio) y ya no puede asistir por el cambio a
+      la nueva fecha (2 de agosto) — ver detalle y ejemplos en FLUJO A. En este caso SÍ respondes
+      con empatía confirmando que un asesor revisará el reembolso (no dejas "reply" vacío).
+
+  Si ninguno de los tres casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
   NUNCA marques advisor_handoff por leads, llamadas, citas o pagos — esos flujos ya tienen su
   propio aviso al asesor y son independientes de este campo.
   Márcalo como máximo una vez por conversación (el backend controla el dedup).
@@ -1589,11 +1605,15 @@ async function notifyLeadUpdateToTelegram(params: {
   return notified;
 }
 
-type AdvisorHandoffReason = "undocumented_info" | "out_of_catalog";
+type AdvisorHandoffReason =
+  | "undocumented_info"
+  | "out_of_catalog"
+  | "refund_old_date";
 
 const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
   out_of_catalog: "Servicio fuera del catálogo estándar",
   undocumented_info: "Información no documentada",
+  refund_old_date: "Posible reembolso — pagó fecha anterior del curso (26 de julio)",
 };
 
 // Aviso genérico "blanco" al asesor: cualquier situación (fuera de leads, llamadas, citas o
@@ -1980,7 +2000,9 @@ const AssistantTurnSchema = z.object({
   call_request: z.boolean(),
   appointment_scheduled: z.boolean(),
   advisor_handoff: z.boolean(),
-  advisor_handoff_reason: z.enum(["undocumented_info", "out_of_catalog"]).nullable(),
+  advisor_handoff_reason: z
+    .enum(["undocumented_info", "out_of_catalog", "refund_old_date"])
+    .nullable(),
   conversation_summary: z.string(),
   intents: z.object({
     course_flyer: z.boolean(),
@@ -3990,6 +4012,26 @@ export async function POST(request: Request) {
         contactName: lastMessage.contactName,
         conversationId: mediaConversationId,
         reason: "out_of_catalog",
+        lastMessageText: lastMessage.text,
+        summary: turn.conversation_summary,
+      });
+    }
+
+    // Posible reembolso: el cliente pagó para el curso con la fecha anterior (26 de julio) y
+    // ya no puede asistir por el cambio de fecha. El bot ya respondió avisando que un asesor
+    // revisará el reembolso; aquí solo se notifica al equipo por Telegram para que le den
+    // seguimiento. Comparte el marcador [TELEGRAM_HANDOFF_SENT] — un solo aviso por conversación.
+    if (
+      turn.advisor_handoff &&
+      turn.advisor_handoff_reason === "refund_old_date" &&
+      !telegramHandoffSent
+    ) {
+      await notifyAdvisorHandoffToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: mediaConversationId,
+        reason: "refund_old_date",
         lastMessageText: lastMessage.text,
         summary: turn.conversation_summary,
       });
