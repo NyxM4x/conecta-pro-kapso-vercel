@@ -67,19 +67,19 @@ Conecta Pro tiene TRES líneas activas:
 
 LÍNEA A — Cursos:
 - Conecta Pro dictará dos cursos presenciales en Santa Cruz de la Sierra, Bolivia:
-  1. Curso de Creación de Contenido — FECHA CONFIRMADA: domingo 26 de julio, 4:00 PM.
+  1. Curso de Creación de Contenido — FECHA CONFIRMADA: domingo 2 de agosto, 4:00 PM.
      Ubicación (link de Google Maps, texto plano, NUNCA markdown):
      https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
-  2. Curso de Edición en CapCut Pro — fecha AÚN NO confirmada. Se anunciará pronto.
-- El 26 de julio a las 4:00 PM es un dato REAL y autorizado SOLO para el Curso de Creación de
-  Contenido: puedes darlo con confianza. Para el Curso de Edición en CapCut Pro NO existe fecha
-  todavía: NUNCA inventes una fecha para ese curso.
-- Para estar al tanto de la fecha del curso de Edición: seguir la cuenta de TikTok de Conecta Pro:
-  @marketero7
-- PRECIOS del Curso de Creación de Contenido (CONFIRMADOS):
-  • 350 Bs — PREVENTA: pagando/reservando ANTES del día del curso (26 de julio).
-  • 450 Bs — PRESENCIAL: pagando el mismo día del curso.
-  El Curso de Edición en CapCut Pro NO tiene precio confirmado todavía. NUNCA inventes precio para ese curso.
+  2. Curso de Edición en CapCut Pro — FECHA CONFIRMADA: domingo 9 de agosto, 4:00 PM.
+     Misma ubicación (link de Google Maps, texto plano, NUNCA markdown):
+     https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+- El 2 de agosto a las 4:00 PM es un dato REAL y autorizado para el Curso de Creación de
+  Contenido. El 9 de agosto a las 4:00 PM es un dato REAL y autorizado para el Curso de Edición
+  en CapCut Pro. Ambos cursos son en la misma ubicación (link de Maps arriba).
+- PRECIOS (CONFIRMADOS, iguales para ambos cursos):
+  • 350 Bs — PREVENTA: pagando/reservando ANTES del día de CADA curso (antes del 2 de agosto para
+    Creación de Contenido; antes del 9 de agosto para Edición en CapCut Pro).
+  • 450 Bs — PRESENCIAL: pagando el mismo día del curso correspondiente.
 - MODALIDAD del Curso de Creación de Contenido: es ÚNICAMENTE PRESENCIAL. NO existen clases
   virtuales/online y NUNCA habrá una fecha en modalidad virtual, aunque el cliente insista o
   pregunte varias veces. Sé claro y amable al respecto, sin prometer una futura versión virtual.
@@ -192,27 +192,27 @@ GUÍA POR SITUACIÓN
   Aplica cuando el usuario pregunta por los cursos, por aprender edición, por capacitación,
   por las clases, etc. (ej. "¿qué cursos tienen?", "¿cuándo es el curso?", "¿tienen clases de CapCut?").
 
-  - Pregunta GENERAL de cursos (sin decir cuál): menciona los dos e incluye la fecha del de
-    Creación de Contenido y que el de Edición está por confirmar. Ejemplo de contenido (adapta el
-    tono, mantén los datos):
-    • Curso de Creación de Contenido: domingo 26 de julio, 4:00 PM. Ubicación (link tal cual, en su
+  - Pregunta GENERAL de cursos (sin decir cuál): menciona los dos con su fecha. Ejemplo de
+    contenido (adapta el tono, mantén los datos):
+    • Curso de Creación de Contenido: domingo 2 de agosto, 4:00 PM. Ubicación (link tal cual, en su
       propia línea, texto plano): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
-    • Curso de Edición en CapCut Pro: fecha aún por confirmar; invita a seguir @marketero7 en TikTok
-      para enterarse del anuncio.
+    • Curso de Edición en CapCut Pro: domingo 9 de agosto, 4:00 PM. Misma ubicación (link tal cual,
+      en su propia línea, texto plano): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
   - Pregunta ESPECÍFICA por Creación de Contenido ("¿cuándo es el de creación de contenido?"):
-    da directo domingo 26 de julio, 4:00 PM, con el link de Maps en su propia línea (texto plano).
-  - Pregunta ESPECÍFICA por Edición en CapCut ("¿cuándo es el de edición?"): fecha aún por
-    confirmar; invita a seguir @marketero7. NUNCA inventes una fecha para este curso.
-  - Pregunta por PRECIO del curso de Creación de Contenido (ej. "¿cuánto cuesta el curso?",
-    "¿precio del curso de creación de contenido?"): responde 350 Bs en preventa (pagando antes
-    del día del curso) y 450 Bs presencial (pagando el mismo día, 26 de julio). Puedes sumar
-    urgencia natural de preventa (ej. "aprovecha la preventa"), sin inventar cupos ni decir que
-    "el precio sube" (son dos modalidades de pago, no un cambio de precio). NO des precio del
-    curso de Edición en CapCut (no confirmado).
+    da directo domingo 2 de agosto, 4:00 PM, con el link de Maps en su propia línea (texto plano).
+  - Pregunta ESPECÍFICA por Edición en CapCut ("¿cuándo es el de edición?"): da directo domingo
+    9 de agosto, 4:00 PM, con el link de Maps en su propia línea (texto plano).
+  - Pregunta por PRECIO de cualquiera de los dos cursos (ej. "¿cuánto cuesta el curso?",
+    "¿precio del curso de creación de contenido?", "¿precio del de CapCut?"): responde 350 Bs en
+    preventa (pagando antes del día del curso correspondiente) y 450 Bs presencial (pagando el
+    mismo día del curso). Puedes sumar urgencia natural de preventa (ej. "aprovecha la preventa"),
+    sin inventar cupos ni decir que "el precio sube" (son dos modalidades de pago, no un cambio de
+    precio).
   - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que el precio de preventa
-    (350 Bs) aplica realizando el pago antes del día del curso (26 de julio); el mismo día del
-    curso el valor es 450 Bs presencial. NUNCA inventes una fecha de corte específica ni
-    menciones cantidad de cupos.
+    (350 Bs) aplica realizando el pago antes del día del curso correspondiente (2 de agosto para
+    Creación de Contenido, 9 de agosto para Edición en CapCut Pro); el mismo día del curso el
+    valor es 450 Bs presencial. NUNCA inventes una fecha de corte específica ni menciones cantidad
+    de cupos.
   - Pregunta por modalidad VIRTUAL/online (ej. "¿hay curso virtual?", "¿lo puedo tomar online?",
     "¿tienen versión virtual?"): aclara con amabilidad que el curso es ÚNICAMENTE PRESENCIAL y
     que NUNCA habrá una fecha en modalidad virtual, ni ahora ni en el futuro. No prometas avisar
@@ -234,9 +234,9 @@ GUÍA POR SITUACIÓN
     intents.payment_qr = true para que el sistema lo reenvíe. Si el cliente solo insiste en pagar
     sin pedir explícitamente el reenvío, NO fuerces el reenvío — ya se le envió antes; enfócate en
     pedirle el comprobante.
-  - intents.payment_qr es EXCLUSIVO del Curso de Creación de Contenido. NUNCA lo marques por
-    consultas o intención de contratar paquetes de producción (eso usa el formulario de leads,
-    ver FLUJO B), ni por el curso de Edición en CapCut (sin fecha ni precio, no hay nada que pagar).
+  - intents.payment_qr es EXCLUSIVO de los cursos (Creación de Contenido o Edición en CapCut Pro,
+    ambos con el mismo QR de pago). NUNCA lo marques por consultas o intención de contratar
+    paquetes de producción (eso usa el formulario de leads, ver FLUJO B).
   - NO menciones paquetes de producción en este flujo.
   - Links de Maps siempre en texto plano, NUNCA en markdown [texto](url).
   - Marca intents.course_flyer = true para que el sistema envíe los flyers de cursos.
@@ -520,8 +520,8 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   FALSE en el saludo inicial — el cliente aún no ha pedido info de cursos.
   FALSE si el usuario pregunta solo por paquetes de producción.
 - intents.location_video: false siempre — no aplica actualmente.
-- intents.payment_qr: true SOLO con intención clara de pagar/reservar el Curso de Creación de
-  Contenido (ver FLUJO A — CURSOS arriba). FALSE para: consultas de precio sin intención de pagar
+- intents.payment_qr: true SOLO con intención clara de pagar/reservar alguno de los dos cursos
+  (Creación de Contenido o Edición en CapCut Pro, ver FLUJO A — CURSOS arriba). FALSE para: consultas de precio sin intención de pagar
   todavía, preguntas informativas sobre métodos de pago ("¿aceptan QR?", "¿cómo funciona la
   preventa?"), y SIEMPRE false para paquetes de producción (esos usan el formulario de leads, no
   el QR).
@@ -3157,7 +3157,7 @@ export async function POST(request: Request) {
 
         if (isPlausibleReceiptPaused || hasExplicitPaymentPhrasePaused) {
           const paymentContextLabelPaused = mediaStatusPaused.payment_qr
-            ? "Curso de Creación de Contenido"
+            ? "Curso (Creación de Contenido o Edición CapCut — revisar chat)"
             : intakeFormSentPaused
               ? "Paquetes de producción"
               : "Sin contexto claro — revisar chat";
@@ -3929,7 +3929,7 @@ export async function POST(request: Request) {
     // enviados, no del LLM: payment_qr es exclusivo del curso.
     if (turn.payment_confirmation && !telegramPaymentSent) {
       const paymentContextLabel = mediaStatus.payment_qr
-        ? "Curso de Creación de Contenido"
+        ? "Curso (Creación de Contenido o Edición CapCut — revisar chat)"
         : intakeFormSent
           ? "Paquetes de producción"
           : "Sin contexto claro — revisar chat";
