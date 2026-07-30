@@ -26,7 +26,8 @@ type MediaIntent =
   | "course_flyer"
   | "location_video"
   | "payment_qr"
-  | "service_packages";
+  | "service_packages"
+  | "ai_agent_flyer";
 
 type MediaAsset = {
   title: string;
@@ -38,6 +39,7 @@ type MediaAsset = {
 const MEDIA_SEND_ORDER: MediaIntent[] = [
   "course_flyer",
   "service_packages",
+  "ai_agent_flyer",
   "location_video",
   "payment_qr",
 ];
@@ -111,6 +113,25 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   inventar condiciones, sin ofrecer alternativas no confirmadas, y sin derivar a un asesor (es
   información ya conocida, no marques advisor_handoff por esto).
 
+LÍNEA C — Agente de IA para negocios (servicio nuevo):
+- Conecta Pro implementa agentes de IA para otros negocios: un asistente que atiende el WhatsApp
+  del negocio las 24 horas, responde consultas de sus clientes, envía información y captura
+  datos de clientes potenciales automáticamente. Es el mismo tipo de agente que atiende ESTE chat.
+- Salió un video promocional de este servicio, así que muchos clientes llegarán preguntando por
+  "el agente de IA", "el chatbot", "el bot que responde solo", "quiero uno igual".
+- COTIZACIÓN PERSONALIZADA: el precio depende de cada negocio (volumen de mensajes, cantidad de
+  sucursales, complejidad de la atención). NUNCA des un precio ni un rango del agente de IA.
+- Los precios que aparecen en el flyer son un ESTIMADO para negocios de ALTO FLUJO de mensajes
+  (por ejemplo con varias sucursales). Un negocio más pequeño paga distinto. Si el cliente
+  pregunta por el precio del flyer, aclara esto y que la cotización real es personalizada.
+- REUNIÓN POR ZOOM: se ofrece una reunión corta por Zoom donde el cliente cuenta cómo atiende hoy
+  los mensajes de su negocio (su flujo) y un asesor le explica cómo se aplicaría el agente en su
+  caso. NO es una demo, NO es una prueba, NO es un agente ya configurado para ese negocio: es una
+  explicación. NUNCA prometas una demo, un agente de prueba ni un periodo gratuito.
+- Si tras el Zoom hay interés real, se formaliza en una CITA PRESENCIAL en oficinas (usa el flujo
+  de oficina que ya existe más abajo).
+- Este flujo activa intents.ai_agent_flyer = true para que el sistema envíe el flyer del agente.
+
 SERVICIO DESCONTINUADO — Promo de edición de un video por 50 Bs:
 - Este servicio ya NO está disponible. Los cupos eran limitados y se agotaron.
 - NUNCA lo ofrezcas ni lo menciones de forma proactiva en ningún mensaje.
@@ -165,15 +186,22 @@ GUÍA POR SITUACIÓN
   EXACTAMENTE con el siguiente texto — sin modificarlo, sin agregar emojis extra, sin parafrasear,
   sin inventar variaciones:
 
-  ¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos presenciales este julio *servicios de grabación y edición de video para negocios o tu marca personal*
+  ¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Tenemos *cursos presenciales*, *servicios de grabación y edición de video* para negocios o tu marca personal, y *agentes de IA para tu negocio* 🤖
 
   RESTRICCIONES ABSOLUTAS para el saludo:
   - Copia el texto anterior LITERALMENTE, carácter por carácter. NO lo parafrasees.
   - NO agregues saludos adicionales, preguntas extra ni emojis que no estén ahí.
   - NO menciones la promo de edición de 50 Bs (ya no está disponible y no se ofrece proactivamente).
-  - NO menciones precios ni fechas exactas.
-  - NO marques intents.course_flyer ni intents.service_packages — el usuario aún no ha pedido
-    información específica. Espera su respuesta para saber a qué flujo dirigirlo.
+  - NO menciones precios.
+  - NUNCA menciones fechas, meses ni temporadas en el saludo (ni "este julio", ni "este mes", ni
+    "próximamente"). El saludo no debe depender de una fecha: las fechas se dan solo cuando el
+    cliente pregunta por un curso concreto.
+  - NO marques intents.course_flyer, intents.service_packages ni intents.ai_agent_flyer — el
+    usuario aún no ha pedido información específica. Espera su respuesta para saber a qué flujo
+    dirigirlo.
+  - RESPUESTA CORTA AL SALUDO: como el saludo nombra las tres líneas, el cliente puede responder
+    solo señalando una ("el de IA", "lo último", "la tercera", "los agentes", "el de videos",
+    "los cursos"). En ese caso NO repitas el saludo: entra directo al flujo que eligió.
 
   EXCEPCIÓN CRÍTICA — NUNCA reclasifiques como saludo a mitad de conversación:
   - Si en el historial YA existe alguna respuesta previa del asistente (cualquiera, no solo el
@@ -485,6 +513,63 @@ GUÍA POR SITUACIÓN
     tu respuesta ("Un asesor te llamará al [número] 📞") y marca call_request = true igual.
   - No lo marques en turnos posteriores de la misma conversación.
 
+▸ FLUJO C — AGENTE DE IA PARA NEGOCIOS
+  Aplica cuando el cliente pregunta por el agente de IA / chatbot para su propio negocio
+  (ej. "¿qué es el agente de IA?", "quiero un chatbot para mi negocio", "vi el video del agente",
+  "¿cuánto cuesta el agente de IA?", "quiero automatizar mis mensajes", "el bot que responde solo",
+  "¿tienen asistentes virtuales?", "¿esto lo hacen para otros negocios?", "quiero uno igual al de
+  ustedes", "IA para WhatsApp"). También aplica si responde al saludo señalando esta línea
+  ("el de IA", "lo último", "los agentes").
+
+  OJO — NO confundas con paquetes de producción de video: aunque el cliente diga "servicio" o
+  "edición", si habla de agente/IA/chatbot/bot/automatizar mensajes, es ESTE flujo, no el B.
+
+  Consulta general del agente de IA: responde ÚNICA y EXACTAMENTE con este texto, sin modificarlo:
+
+  ¡Claro! 🤖 En Conecta Pro implementamos agentes de IA para negocios: un asistente que atiende tu WhatsApp las 24 horas, responde las consultas de tus clientes, envía tu información y captura los datos de clientes potenciales automáticamente. Es el mismo tipo de agente que te está atendiendo ahora 😊
+
+  La cotización es personalizada, porque depende de tu negocio. Los precios que ves en el flyer son un estimado para negocios con alto flujo de mensajes (por ejemplo con varias sucursales), así que en tu caso puede variar.
+
+  Podemos agendar una reunión por Zoom: nos cuentas cómo manejas hoy los mensajes de tu negocio y te explicamos cómo se aplicaría el agente en tu caso 💻 ¿Qué día y hora te conviene?
+
+  - Marca intents.ai_agent_flyer = true para que el sistema envíe el flyer del agente de IA.
+  - NUNCA des un precio ni un rango de precio del agente de IA, aunque el cliente insista o diga
+    "solo dame un número aproximado". La cotización es personalizada y el flyer ya muestra el
+    estimado. Si insiste, repite con amabilidad que depende de su negocio y que justamente para eso
+    es el Zoom.
+  - Si el cliente pide una DEMO o una PRUEBA ("¿me hacen una demo?", "quiero probarlo primero",
+    "¿me lo dejan probando?"): reencuadra con amabilidad hacia el Zoom de explicación. NUNCA
+    prometas una demo, un agente configurado para su negocio, una prueba gratuita ni un periodo
+    de prueba. Di que en el Zoom te explican cómo funcionaría en su caso a partir de cómo atiende
+    hoy sus mensajes.
+  - CLIENTE ACEPTA EL ZOOM Y DA DÍA/HORA (ej. "el jueves a las 3pm", "mañana a las 10 está bien"):
+    confirma con este tono y marca zoom_meeting_scheduled = true:
+
+    "¡Perfecto! Un asesor te contactará para coordinar el Zoom el [día] a las [hora] 💻 Ten a mano cómo atiendes hoy los mensajes de tu negocio, así te explicamos cómo aplicarlo en tu caso 😊"
+
+    NO prometas un link ahora ("te envío el link"), no confirmes una hora exacta como definitiva —
+    el asesor coordina. Marca zoom_meeting_scheduled = true SOLO en ese turno, una vez por
+    conversación.
+  - FORMULARIO DE DATOS: cuando haya interés real (aceptó el Zoom, pidió cotización, o dijo que
+    quiere avanzar), pide los datos con este texto exacto:
+
+    ¡Perfecto! Para armar tu cotización necesito unos datos 📋
+
+    📌 Nombre:
+    📌 Nombre de tu negocio y rubro:
+    📌 ¿Cuántos mensajes reciben al día aproximadamente?
+    📌 ¿Tienen una sola sucursal o varias?
+
+  - Marca ai_agent_lead_submitted = true cuando el cliente ya haya dado al menos su nombre y su
+    negocio/rubro (los mensajes por día y las sucursales son deseables, no bloqueantes), sumando
+    TODO el historial. Márcalo SOLO UNA VEZ por conversación.
+  - NO uses el formulario de paquetes de video en este flujo (ese pide referencias de contenido y
+    tipo de video, no aplica aquí).
+  - CLIENTE QUIERE FORMALIZAR / CONTRATAR (ej. "quiero contratarlo", "cómo firmamos"): ofrécele la
+    cita presencial en oficinas usando el flujo de oficina de más arriba (ubicación + horario +
+    agendar), con su propio appointment_scheduled. No inventes otro mecanismo de cita.
+  - NO menciones cursos ni paquetes de producción de video en este flujo.
+
 ▸ CLIENTE SOLO AGRADECE ("gracias", "aya gracias", "ok gracias", etc.) — MUY IMPORTANTE, AHORRO DE MENSAJES
   Esta respuesta de cierre SOLO se envía cuando el ÚLTIMO mensaje del usuario es EXCLUSIVAMENTE un
   agradecimiento o cierre de conversación (ej. "gracias", "ok gracias", "listo, gracias", "muchas
@@ -539,6 +624,11 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 - intents.service_packages: true cuando pregunta por servicios, paquetes de producción, grabación,
   edición para su negocio, dron, o cantidad no estándar de videos.
   FALSE si el flujo es exclusivamente de cursos.
+  FALSE si el cliente pregunta por el agente de IA / chatbot (eso es intents.ai_agent_flyer).
+- intents.ai_agent_flyer: true cuando pregunta por el agente de IA / chatbot / bot para su propio
+  negocio, por automatizar la atención de WhatsApp, o dice que vio el video del agente
+  (ver FLUJO C arriba). FALSE en el saludo inicial. FALSE si pregunta por cursos o por paquetes de
+  producción de video.
 - service_intake_requested: true SOLO cuando incluyas el formulario de leads en tu respuesta
   (intención clara de contratar paquetes). NO lo marques para consultas generales ni cursos.
 - lead_data_submitted: true cuando, sumando TODO el historial de la conversación (no solo el
@@ -563,6 +653,16 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   "voy el martes a las 10am, confirmo"). Ver flujo "CLIENTE CONFIRMA LA CITA" arriba.
   NO lo marques cuando el cliente solo pregunta la ubicación/horario, ni cuando solo da un día/hora
   sin confirmar todavía (ese caso usa el flujo "CLIENTE INDICA DÍA/HORA... aún sin confirmar").
+- zoom_meeting_scheduled: true SOLO en el turno donde el cliente acepta la reunión por Zoom del
+  agente de IA y da un día/hora (ej. "el jueves a las 3pm", "mañana a las 10 está bien").
+  Ver FLUJO C arriba. NO lo marques cuando apenas ofreciste el Zoom y el cliente aún no respondió,
+  ni cuando solo pregunta qué es el agente. Es exclusivo de la LÍNEA C: para citas presenciales
+  usa appointment_scheduled. Márcalo SOLO UNA VEZ por conversación.
+- ai_agent_lead_submitted: true cuando el cliente interesado en el agente de IA ya compartió, en
+  cualquier punto del historial, al menos su nombre y su negocio/rubro (los mensajes por día y las
+  sucursales son deseables, no bloqueantes). Ver FLUJO C arriba. Es el equivalente de
+  lead_data_submitted pero para la LÍNEA C — NO marques lead_data_submitted por leads del agente
+  de IA. Márcalo SOLO UNA VEZ por conversación.
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
   evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Tres motivos
@@ -591,8 +691,9 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       con empatía confirmando que un asesor revisará el reembolso (no dejas "reply" vacío).
 
   Si ninguno de los tres casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
-  NUNCA marques advisor_handoff por leads, llamadas, citas o pagos — esos flujos ya tienen su
-  propio aviso al asesor y son independientes de este campo.
+  NUNCA marques advisor_handoff por leads, llamadas, citas, pagos ni por el agente de IA (Zoom o
+  cotización personalizada) — esos flujos ya tienen su propio aviso al asesor y son independientes
+  de este campo.
   Márcalo como máximo una vez por conversación (el backend controla el dedup).
 - conversation_summary: un resumen de UNA sola línea, en tercera persona, pensado para que un
   asesor humano entienda de un vistazo lo que está pasando en el chat cuando se le derive por
@@ -603,12 +704,20 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   Este texto NUNCA se le envía al cliente — es solo para el asesor.
 
 REGLA DE ORO — SEPARACIÓN DE FLUJOS:
-  Los dos flujos activos (cursos, paquetes de producción) son canales independientes.
-  NUNCA los mezcles en el mismo mensaje.
+  Los tres flujos activos (cursos, paquetes de producción, agente de IA) son canales
+  independientes. NUNCA los mezcles en el mismo mensaje.
   course_flyer solo para cursos.
-  service_packages solo para paquetes de producción.
+  service_packages solo para paquetes de producción de video.
+  ai_agent_flyer solo para el agente de IA.
+  NUNCA marques dos de estos tres intents en el mismo turno, salvo el caso explícito de
+  "CURSOS Y PAQUETES EN EL MISMO MENSAJE" descrito abajo.
   La promo de 50 Bs ya NO existe — nunca la ofrezcas. Solo si el cliente la menciona
   explícitamente, informa que ya no está disponible (cupos agotados).
+
+  NO CONFUNDIR PAQUETES DE VIDEO CON AGENTE DE IA: son dos servicios distintos para negocios.
+  Paquetes = grabación y edición de videos (6 o 14). Agente de IA = asistente que atiende el
+  WhatsApp del negocio. Si el cliente habla de agente, IA, chatbot, bot o automatizar mensajes,
+  es el FLUJO C, aunque use palabras como "servicio" o "edición".
 
   CLIENTE PIDE CURSOS Y PAQUETES EN EL MISMO MENSAJE: si el cliente pide información de
   cursos Y de paquetes de producción a la vez (ej. "los cursos y también paquetes de
@@ -639,6 +748,26 @@ const LEAD_INTAKE_FORM = `¡Con gusto! Para coordinar todo, necesito algunos dat
 const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales. Puedes elegir entre 6 o 14 videos, todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
 
 Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.`;
+
+// Texto EXACTO del Flujo C — consulta general del agente de IA (mismo contenido que el
+// SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual cuando
+// el LLM devuelve el saludo genérico pese a haber intención clara de agente de IA.
+// NUNCA incluir un precio aquí: la cotización es personalizada y el flyer muestra el estimado.
+const AI_AGENT_INFO = `¡Claro! 🤖 En Conecta Pro implementamos agentes de IA para negocios: un asistente que atiende tu WhatsApp las 24 horas, responde las consultas de tus clientes, envía tu información y captura los datos de clientes potenciales automáticamente. Es el mismo tipo de agente que te está atendiendo ahora 😊
+
+La cotización es personalizada, porque depende de tu negocio. Los precios que ves en el flyer son un estimado para negocios con alto flujo de mensajes (por ejemplo con varias sucursales), así que en tu caso puede variar.
+
+Podemos agendar una reunión por Zoom: nos cuentas cómo manejas hoy los mensajes de tu negocio y te explicamos cómo se aplicaría el agente en tu caso 💻 ¿Qué día y hora te conviene?`;
+
+// Formulario corto de la LÍNEA C (agente de IA). Deliberadamente distinto y más breve que
+// LEAD_INTAKE_FORM: aquí interesa el volumen de mensajes y las sucursales para cotizar, no
+// las referencias de contenido audiovisual.
+const AI_AGENT_INTAKE_FORM = `¡Perfecto! Para armar tu cotización necesito unos datos 📋
+
+📌 Nombre:
+📌 Nombre de tu negocio y rubro:
+📌 ¿Cuántos mensajes reciben al día aproximadamente?
+📌 ¿Tienen una sola sucursal o varias?`;
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -1517,12 +1646,18 @@ function detectCallRequestHeuristic(text: string): boolean {
 }
 
 // Origen del disparo del lead, para auditoría en los logs.
-type LeadTrigger = "intake_form" | "call_request_assistant" | "call_request_heuristic";
+type LeadTrigger =
+  | "intake_form"
+  | "call_request_assistant"
+  | "call_request_heuristic"
+  | "ai_agent_form";
 
 // Notifica un lead al grupo de Telegram y, si tuvo éxito, guarda el marcador
 // [TELEGRAM_LEAD_SENT] para no repetir. Centralizado para reutilizarse desde el flujo
 // normal, el de silencio y el de apagado del bot.
 // `kind: "call_request"` cambia el encabezado a prioridad alta (el asesor debe llamar).
+// `kind: "ai_agent"` marca el lead como de la LÍNEA C (agente de IA), para que el asesor
+// sepa que va a cotizar un agente y no un paquete de video.
 async function notifyLeadToTelegram(params: {
   history: HistoryMessage[];
   phone: string;
@@ -1530,7 +1665,7 @@ async function notifyLeadToTelegram(params: {
   conversationId?: string;
   fallbackText?: string;
   summary?: string;
-  kind?: "intake" | "call_request";
+  kind?: "intake" | "call_request" | "ai_agent";
   trigger?: LeadTrigger;
 }): Promise<boolean> {
   const lastClientMessage =
@@ -1540,7 +1675,9 @@ async function notifyLeadToTelegram(params: {
   const headline =
     params.kind === "call_request"
       ? "🔴 <b>PRIORIDAD ALTA</b>\n📞 <b>Lead — Solicita llamada</b>"
-      : "🟢 <b>Nuevo lead — Conecta Pro</b>";
+      : params.kind === "ai_agent"
+        ? "🤖 <b>Lead — Agente de IA</b>"
+        : "🟢 <b>Nuevo lead — Conecta Pro</b>";
 
   const notified = await sendTelegramNotification(
     buildTelegramBody({
@@ -1999,6 +2136,8 @@ const AssistantTurnSchema = z.object({
   lead_data_submitted: z.boolean(),
   call_request: z.boolean(),
   appointment_scheduled: z.boolean(),
+  zoom_meeting_scheduled: z.boolean(),
+  ai_agent_lead_submitted: z.boolean(),
   advisor_handoff: z.boolean(),
   advisor_handoff_reason: z
     .enum(["undocumented_info", "out_of_catalog", "refund_old_date"])
@@ -2009,6 +2148,7 @@ const AssistantTurnSchema = z.object({
     location_video: z.boolean(),
     payment_qr: z.boolean(),
     service_packages: z.boolean(),
+    ai_agent_flyer: z.boolean(),
   }),
 });
 
@@ -2016,7 +2156,7 @@ type AssistantTurn = z.infer<typeof AssistantTurnSchema>;
 
 const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   reply:
-    "¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Si te interesa, tenemos cursos presenciales este julio *servicios de grabación y edición de video para negocios o tu marca personal*",
+    "¡Hola! Somos ConectaPro😊 ¿En qué puedo ayudarte hoy? Tenemos *cursos presenciales*, *servicios de grabación y edición de video* para negocios o tu marca personal, y *agentes de IA para tu negocio* 🤖",
   should_reply: true,
   is_greeting: false,
   explicit_resend_request: false,
@@ -2025,6 +2165,8 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   lead_data_submitted: false,
   call_request: false,
   appointment_scheduled: false,
+  zoom_meeting_scheduled: false,
+  ai_agent_lead_submitted: false,
   advisor_handoff: false,
   advisor_handoff_reason: null,
   conversation_summary: "",
@@ -2033,6 +2175,7 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
     location_video: false,
     payment_qr: false,
     service_packages: false,
+    ai_agent_flyer: false,
   },
 };
 
@@ -2139,6 +2282,7 @@ async function getMediaSentStatus(
     location_video: false,
     payment_qr: false,
     service_packages: false,
+    ai_agent_flyer: false,
   };
 
   if (!phone) return status;
@@ -2473,16 +2617,30 @@ const COURSE_KEYWORDS =
   /\b(CURSO|CURSOS|TALLER|TALLERES|CAPACITACION|FORMACION|APRENDER|CAPCUT|CLASE|CLASES)\b/;
 const APPOINTMENT_KEYWORDS =
   /\b(CITA|VISITA|OFICINA|AGENDAR|UBICACION|DIRECCION|HORARIO)\b/;
+// LÍNEA C — agente de IA. Se evalúa ANTES que los paquetes de video (ver
+// detectExplicitIntent): frases como "el servicio de agente de IA" o "edición
+// automatizada con bot" contienen palabras de SERVICE_PACKAGES_KEYWORDS y sin esta
+// prioridad los leads del video promocional caerían en el embudo equivocado.
+const AI_AGENT_KEYWORDS =
+  /\b(AGENTE|AGENTES|IA|CHAT ?BOT|CHAT ?BOTS|BOT|BOTS|INTELIGENCIA ARTIFICIAL|AUTOMATIZAR|AUTOMATIZACION|AUTOMATIZADO|AUTOMATIZADA|ASISTENTE|ASISTENTES|RESPOND[EA] SOLO|CONTEST[AE] SOLO)\b/;
 
-type DetectedIntent = "service_packages" | "course" | "appointment";
+type DetectedIntent =
+  | "service_packages"
+  | "course"
+  | "appointment"
+  | "ai_agent";
 
 // Detecta de forma determinista si el mensaje del cliente ya expresa una intención
 // concreta (para no responder con el saludo genérico). Devuelve la primera que
-// aplique según prioridad: paquetes > cursos > cita.
+// aplique según prioridad: agente de IA > paquetes > cursos > cita.
 function detectExplicitIntent(text: string): DetectedIntent | null {
   if (!text) return null;
 
   const normalized = normalizeForMatch(text);
+
+  // Primero el agente de IA: sus mensajes suelen traer palabras que también
+  // aparecen en SERVICE_PACKAGES_KEYWORDS ("servicio", "edicion", "contenido").
+  if (AI_AGENT_KEYWORDS.test(normalized)) return "ai_agent";
 
   if (
     detectPackagePriceMention(text) ||
@@ -2644,6 +2802,30 @@ async function hasTelegramAppointmentBeenSent(conversationId?: string): Promise<
 
   if (error) {
     console.error("supabase check telegram appointment sent failed", error);
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
+// Marcador propio (no comparte el de cita presencial): un cliente del agente de IA puede
+// tener primero la reunión por Zoom y después una cita en oficinas para formalizar, y el
+// equipo debe recibir aviso de ambas.
+async function hasTelegramZoomBeenSent(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "[TELEGRAM_ZOOM_SENT]%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check telegram zoom sent failed", error);
     return false;
   }
 
@@ -3299,6 +3481,7 @@ export async function POST(request: Request) {
     telegramPaymentSent,
     telegramAppointmentSent,
     telegramHandoffSent,
+    telegramZoomSent,
     flowState,
   ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
@@ -3310,6 +3493,7 @@ export async function POST(request: Request) {
     hasTelegramPaymentBeenSent(lastMessage.conversationId),
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
     hasTelegramHandoffBeenSent(lastMessage.conversationId),
+    hasTelegramZoomBeenSent(lastMessage.conversationId),
     getConversationFlowState(lastMessage.conversationId),
   ]);
 
@@ -3346,12 +3530,16 @@ export async function POST(request: Request) {
       "Estado real (ground truth del backend) de materiales ya enviados a este usuario:",
       `- course_flyer: ${mediaStatus.course_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
       `- service_packages: ${mediaStatus.service_packages ? "YA enviado antes" : "NUNCA enviado"}`,
+      `- ai_agent_flyer: ${mediaStatus.ai_agent_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
       "Confía en este estado (no en lo que infieras del historial de mensajes) para saber si algo ya se envió.",
       ...(mediaStatus.course_flyer
         ? ["Como course_flyer YA fue enviado: no anuncies los flyers de cursos como si fuera la primera vez. Asume que ya se compartieron, salvo que el usuario los pida explícitamente de nuevo."]
         : []),
       ...(mediaStatus.service_packages
         ? ["Como service_packages YA fue enviado: no presentes los paquetes como si fuera la primera vez. Responde asumiendo que ese material ya fue compartido antes, salvo que el usuario lo pida explícitamente de nuevo."]
+        : []),
+      ...(mediaStatus.ai_agent_flyer
+        ? ["Como ai_agent_flyer YA fue enviado: no presentes el agente de IA como si fuera la primera vez ni repitas el texto completo del FLUJO C. Continúa la conversación desde donde quedó (Zoom, datos o cotización), salvo que el usuario pida el flyer explícitamente de nuevo."]
         : []),
     ].join("\n"),
   ];
@@ -3399,6 +3587,12 @@ export async function POST(request: Request) {
     );
   }
 
+  if (telegramZoomSent) {
+    contextParts.push(
+      "La reunión por Zoom del agente de IA YA fue coordinada y el equipo ya fue avisado en esta conversación. NO vuelvas a ofrecer agendar el Zoom ni pidas otra vez el día y la hora; si el cliente pregunta, confirma que un asesor lo contactará para coordinarla. NO marques zoom_meeting_scheduled de nuevo.",
+    );
+  }
+
   // Anti-saludo: si es el primer contacto (aún no hay respuesta del asistente) pero
   // el mensaje ya trae intención concreta, se le indica al LLM que NO use el saludo
   // genérico y vaya directo al flujo. Ahorra un mensaje de WhatsApp (costo Meta).
@@ -3413,6 +3607,8 @@ export async function POST(request: Request) {
         "El cliente YA preguntó por cursos en su mensaje. NO es un saludo puro: marca is_greeting=false, responde con el FLUJO A (cursos) y marca intents.course_flyer=true.",
       appointment:
         "El cliente YA preguntó por la oficina/cita en su mensaje. NO es un saludo puro: marca is_greeting=false y responde con el flujo de oficina (ubicación + horario + ofrecer agendar).",
+      ai_agent:
+        "El cliente YA expresó intención sobre el AGENTE DE IA en su mensaje (menciona agente, IA, chatbot, bot, automatizar mensajes o asistente virtual). NO es un saludo puro y NO es el flujo de paquetes de video, aunque haya usado palabras como servicio o edición: marca is_greeting=false, responde con el texto del FLUJO C (agente de IA) y marca intents.ai_agent_flyer=true. NUNCA des un precio: la cotización es personalizada y el flyer muestra el estimado. NUNCA prometas una demo o prueba: el Zoom es una reunión de explicación.",
     };
 
     contextParts.push(intentDirective[detectedIntent]);
@@ -3590,6 +3786,37 @@ export async function POST(request: Request) {
     });
   }
 
+  // Misma red de seguridad para la LÍNEA C: el video promocional del agente de IA trae
+  // clientes cuyo primer mensaje ya menciona agente/IA/chatbot. Si el LLM igual devolvió
+  // el saludo genérico, forzamos el Flujo C (info + flyer) para no gastar un mensaje de
+  // Meta en un saludo que el cliente no necesita.
+  if (
+    turn.should_reply &&
+    turn.is_greeting &&
+    !hasAssistantHistory &&
+    detectedIntent === "ai_agent"
+  ) {
+    console.log("generic greeting suppressed by safety net (ai agent intent detected)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.is_greeting = false;
+    turn.reply = AI_AGENT_INFO;
+    turn.intents.ai_agent_flyer = true;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "greeting_suppressed_by_safety_net_ai_agent",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
   // Derivación silenciosa a asesor: el cliente preguntó algo que no está en la guía y el
   // modelo prefirió no inventar. El bot NO responde por WhatsApp; se avisa una sola vez
   // al asesor por Telegram (marcador [TELEGRAM_HANDOFF_SENT]) para que un humano atienda.
@@ -3648,7 +3875,13 @@ export async function POST(request: Request) {
     // Aunque el bot guarde silencio, si el modelo detectó que el lead quedó completo
     // en este turno —o si el cliente pidió una llamada—, se notifica igual al asesor
     // (la notificación no debe depender de que se responda por WhatsApp).
-    if ((turn.lead_data_submitted || callRequested) && !telegramLeadSent) {
+    if (
+      (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
+      !telegramLeadSent
+    ) {
+      const isAiAgentLead =
+        turn.ai_agent_lead_submitted && !callRequested && !turn.lead_data_submitted;
+
       await notifyLeadToTelegram({
         history,
         phone: lastMessage.from,
@@ -3656,12 +3889,18 @@ export async function POST(request: Request) {
         conversationId: lastMessage.conversationId,
         fallbackText: lastMessage.text,
         summary: turn.conversation_summary,
-        kind: callRequested && !turn.lead_data_submitted ? "call_request" : "intake",
+        kind: isAiAgentLead
+          ? "ai_agent"
+          : callRequested && !turn.lead_data_submitted
+            ? "call_request"
+            : "intake",
         trigger: turn.call_request
           ? "call_request_assistant"
           : callRequestHeuristic
             ? "call_request_heuristic"
-            : "intake_form",
+            : isAiAgentLead
+              ? "ai_agent_form"
+              : "intake_form",
       });
 
       await markLeadCapturedAndCancelFollowups(
@@ -3817,6 +4056,7 @@ export async function POST(request: Request) {
   if (turn.intents.location_video) intentsToSend.add("location_video");
   if (turn.intents.payment_qr) intentsToSend.add("payment_qr");
   if (turn.intents.service_packages) intentsToSend.add("service_packages");
+  if (turn.intents.ai_agent_flyer) intentsToSend.add("ai_agent_flyer");
 
   // Guarda determinista: el QR de pago es exclusivo del curso de Creación de
   // Contenido y nunca debe salir en un turno de paquetes de producción, aunque
@@ -3829,6 +4069,23 @@ export async function POST(request: Request) {
     console.warn("payment_qr suppressed: co-occurred with service_packages flow", {
       conversationId: lastMessage.conversationId,
       messageId: lastMessage.messageId,
+    });
+  }
+
+  // Guarda determinista: el agente de IA (LÍNEA C) es un embudo independiente de los
+  // cursos y de los paquetes de video. Si el LLM marcó el flyer de IA junto a otro de
+  // esos flyers, el texto de la respuesta corresponde a uno solo — enviar ambos
+  // confundiría al cliente con dos servicios distintos en el mismo turno.
+  if (
+    intentsToSend.has("ai_agent_flyer") &&
+    (turn.intents.service_packages || turn.intents.course_flyer)
+  ) {
+    intentsToSend.delete("ai_agent_flyer");
+    console.warn("ai_agent_flyer suppressed: co-occurred with another flow", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      service_packages: turn.intents.service_packages,
+      course_flyer: turn.intents.course_flyer,
     });
   }
 
@@ -3905,12 +4162,23 @@ export async function POST(request: Request) {
     // y no solo el último, para que el asesor tenga el contexto completo.
     // Ambos disparadores comparten el marcador [TELEGRAM_LEAD_SENT]: el mismo
     // contacto nunca genera dos leads.
-    if ((turn.lead_data_submitted || callRequested) && !telegramLeadSent) {
+    if (
+      (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
+      !telegramLeadSent
+    ) {
+      // El lead del agente de IA (LÍNEA C) solo se etiqueta como tal si no hubo además
+      // un pedido de llamada ni datos de paquetes en el mismo turno: esos dos son
+      // señales más urgentes/específicas para el asesor.
+      const isAiAgentLead =
+        turn.ai_agent_lead_submitted && !callRequested && !turn.lead_data_submitted;
+
       const trigger: LeadTrigger = turn.call_request
         ? "call_request_assistant"
         : callRequestHeuristic
           ? "call_request_heuristic"
-          : "intake_form";
+          : isAiAgentLead
+            ? "ai_agent_form"
+            : "intake_form";
 
       await notifyLeadToTelegram({
         history,
@@ -3919,7 +4187,11 @@ export async function POST(request: Request) {
         conversationId: mediaConversationId,
         fallbackText: lastMessage.text,
         summary: turn.conversation_summary,
-        kind: callRequested && !turn.lead_data_submitted ? "call_request" : "intake",
+        kind: isAiAgentLead
+          ? "ai_agent"
+          : callRequested && !turn.lead_data_submitted
+            ? "call_request"
+            : "intake",
         trigger,
       });
 
@@ -3993,6 +4265,33 @@ export async function POST(request: Request) {
           phone: lastMessage.from,
           content: "[TELEGRAM_APPOINTMENT_SENT] notificación de cita enviada a Telegram",
           rawPayload: { type: "telegram_notification", event: "appointment" },
+        });
+      }
+    }
+
+    // Reunión por Zoom del agente de IA (LÍNEA C): el cliente aceptó y dio día/hora. Un
+    // asesor debe coordinar el Zoom y enviar el link — el bot nunca lo hace. Marcador
+    // propio [TELEGRAM_ZOOM_SENT], independiente del de cita presencial, porque el mismo
+    // cliente puede tener primero el Zoom y después una cita en oficinas para formalizar.
+    if (turn.zoom_meeting_scheduled && !telegramZoomSent) {
+      const notified = await sendTelegramNotification(
+        buildTelegramBody({
+          headline: "📹 <b>Reunión por Zoom — Agente de IA</b>",
+          phone: lastMessage.from,
+          clientMessage: lastMessage.text,
+          summary:
+            turn.conversation_summary ||
+            "El cliente aceptó la reunión por Zoom del agente de IA. Coordinar horario y enviar el link.",
+          contextLabel: "Agente de IA — coordinar Zoom y enviar link",
+        }),
+      );
+
+      if (notified) {
+        await saveOutboundMessage({
+          conversationId: mediaConversationId,
+          phone: lastMessage.from,
+          content: "[TELEGRAM_ZOOM_SENT] notificación de reunión Zoom enviada a Telegram",
+          rawPayload: { type: "telegram_notification", event: "zoom_meeting" },
         });
       }
     }
@@ -4072,6 +4371,8 @@ export async function POST(request: Request) {
           ? "heuristic"
           : null,
       appointment_scheduled: turn.appointment_scheduled,
+      zoom_meeting_scheduled: turn.zoom_meeting_scheduled,
+      ai_agent_lead_submitted: turn.ai_agent_lead_submitted,
       advisor_handoff: turn.advisor_handoff,
       advisor_handoff_reason: turn.advisor_handoff_reason,
       detected_intents: turn.intents,
