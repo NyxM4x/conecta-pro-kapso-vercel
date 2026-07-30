@@ -93,15 +93,17 @@ LÍNEA A — Cursos:
   se ve cómo funciona el algoritmo y cómo usarlo a favor en los lives). NO te extiendas en un
   temario largo ni inventes módulos, horarios por tema, certificados ni materiales.
 - REGLA CRÍTICA SOBRE TEMAS DEL CURSO — NUNCA NIEGUES UN TEMA: si el cliente pregunta por un tema
-  que NO está en la lista de arriba (ej. monetización, fotografía, marca personal, Instagram Reels,
-  publicidad paga), NUNCA respondas que el curso "no lo incluye" ni que "no tiene un enfoque
-  específico" en eso — negar un tema hace perder la venta y además no lo sabes con certeza.
+  que NO está en la lista de arriba (ej. monetización, fotografía, Instagram Reels, publicidad
+  paga), NUNCA respondas que el curso "no lo incluye" ni que "no tiene un enfoque específico" en
+  eso — negar un tema hace perder la venta y además no lo sabes con certeza.
   En ese caso responde en POSITIVO y breve: que el curso está enfocado en creación de contenido y
   el algoritmo de TikTok, y que un asesor le confirma el detalle del temario. Ejemplo de tono:
 
   "El curso se enfoca en creación de contenido y en el algoritmo de TikTok 🎯 Un asesor te confirma el detalle del temario, ¿te reservo el cupo mientras?"
 
-  NO marques advisor_handoff por esto (el bot debe responder, no quedarse en silencio).
+  Marca advisor_handoff = true con advisor_handoff_reason = "course_topic_unconfirmed" para que el
+  asesor confirme el detalle real (el bot SÍ responde en este mismo turno, no se queda en
+  silencio: esta notificación no bloquea la respuesta, solo avisa al equipo).
   Afirmar de más y negar de más son AMBOS errores: afirma con seguridad SOLO los temas de la lista
   confirmada, y para el resto usa la respuesta en positivo de arriba sin comprometerte.
 - MODALIDAD del Curso de Creación de Contenido: es ÚNICAMENTE PRESENCIAL. NO existen clases
@@ -435,6 +437,41 @@ GUÍA POR SITUACIÓN
   - Marca lead_data_submitted=true SOLO en ese turno de cierre, nunca en turnos posteriores de la
     misma conversación.
 
+▸ FLUJO B — ¿CÓMO TRABAJAN? (metodología / proceso de trabajo)
+  Aplica cuando el cliente pregunta por la forma de trabajo de los paquetes de producción, no por
+  precio ni por elegir un paquete (ej. "¿cómo trabajan?", "¿cómo se organizan?", "¿cómo es el
+  proceso?", "¿cómo funciona el servicio?", "¿cuántas veces graban?", "¿cuántos videos por sesión?",
+  "¿cuánto dura la grabación?", "¿ustedes escriben los guiones?", "¿cómo es la forma de pago?",
+  "¿quién publica los videos?", "¿tienen un grupo de WhatsApp con el cliente?", "¿revisamos los
+  videos antes de publicar?").
+
+  Responde con este contenido (adapta el tono/formato a WhatsApp — frases cortas, sin encabezados
+  numerados largos, resumiendo en bloques con emojis — pero mantén TODOS los datos concretos, no
+  los omitas ni los inventes de más):
+
+  ¡Buena pregunta! 😊 Así trabajamos en Conecta Pro:
+
+  💳 *Forma de pago:* 50% de adelanto para iniciar y 50% al finalizar el servicio acordado.
+
+  🎥 *Grabación:* una vez por semana, mínimo 4 videos por sesión (a veces más), con una duración de 2 a 3 horas por sesión.
+
+  📝 *Guiones:* llegamos con guiones e ideas ya preparadas, pensadas para tu marca y tu público.
+
+  📅 *Organización:* es clave que priorices el horario de grabación y nos ayudes con la coordinación previa (producto disponible, personal, espacio listo) para aprovechar bien la sesión.
+
+  📲 *Publicación:* nosotros publicamos los videos en TikTok, cuidando horarios y rendimiento para maximizar resultados.
+
+  💬 *Comunicación:* armamos un grupo de trabajo contigo para enviar avances, videos antes de publicar y hacer ajustes si hace falta.
+
+  Más que grabar videos, buscamos ser tu equipo estratégico de contenido 🚀 ¿Te gustaría ver los paquetes disponibles?
+
+  - Si el cliente responde con interés tras esta explicación, sigue el flujo normal de paquetes
+    (Flujo B consulta general o formulario, según corresponda).
+  - Marca intents.service_packages = true (esta información es parte de la línea de paquetes de
+    producción).
+  - NO uses este flujo para el agente de IA (LÍNEA C) ni para cursos — es exclusivo de los
+    paquetes de video.
+
 ▸ FLUJO B — CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR (fuera de catálogo)
   El disparador de este flujo es LA CANTIDAD, nunca el tipo o propósito del video. Aplica cuando el
   cliente limita explícitamente la cantidad a UNO o a un número que no es 6 ni 14:
@@ -696,7 +733,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   de IA. Márcalo SOLO UNA VEZ por conversación.
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
-  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Tres motivos
+  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Cuatro motivos
   posibles, mutuamente excluyentes:
 
   (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide un
@@ -715,16 +752,21 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       un string neutro corto (no se enviará al cliente: el sistema guarda silencio y deriva al
       asesor). NUNCA inventes, NUNCA adivines. Ante la duda de si algo ya está cubierto, revisa de
       nuevo esta guía antes de marcar este motivo — es la excepción, no la regla.
-      NO uses este motivo para preguntas por TEMAS DEL CURSO: ese caso tiene su propia regla en la
-      LÍNEA A (responder en positivo, sin silencio). Marcar este motivo ahí dejaría al cliente sin
-      ninguna respuesta, que es peor que una respuesta genérica.
+      NO uses este motivo para preguntas por TEMAS DEL CURSO: ese caso usa "course_topic_unconfirmed"
+      abajo, que SÍ responde (este motivo deja "reply" vacío y silencia al cliente, que sería peor).
 
   (3) advisor_handoff_reason = "refund_old_date": el cliente pagó para el curso de Creación de
       Contenido con su fecha anterior (domingo 26 de julio) y ya no puede asistir por el cambio a
       la nueva fecha (2 de agosto) — ver detalle y ejemplos en FLUJO A. En este caso SÍ respondes
       con empatía confirmando que un asesor revisará el reembolso (no dejas "reply" vacío).
 
-  Si ninguno de los tres casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
+  (4) advisor_handoff_reason = "course_topic_unconfirmed": el cliente pregunta si el curso de
+      Creación de Contenido incluye un tema que NO está en la lista de CONTENIDO confirmado de la
+      LÍNEA A (ej. monetización, fotografía, Instagram Reels) — ver regla y ejemplo de tono en
+      LÍNEA A. En este caso SÍ respondes en positivo, sin negar el tema y sin comprometerte a
+      nada concreto (no dejas "reply" vacío); el asesor confirma el detalle real después.
+
+  Si ninguno de los cuatro casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
   NUNCA marques advisor_handoff por leads, llamadas, citas, pagos ni por el agente de IA (Zoom o
   cotización personalizada) — esos flujos ya tienen su propio aviso al asesor y son independientes
   de este campo.
@@ -1779,12 +1821,14 @@ async function notifyLeadUpdateToTelegram(params: {
 type AdvisorHandoffReason =
   | "undocumented_info"
   | "out_of_catalog"
-  | "refund_old_date";
+  | "refund_old_date"
+  | "course_topic_unconfirmed";
 
 const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
   out_of_catalog: "Servicio fuera del catálogo estándar",
   undocumented_info: "Información no documentada",
   refund_old_date: "Posible reembolso — pagó fecha anterior del curso (26 de julio)",
+  course_topic_unconfirmed: "Preguntó por un tema del curso fuera del temario confirmado",
 };
 
 // Aviso genérico "blanco" al asesor: cualquier situación (fuera de leads, llamadas, citas o
@@ -2174,7 +2218,12 @@ const AssistantTurnSchema = z.object({
   ai_agent_lead_submitted: z.boolean(),
   advisor_handoff: z.boolean(),
   advisor_handoff_reason: z
-    .enum(["undocumented_info", "out_of_catalog", "refund_old_date"])
+    .enum([
+      "undocumented_info",
+      "out_of_catalog",
+      "refund_old_date",
+      "course_topic_unconfirmed",
+    ])
     .nullable(),
   conversation_summary: z.string(),
   intents: z.object({
@@ -4365,6 +4414,26 @@ export async function POST(request: Request) {
         contactName: lastMessage.contactName,
         conversationId: mediaConversationId,
         reason: "refund_old_date",
+        lastMessageText: lastMessage.text,
+        summary: turn.conversation_summary,
+      });
+    }
+
+    // Tema del curso fuera del temario confirmado: el bot ya respondió en positivo (sin
+    // negar el tema ni comprometerse), y aquí se notifica al equipo por Telegram para que
+    // un asesor confirme el detalle real con el cliente. Comparte el marcador
+    // [TELEGRAM_HANDOFF_SENT] — un solo aviso por conversación.
+    if (
+      turn.advisor_handoff &&
+      turn.advisor_handoff_reason === "course_topic_unconfirmed" &&
+      !telegramHandoffSent
+    ) {
+      await notifyAdvisorHandoffToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: mediaConversationId,
+        reason: "course_topic_unconfirmed",
         lastMessageText: lastMessage.text,
         summary: turn.conversation_summary,
       });
