@@ -209,6 +209,35 @@ REGLAS DE TONO Y FORMATO (campo "reply")
 GUÍA POR SITUACIÓN
 ═══════════════════════════════════════
 
+▸ MENSAJE FUERA DE TEMA (off_topic) — REGLA DE ALCANCE, TIENE PRIORIDAD SOBRE TODO
+  Solo atiendes las tres líneas de Conecta Pro (cursos, paquetes de grabación y edición,
+  agente de IA) y la logística de una compra en curso (pago, cita, ubicación, horarios,
+  reembolso, reenvío de material). Cualquier otra cosa está FUERA DE TU ALCANCE.
+
+  Si el mensaje del cliente NO tiene relación con nada de eso, marca off_topic=true y NO
+  respondas: should_reply=false, "reply" vacío, TODOS los intents en false y
+  advisor_handoff=false. El sistema guarda silencio total y apaga el bot en esa conversación
+  para que la atienda un humano. NUNCA le sigas la corriente ni pidas "más detalles" sobre
+  algo que no conoces.
+
+  Ejemplos de off_topic=true:
+  - Soporte técnico de otro producto o app ("solo se ve el avistador de spider, no jala",
+    "no me carga el sistema", "el equipo no enciende").
+  - Temas internos de un trabajo ya en marcha con el equipo ("mandá el archivo al editor",
+    "¿ya subieron el corte?", coordinaciones entre personas).
+  - Conversación personal, chistes, política, clima, cadenas, spam, reenvíos ajenos.
+  - Mensajes sin sentido o sin contexto reconocible.
+
+  off_topic=false SIEMPRE en estos casos (aunque el mensaje sea raro o incompleto):
+  - Saludos y primeros contactos.
+  - Continuación de un flujo ya abierto (respuestas cortas, datos del formulario, "sí",
+    "el de IA", una fecha, un nombre).
+  - Comprobantes de pago, imágenes o documentos enviados dentro de un flujo.
+  - Cualquier pregunta sobre Conecta Pro, sus servicios, precios o condiciones — aunque el
+    dato no esté en esta guía (ese caso es advisor_handoff_reason="undocumented_info",
+    NO off_topic).
+  ANTE LA DUDA, off_topic=false.
+
 ▸ SALUDO / PRIMER CONTACTO
   Cuando el usuario envía un saludo o su primer mensaje sin pregunta concreta, responde ÚNICA y
   EXACTAMENTE con el siguiente texto — sin modificarlo, sin agregar emojis extra, sin parafrasear,
@@ -676,6 +705,10 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   recolección de datos de lead (ver "SILENCIO DURANTE LA RECOLECCIÓN DE DATOS" arriba) cuando el
   cliente sigue enviando fragmentos de su información, aún faltan campos obligatorios y su mensaje
   no es una pregunta/duda. Fuera del flujo de intake, should_reply siempre es true.
+- off_topic: true cuando el mensaje del cliente no tiene NINGUNA relación con las tres líneas de
+  Conecta Pro ni con la logística de una compra en curso — ver "MENSAJE FUERA DE TEMA" arriba.
+  Cuando lo marques: should_reply=false, "reply" vacío, todos los intents en false y
+  advisor_handoff=false. Ante la duda, false.
 - is_greeting: true solo si el mensaje es un saludo o primer contacto sin pregunta concreta.
 - explicit_resend_request: true si pide explícitamente reenviar material ("mándame de nuevo",
   "no me llegó", "no puedo verlo", "reenvíame el flyer", "pásame otra vez la imagen").
@@ -714,6 +747,10 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   ni cuando el usuario solo pregunta algo sin haber dado ningún dato todavía.
   Márcalo true SOLO UNA VEZ por conversación — en el turno donde se completan los datos esenciales
   o llega la señal de cierre; en turnos posteriores de la misma conversación no vuelvas a marcarlo.
+  NUNCA lo marques si la conversación no es comercial: hace falta una intención real de contratar
+  paquetes (o de que un asesor lo contacte por eso). Un cliente que solo comparte su nombre o su
+  teléfono en medio de una charla ajena a Conecta Pro NO es un lead — este flag dispara un aviso
+  al asesor y una alerta falsa le hace perder tiempo.
 - call_request: true cuando el cliente pide una llamada telefónica o quiere cerrar/contratar por
   teléfono (ej. "quiero llamar para confirmar el paquete", "que me llamen", "prefiero una llamada").
   Ver flujo "CLIENTE PIDE UNA LLAMADA" arriba. Es una intención de contratación: dispara el aviso
@@ -771,6 +808,8 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       nada concreto (no dejas "reply" vacío); el asesor confirma el detalle real después.
 
   Si ninguno de los cuatro casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
+  Los cuatro motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
+  negocio, eso NO es un handoff: es off_topic=true (ver arriba) y no genera aviso al asesor.
   NUNCA marques advisor_handoff por leads, llamadas, citas, pagos ni por el agente de IA (Zoom o
   cotización personalizada) — esos flujos ya tienen su propio aviso al asesor y son independientes
   de este campo.
@@ -796,8 +835,42 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
 
   NO CONFUNDIR PAQUETES DE VIDEO CON AGENTE DE IA: son dos servicios distintos para negocios.
   Paquetes = grabación y edición de videos (6 o 14). Agente de IA = asistente que atiende el
-  WhatsApp del negocio. Si el cliente habla de agente, IA, chatbot, bot o automatizar mensajes,
-  es el FLUJO C, aunque use palabras como "servicio" o "edición".
+  WhatsApp del negocio. El FLUJO C (intents.ai_agent_flyer) se activa SOLO cuando el cliente
+  pide el agente PARA SU PROPIO NEGOCIO / WhatsApp, pregunta qué es ese servicio, o dice que
+  vio el video promocional del agente. NUNCA lo actives por la sola aparición de la palabra
+  "IA", "bot" o "automático" dentro de otra conversación — ver CONTINUIDAD DE CONTEXTO.
+
+  ═══ CONTINUIDAD DE CONTEXTO — LEE EL HISTORIAL ANTES DE ELEGIR EL FLUJO ═══
+  El último mensaje del cliente se interpreta SIEMPRE dentro del flujo que ya está abierto.
+  Un mensaje corto, ambiguo o de una o dos palabras NUNCA cambia de línea: es un comentario o
+  una pregunta sobre lo que se está hablando en ese momento.
+
+  Solo cambias de línea cuando el cliente lo pide de forma EXPLÍCITA y completa
+  ("quiero un agente de IA para mi negocio", "ahora cuéntame de los cursos",
+  "mejor mostrame los paquetes de grabación").
+
+  EJEMPLO REAL (error que no se debe repetir): en plena conversación de PAQUETES, el cliente
+  escribe "todo IA", "¿eso lo hacen con IA?", "¿usan IA?". Está preguntando cómo se produce
+  el contenido de LOS PAQUETES. Se responde dentro del FLUJO B, y NUNCA se envía el flyer ni
+  la información del agente de IA (intents.ai_agent_flyer = false).
+
+  El mismo criterio vale para las tres líneas: durante un flujo de cursos, "video" o
+  "edición" se refieren al curso; durante el agente de IA, "contenido" se refiere al agente.
+  Si de verdad no queda claro a qué se refiere, pregúntalo en una línea antes de cambiar de
+  flujo — nunca lo asumas ni envíes material de otra línea "por si acaso".
+
+  ═══ EXCLUSIVIDAD ENTRE CITA Y FORMULARIO DE LEADS ═══
+  El flujo de CITA en oficina y el de LEADS (formulario de paquetes) no se pisan:
+  - Si el cliente está en el flujo de cita (dio día/hora, está confirmando, escribió
+    "confirmar", o ya tiene la cita agendada), NO marques service_intake_requested ni
+    lead_data_submitted, y NO envíes el formulario, salvo que en ese mismo mensaje mencione
+    explícitamente contratar / paquete / grabación / videos / 6 / 14. Un "sí", "dale",
+    "confirmar" o "de acuerdo" en ese punto confirma LA CITA, nada más.
+  - Si el cliente está llenando el formulario de leads, NO marques appointment_scheduled
+    salvo que mencione explícitamente cita, visita u oficina.
+  - SUPERPOSICIÓN: si ya tiene cita agendada y además muestra interés en contratar, NO
+    reenvíes el formulario. Responde así (adaptando día y hora):
+    "¡Perfecto! Ya tenemos tu cita agendada para [día] a las [hora]. Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece?"
 
   CLIENTE PIDE CURSOS Y PAQUETES EN EL MISMO MENSAJE: si el cliente pide información de
   cursos Y de paquetes de producción a la vez (ej. "los cursos y también paquetes de
@@ -821,6 +894,11 @@ const LEAD_INTAKE_FORM = `¡Con gusto! Para coordinar todo, necesito algunos dat
 📌 Instagram o redes sociales:
 📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
 📌 ¿Tienes alguna referencia de contenido que te guste? (Opcional)`;
+
+// Respuesta de superposición cita + interés en contratar. La usa la red de seguridad
+// determinista cuando el LLM intenta mandar el formulario con una cita ya en curso.
+// Sin día/hora concretos: el código no los conoce, y el asesor los confirma en la visita.
+const APPOINTMENT_OVERLAP_REPLY = `¡Perfecto! Ya tenemos tu cita agendada 📅 Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece? 😊`;
 
 // Texto EXACTO del Flujo B — consulta general de paquetes (mismo contenido que el
 // SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual
@@ -981,6 +1059,7 @@ function buildTelegramBody(params: {
   summary?: string;
   contextLabel?: string;
   verification?: string;
+  note?: string;
 }): string {
   const digits = String(params.phone ?? "").replace(/\D/g, "");
   const clientMessage = (params.clientMessage ?? "").trim();
@@ -997,6 +1076,13 @@ function buildTelegramBody(params: {
 
   if (contextLabel) {
     lines.push(`🗂️ Contexto: ${contextLabel}`);
+  }
+
+  // Aviso corto de estado cruzado entre flujos (ej. el lead ya tiene cita agendada),
+  // para que el asesor no trate dos alertas del mismo cliente como casos separados.
+  const note = (params.note ?? "").trim();
+  if (note) {
+    lines.push(escapeTelegramHtml(note));
   }
 
   // Qué vio el verificador de imágenes. El "👤 Cliente" de un comprobante sin
@@ -1747,6 +1833,46 @@ function detectCallRequestHeuristic(text: string): boolean {
   );
 }
 
+// Señales de que la conversación trata realmente de algún flujo de Conecta Pro
+// (cursos, paquetes de producción, agente de IA) o de la logística de una compra.
+const COMMERCIAL_CONTEXT_PATTERN =
+  /\b(curso|cursos|capacitacion|clase|clases|taller|temario|cupo|cupos|inscri|capcut|edicion|editar|grabacion|grabar|filmacion|video|videos|reel|reels|spot|comercial|publicidad|contenido|dron|drone|paquete|paquetes|servicio|servicios|cotiza|presupuesto|precio|precios|costo|cuanto cuesta|tarifa|promo|descuento|agente|agentes|chatbot|bot|automatizar|automatizacion|inteligencia artificial|\bia\b|whatsapp business|pago|pagar|pague|comprobante|deposito|transferencia|qr|yape|plin|banco|reserva|reservar|cita|agendar|agenda|zoom|reunion|oficina|direccion|ubicacion|horario|conecta ?pro|reembolso|asesor)\b/;
+
+// Gate determinista para las alertas de lead y de derivación a asesor: solo se avisa por
+// Telegram si la conversación tiene relación con algún flujo del negocio. Evita alertas
+// falsas en chats ajenos (soporte de otro producto, temas internos, charla personal).
+// Los avisos de pago, cita y Zoom NO pasan por aquí: ya tienen su propia validación.
+function hasCommercialContext(params: {
+  history: HistoryMessage[];
+  lastMessageText?: string | null;
+  materialSent?: boolean;
+}): boolean {
+  // Si el backend ya envió flyer, QR o formulario, el contexto comercial es un hecho.
+  if (params.materialSent) return true;
+
+  const normalize = (text: string) =>
+    text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "");
+
+  // Solo se miran los mensajes del CLIENTE: las respuestas del asistente (empezando por
+  // el saludo, que nombra las tres líneas) contienen siempre estas palabras y harían que
+  // el gate diera true en cualquier conversación.
+  const haystack = [
+    ...params.history
+      .slice(-12)
+      .filter((message) => message.role === "user")
+      .map((message) => message.content ?? ""),
+    params.lastMessageText ?? "",
+  ]
+    .filter(Boolean)
+    .map(normalize)
+    .join("\n");
+
+  return COMMERCIAL_CONTEXT_PATTERN.test(haystack);
+}
+
 // Origen del disparo del lead, para auditoría en los logs.
 type LeadTrigger =
   | "intake_form"
@@ -1769,6 +1895,7 @@ async function notifyLeadToTelegram(params: {
   summary?: string;
   kind?: "intake" | "call_request" | "ai_agent";
   trigger?: LeadTrigger;
+  hasAppointment?: boolean;
 }): Promise<boolean> {
   const lastClientMessage =
     params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
@@ -1787,6 +1914,9 @@ async function notifyLeadToTelegram(params: {
       phone: params.phone,
       clientMessage: lastClientMessage,
       summary: params.summary,
+      note: params.hasAppointment
+        ? "📅 El cliente ya tiene una cita agendada en oficina"
+        : undefined,
     }),
   );
 
@@ -1817,6 +1947,7 @@ async function notifyLeadUpdateToTelegram(params: {
   conversationId?: string;
   fallbackText?: string;
   summary?: string;
+  hasAppointment?: boolean;
 }): Promise<boolean> {
   const lastClientMessage =
     params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
@@ -1828,6 +1959,9 @@ async function notifyLeadUpdateToTelegram(params: {
       phone: params.phone,
       clientMessage: lastClientMessage,
       summary: params.summary,
+      note: params.hasAppointment
+        ? "📅 El cliente ya tiene una cita agendada en oficina"
+        : undefined,
     }),
   );
 
@@ -2150,6 +2284,53 @@ async function pauseBotForSuspectedLoop(conversationId?: string) {
   }
 }
 
+// Duración de la pausa automática por mensaje fuera de tema. Se usa una pausa con
+// vencimiento (y no indefinida como las otras) para que un cliente que escribe algo
+// ajeno y después pregunta por cursos no quede sin bot para siempre.
+const OFF_TOPIC_PAUSE_MINUTES = 360;
+
+// Pausa automática cuando el cliente escribe algo sin ninguna relación con Conecta Pro
+// (soporte de otro producto, temas internos de un trabajo en curso, charla personal).
+// El bot guarda silencio total y deja la conversación en manos de un humano; se reanuda
+// sola al vencer la pausa, o antes con /resume.
+async function pauseBotForOffTopic(conversationId?: string) {
+  if (!conversationId) return;
+
+  const supabase = getSupabaseClient();
+  const nowIso = new Date().toISOString();
+  const expiresAtIso = new Date(
+    Date.now() + OFF_TOPIC_PAUSE_MINUTES * 60_000,
+  ).toISOString();
+
+  const { error } = await supabase
+    .from("kapso_conversations")
+    .update({
+      bot_paused: true,
+      bot_paused_at: nowIso,
+      bot_pause_expires_at: expiresAtIso,
+      bot_paused_reason: "off_topic_unrelated",
+      bot_pause_mode: "auto",
+      bot_pause_duration_minutes: OFF_TOPIC_PAUSE_MINUTES,
+      updated_at: nowIso,
+    })
+    .eq("kapso_conversation_id", conversationId);
+
+  if (error) {
+    console.error("auto pause for off topic message failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "bot_off_topic_auto_pause_failed",
+      conversationId,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+      },
+    });
+  }
+}
+
 async function getRecentConversationHistory(
   conversationId?: string,
   limit = 12,
@@ -2242,6 +2423,7 @@ const AssistantTurnSchema = z.object({
   appointment_scheduled: z.boolean(),
   zoom_meeting_scheduled: z.boolean(),
   ai_agent_lead_submitted: z.boolean(),
+  off_topic: z.boolean(),
   advisor_handoff: z.boolean(),
   advisor_handoff_reason: z
     .enum([
@@ -2276,6 +2458,9 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   appointment_scheduled: false,
   zoom_meeting_scheduled: false,
   ai_agent_lead_submitted: false,
+  // Si OpenAI falla no se puede juzgar la relevancia del mensaje: se asume que sí
+  // viene al caso para no apagar el bot por un error de infraestructura.
+  off_topic: false,
   advisor_handoff: false,
   advisor_handoff_reason: null,
   conversation_summary: "",
@@ -2707,7 +2892,16 @@ function detectGeneralPurchaseIntent(
   const normalized = normalizeForMatch(text);
 
   if (SPECIFIC_QUESTION_REGEX.test(normalized)) return false;
-  if (CONTRACT_INTENT_REGEX.test(normalized)) return true;
+
+  // "Coordinar/empezar" sobre la VISITA no es intención de contratar paquetes:
+  // "coordinemos la cita", "vamos a coordinar la visita a la oficina". Solo se
+  // descarta si el mensaje habla de la cita y no menciona paquetes.
+  const isAboutAppointment =
+    APPOINTMENT_KEYWORDS.test(normalized) &&
+    !SERVICE_PACKAGES_KEYWORDS.test(normalized);
+
+  if (CONTRACT_INTENT_REGEX.test(normalized)) return !isAboutAppointment;
+  if (isAboutAppointment) return false;
   if (!packagesPresented) return false;
 
   return GENERIC_INTEREST_REGEX.test(normalized);
@@ -2799,6 +2993,56 @@ function detectPackagesPresented(
     });
 }
 
+// ¿La conversación está en el flujo de CITA en oficina? Se mira si el asistente ya
+// propuso agendar o pidió confirmar la visita, buscando las frases fijas del prompt en
+// sus últimos mensajes. Sirve para que la confirmación de la cita ("sí", "confirmar",
+// "dale") no se lea como elección de paquete y dispare el formulario de leads.
+const APPOINTMENT_PROMPT_MARKERS = [
+  "QUIERES AGENDAR UNA VISITA",
+  "INDICANOS EL DIA Y LA HORA",
+  "ESCRIBE 'CONFIRMAR'",
+  "ESCRIBE CONFIRMAR",
+  "TE ESTARA ESPERANDO",
+  "TE ESPERE EL",
+  "EN LA OFICINA",
+];
+
+function detectAppointmentPending(history: HistoryMessage[]): boolean {
+  return history
+    .filter((message) => message.role === "assistant")
+    .slice(-3)
+    .some((message) => {
+      const normalized = normalizeForMatch(message.content);
+      return APPOINTMENT_PROMPT_MARKERS.some((marker) =>
+        normalized.includes(marker),
+      );
+    });
+}
+
+// Señal INEQUÍVOCA de que el cliente quiere contratar paquetes de producción. Es lo
+// único que puede abrir el formulario mientras hay un flujo de cita en curso: los
+// afirmativos genéricos ("sí", "dale", "confirmar") ahí significan otra cosa.
+function hasExplicitPackageIntent(text: string): boolean {
+  if (!text) return false;
+  const normalized = normalizeForMatch(text);
+
+  // "Coordinar/empezar" referido a la visita no es intención de contratar paquetes.
+  if (
+    APPOINTMENT_KEYWORDS.test(normalized) &&
+    !SERVICE_PACKAGES_KEYWORDS.test(normalized)
+  ) {
+    return false;
+  }
+
+  return (
+    SERVICE_PACKAGES_KEYWORDS.test(normalized) ||
+    CONTRACT_INTENT_REGEX.test(normalized) ||
+    detectPackagePriceMention(text) ||
+    detectPackageChoice(text) ||
+    detectPackageNameChoice(text)
+  );
+}
+
 // Selección de un paquete por parte del cliente. Dos niveles de confianza:
 //
 //  1. Autosuficiente (no necesita contexto): el cliente nombra el paquete de forma
@@ -2848,7 +3092,13 @@ function shouldForceIntakeForm(
   text: string,
   history: HistoryMessage[],
   flyerAlreadySent: boolean,
+  appointmentContext = false,
 ): boolean {
+  // Con una cita en curso (propuesta o ya confirmada), los afirmativos genéricos son
+  // la confirmación de la visita, no la elección de un paquete: solo una señal
+  // explícita de contratación puede abrir el formulario.
+  if (appointmentContext) return hasExplicitPackageIntent(text);
+
   const presented = detectPackagesPresented(history, flyerAlreadySent);
 
   return (
@@ -2889,6 +3139,36 @@ type DetectedIntent =
   | "course"
   | "appointment"
   | "ai_agent";
+
+// Verbos y fórmulas con las que un cliente PIDE algo de una línea concreta. Junto con la
+// palabra clave de esa línea, son la señal mínima para aceptar un cambio de flujo.
+const LINE_REQUEST_REGEX =
+  /\b(QUIERO|QUISIERA|QUERIA|ME INTERESA|ME INTERESAN|NECESITO|BUSCO|TIENEN|TIENES|HAY|INFORMACION|INFO|INFORMES|DETALLES|PRECIO|PRECIOS|COSTO|CUANTO|CUANTOS|COMO FUNCIONA|QUE ES|MANDAME|MANDA|ENVIAME|ENVIA|PASAME|MUESTRAME|VER|CONTRATAR)\b/;
+
+const LINE_KEYWORDS: Record<"course_flyer" | "service_packages" | "ai_agent_flyer", RegExp> =
+  {
+    course_flyer: COURSE_KEYWORDS,
+    service_packages: SERVICE_PACKAGES_KEYWORDS,
+    ai_agent_flyer: AI_AGENT_KEYWORDS,
+  };
+
+// ¿El cliente pidió EXPLÍCITAMENTE cambiar a otra línea de negocio? Exige la palabra
+// clave de la línea destino MÁS un verbo de petición, o una frase larga sobre ella.
+// Una mención suelta ("todo IA", "con IA") en medio de otro flujo NO alcanza: ahí el
+// cliente está preguntando sobre lo que ya se está hablando.
+function detectExplicitLineSwitch(
+  text: string,
+  targetLine: keyof typeof LINE_KEYWORDS,
+): boolean {
+  if (!text) return false;
+
+  const normalized = normalizeForMatch(text);
+  if (!LINE_KEYWORDS[targetLine].test(normalized)) return false;
+
+  const wordCount = normalized.trim().split(/\s+/).length;
+
+  return LINE_REQUEST_REGEX.test(normalized) || wordCount >= 6;
+}
 
 // Detecta de forma determinista si el mensaje del cliente ya expresa una intención
 // concreta (para no responder con el saludo genérico). Devuelve la primera que
@@ -4045,6 +4325,19 @@ export async function POST(request: Request) {
   const callRequestHeuristic = detectCallRequestHeuristic(lastMessage.text);
   const callRequested = turn.call_request || callRequestHeuristic;
 
+  // Flujo de cita en curso: ya confirmada (marcador de Telegram) o propuesta y esperando
+  // el "confirmar" del cliente. Mientras dure, los afirmativos genéricos pertenecen a la
+  // cita y no deben abrir el formulario de leads ni generar un segundo aviso al asesor.
+  // Cita REAL (confirmada), para anotarla en las alertas de lead. `appointmentContext`
+  // es más amplio: incluye la cita apenas propuesta, que ya basta para no abrir leads.
+  const hasScheduledAppointment =
+    telegramAppointmentSent || turn.appointment_scheduled;
+
+  const appointmentContext =
+    hasScheduledAppointment || detectAppointmentPending(history);
+
+  const explicitPackageIntent = hasExplicitPackageIntent(lastMessage.text);
+
   // Red de seguridad determinista: si el cliente eligió un paquete pero el LLM NO
   // marcó service_intake_requested, forzamos el envío del formulario. Cubre elección
   // por cantidad ("Si de 6 videos", "el de 14"), por nombre ("me interesa el exprés",
@@ -4059,7 +4352,12 @@ export async function POST(request: Request) {
     turn.should_reply &&
     !replyContainsIntakeForm(turn.reply) &&
     !intakeFormSent &&
-    shouldForceIntakeForm(lastMessage.text, history, mediaStatus.service_packages)
+    shouldForceIntakeForm(
+      lastMessage.text,
+      history,
+      mediaStatus.service_packages,
+      appointmentContext,
+    )
   ) {
     console.log("intake form forced by safety net (package choice detected)", {
       conversationId: lastMessage.conversationId,
@@ -4077,6 +4375,46 @@ export async function POST(request: Request) {
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
       metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
+  // Exclusividad cita ↔ leads: con una cita en curso y sin una señal explícita de
+  // contratar paquetes, el bot no abre el flujo de leads aunque el LLM lo haya marcado.
+  // Evita el doble aviso a Telegram (cita + lead) por el mismo cliente.
+  if (
+    appointmentContext &&
+    !explicitPackageIntent &&
+    (turn.service_intake_requested ||
+      turn.lead_data_submitted ||
+      replyContainsIntakeForm(turn.reply))
+  ) {
+    const replacedForm = replyContainsIntakeForm(turn.reply);
+
+    console.log("intake form blocked by appointment flow", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.intents.service_packages = false;
+
+    // Si el formulario ya venía dentro de la respuesta, se reemplaza por el mensaje
+    // que reconoce la cita y deja la contratación para la visita.
+    if (replacedForm) turn.reply = APPOINTMENT_OVERLAP_REPLY;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "intake_form_blocked_by_appointment",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        appointment_already_notified: telegramAppointmentSent,
+        appointment_scheduled_this_turn: turn.appointment_scheduled,
+        reply_replaced: replacedForm,
         client_message: lastMessage.text.slice(0, 200),
       },
     });
@@ -4146,6 +4484,78 @@ export async function POST(request: Request) {
     });
   }
 
+  // Contexto comercial de la conversación: gate de las alertas de lead y de derivación a
+  // asesor (los avisos de pago, cita y Zoom no pasan por aquí, tienen validación propia).
+  const commercialMaterialSent =
+    mediaStatus.course_flyer ||
+    mediaStatus.service_packages ||
+    mediaStatus.ai_agent_flyer ||
+    mediaStatus.payment_qr ||
+    intakeFormSent;
+
+  const conversationIsCommercial = hasCommercialContext({
+    history,
+    lastMessageText: lastMessage.text,
+    materialSent: commercialMaterialSent,
+  });
+
+  // Registro de cada alerta bloqueada por falta de contexto comercial, para poder auditar
+  // en Supabase si el gate está silenciando algo que sí debía notificarse.
+  const logTelegramSkippedNoContext = async (alert: string) =>
+    logSystemEvent({
+      level: "info",
+      eventType: "telegram_skipped_no_commercial_context",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        alert,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+
+  // Mensaje fuera de tema: el cliente escribió algo sin relación con Conecta Pro (soporte
+  // de otro producto, temas internos de un trabajo en curso, charla personal). El bot NO
+  // responde y NO notifica nada; además apaga la conversación para que la atienda un
+  // humano. Tiene prioridad sobre todo lo demás y hace su propio return.
+  if (turn.off_topic) {
+    // Salvaguarda contra falsos positivos del modelo: si la conversación sí venía siendo
+    // comercial (flyer/QR/formulario ya enviados o palabras de algún flujo), se guarda
+    // silencio en este turno pero no se apaga el bot.
+    if (!conversationIsCommercial) {
+      await pauseBotForOffTopic(lastMessage.conversationId);
+    }
+
+    console.log("assistant reply silenced (off topic message)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      botPaused: !conversationIsCommercial,
+    });
+
+    await markReplyLockSent({
+      lastMessageId: lastMessage.messageId,
+      conversationId: lastMessage.conversationId,
+      phone: lastMessage.from,
+      responseText: "[SILENCED] mensaje fuera de tema",
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "assistant_reply_skipped_off_topic",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        duration_ms: Date.now() - generationStartedAt,
+        bot_paused: !conversationIsCommercial,
+        pause_minutes: conversationIsCommercial ? null : OFF_TOPIC_PAUSE_MINUTES,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+
+    return new Response("off topic, no reply sent", { status: 200 });
+  }
+
   // Derivación silenciosa a asesor: el cliente preguntó algo que no está en la guía y el
   // modelo prefirió no inventar. El bot NO responde por WhatsApp; se avisa una sola vez
   // al asesor por Telegram (marcador [TELEGRAM_HANDOFF_SENT]) para que un humano atienda.
@@ -4156,7 +4566,7 @@ export async function POST(request: Request) {
       messageId: lastMessage.messageId,
     });
 
-    if (!telegramHandoffSent) {
+    if (!telegramHandoffSent && conversationIsCommercial) {
       await notifyAdvisorHandoffToTelegram({
         history,
         phone: lastMessage.from,
@@ -4166,6 +4576,8 @@ export async function POST(request: Request) {
         lastMessageText: lastMessage.text,
         summary: turn.conversation_summary,
       });
+    } else if (!telegramHandoffSent) {
+      await logTelegramSkippedNoContext("advisor_handoff:undocumented_info");
     }
 
     await markReplyLockSent({
@@ -4183,7 +4595,7 @@ export async function POST(request: Request) {
       contactPhone: lastMessage.from,
       metadata: {
         duration_ms: Date.now() - generationStartedAt,
-        advisor_notified: !telegramHandoffSent,
+        advisor_notified: !telegramHandoffSent && conversationIsCommercial,
       },
     });
 
@@ -4206,7 +4618,8 @@ export async function POST(request: Request) {
     // (la notificación no debe depender de que se responda por WhatsApp).
     if (
       (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
-      !telegramLeadSent
+      !telegramLeadSent &&
+      conversationIsCommercial
     ) {
       const isAiAgentLead =
         turn.ai_agent_lead_submitted && !callRequested && !turn.lead_data_submitted;
@@ -4223,6 +4636,7 @@ export async function POST(request: Request) {
           : callRequested && !turn.lead_data_submitted
             ? "call_request"
             : "intake",
+        hasAppointment: hasScheduledAppointment,
         trigger: turn.call_request
           ? "call_request_assistant"
           : callRequestHeuristic
@@ -4240,7 +4654,8 @@ export async function POST(request: Request) {
     } else if (
       turn.lead_data_submitted &&
       telegramLeadSent &&
-      !telegramLeadUpdateSent
+      !telegramLeadUpdateSent &&
+      conversationIsCommercial
     ) {
       await notifyLeadUpdateToTelegram({
         history,
@@ -4249,7 +4664,13 @@ export async function POST(request: Request) {
         conversationId: lastMessage.conversationId,
         fallbackText: lastMessage.text,
         summary: turn.conversation_summary,
+        hasAppointment: hasScheduledAppointment,
       });
+    } else if (
+      (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
+      !conversationIsCommercial
+    ) {
+      await logTelegramSkippedNoContext("lead:silenced_branch");
     }
 
     await markReplyLockSent({
@@ -4418,6 +4839,44 @@ export async function POST(request: Request) {
     });
   }
 
+  // Guarda determinista de CONTINUIDAD DE CONTEXTO: con un flujo ya abierto, una mención
+  // suelta de otra línea ("todo IA" hablando de paquetes) no debe traer el material de esa
+  // otra línea. Solo se acepta el cambio si el cliente lo pidió de forma explícita.
+  // Se mira el material realmente enviado: la línea abierta es la que ya tiene material.
+  const openLines = (
+    ["course_flyer", "service_packages", "ai_agent_flyer"] as const
+  ).filter((line) => mediaStatus[line]);
+
+  if (openLines.length > 0 && !turn.explicit_resend_request) {
+    for (const line of ["course_flyer", "service_packages", "ai_agent_flyer"] as const) {
+      if (!intentsToSend.has(line)) continue;
+      if (openLines.includes(line)) continue;
+      if (detectExplicitLineSwitch(lastMessage.text, line)) continue;
+
+      intentsToSend.delete(line);
+
+      console.warn("line switch blocked: no explicit request from client", {
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        from: openLines.join(","),
+        to: line,
+      });
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "line_switch_blocked",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          open_lines: openLines,
+          blocked_line: line,
+          client_message: lastMessage.text.slice(0, 200),
+        },
+      });
+    }
+  }
+
   // Reenvío explícito: forzar (anular dedup) los intents detectados este turno.
   if (turn.explicit_resend_request) {
     for (const intent of intentsToSend) forcedIntents.add(intent);
@@ -4491,9 +4950,12 @@ export async function POST(request: Request) {
     // y no solo el último, para que el asesor tenga el contexto completo.
     // Ambos disparadores comparten el marcador [TELEGRAM_LEAD_SENT]: el mismo
     // contacto nunca genera dos leads.
+    // Solo se avisa si la conversación tiene contexto comercial real: un nombre y un
+    // teléfono sueltos en un chat ajeno al negocio no son un lead.
     if (
       (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
-      !telegramLeadSent
+      !telegramLeadSent &&
+      conversationIsCommercial
     ) {
       // El lead del agente de IA (LÍNEA C) solo se etiqueta como tal si no hubo además
       // un pedido de llamada ni datos de paquetes en el mismo turno: esos dos son
@@ -4521,6 +4983,7 @@ export async function POST(request: Request) {
           : callRequested && !turn.lead_data_submitted
             ? "call_request"
             : "intake",
+        hasAppointment: hasScheduledAppointment,
         trigger,
       });
 
@@ -4535,7 +4998,8 @@ export async function POST(request: Request) {
       // de un segundo lead, para no duplicar en Telegram.
       turn.lead_data_submitted &&
       telegramLeadSent &&
-      !telegramLeadUpdateSent
+      !telegramLeadUpdateSent &&
+      conversationIsCommercial
     ) {
       await notifyLeadUpdateToTelegram({
         history,
@@ -4544,7 +5008,13 @@ export async function POST(request: Request) {
         conversationId: mediaConversationId,
         fallbackText: lastMessage.text,
         summary: turn.conversation_summary,
+        hasAppointment: hasScheduledAppointment,
       });
+    } else if (
+      (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
+      !conversationIsCommercial
+    ) {
+      await logTelegramSkippedNoContext("lead");
     }
 
     // Pago: el cliente confirmó pago (comprobante). El contexto (curso/paquete)
@@ -4639,15 +5109,19 @@ export async function POST(request: Request) {
       turn.advisor_handoff_reason === "out_of_catalog" &&
       !telegramHandoffSent
     ) {
-      await notifyAdvisorHandoffToTelegram({
-        history,
-        phone: lastMessage.from,
-        contactName: lastMessage.contactName,
-        conversationId: mediaConversationId,
-        reason: "out_of_catalog",
-        lastMessageText: lastMessage.text,
-        summary: turn.conversation_summary,
-      });
+      if (conversationIsCommercial) {
+        await notifyAdvisorHandoffToTelegram({
+          history,
+          phone: lastMessage.from,
+          contactName: lastMessage.contactName,
+          conversationId: mediaConversationId,
+          reason: "out_of_catalog",
+          lastMessageText: lastMessage.text,
+          summary: turn.conversation_summary,
+        });
+      } else {
+        await logTelegramSkippedNoContext("advisor_handoff:out_of_catalog");
+      }
     }
 
     // Posible reembolso: el cliente pagó para el curso con la fecha anterior (26 de julio) y
@@ -4659,15 +5133,19 @@ export async function POST(request: Request) {
       turn.advisor_handoff_reason === "refund_old_date" &&
       !telegramHandoffSent
     ) {
-      await notifyAdvisorHandoffToTelegram({
-        history,
-        phone: lastMessage.from,
-        contactName: lastMessage.contactName,
-        conversationId: mediaConversationId,
-        reason: "refund_old_date",
-        lastMessageText: lastMessage.text,
-        summary: turn.conversation_summary,
-      });
+      if (conversationIsCommercial) {
+        await notifyAdvisorHandoffToTelegram({
+          history,
+          phone: lastMessage.from,
+          contactName: lastMessage.contactName,
+          conversationId: mediaConversationId,
+          reason: "refund_old_date",
+          lastMessageText: lastMessage.text,
+          summary: turn.conversation_summary,
+        });
+      } else {
+        await logTelegramSkippedNoContext("advisor_handoff:refund_old_date");
+      }
     }
 
     // Tema del curso fuera del temario confirmado: el bot ya respondió en positivo (sin
@@ -4679,15 +5157,19 @@ export async function POST(request: Request) {
       turn.advisor_handoff_reason === "course_topic_unconfirmed" &&
       !telegramHandoffSent
     ) {
-      await notifyAdvisorHandoffToTelegram({
-        history,
-        phone: lastMessage.from,
-        contactName: lastMessage.contactName,
-        conversationId: mediaConversationId,
-        reason: "course_topic_unconfirmed",
-        lastMessageText: lastMessage.text,
-        summary: turn.conversation_summary,
-      });
+      if (conversationIsCommercial) {
+        await notifyAdvisorHandoffToTelegram({
+          history,
+          phone: lastMessage.from,
+          contactName: lastMessage.contactName,
+          conversationId: mediaConversationId,
+          reason: "course_topic_unconfirmed",
+          lastMessageText: lastMessage.text,
+          summary: turn.conversation_summary,
+        });
+      } else {
+        await logTelegramSkippedNoContext("advisor_handoff:course_topic_unconfirmed");
+      }
     }
   } catch (error) {
     console.error("supabase save outbound/lock/media threw", error);
