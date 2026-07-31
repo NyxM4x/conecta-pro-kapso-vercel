@@ -9,6 +9,10 @@ type IncomingMessage = {
   text: string;
   isImage?: boolean;
   isDocument?: boolean;
+  // Referencia al archivo adjunto, para poder descargarlo y verificar con visión
+  // si una imagen es realmente un comprobante de pago.
+  mediaId?: string | null;
+  mediaUrl?: string | null;
   messageId?: string;
   conversationId?: string;
   contactName?: string | null;
@@ -976,11 +980,13 @@ function buildTelegramBody(params: {
   clientMessage?: string;
   summary?: string;
   contextLabel?: string;
+  verification?: string;
 }): string {
   const digits = String(params.phone ?? "").replace(/\D/g, "");
   const clientMessage = (params.clientMessage ?? "").trim();
   const summary = (params.summary ?? "").trim();
   const contextLabel = (params.contextLabel ?? "").trim();
+  const verification = (params.verification ?? "").trim();
 
   const lines = [
     params.headline,
@@ -991,6 +997,13 @@ function buildTelegramBody(params: {
 
   if (contextLabel) {
     lines.push(`🗂️ Contexto: ${contextLabel}`);
+  }
+
+  // Qué vio el verificador de imágenes. El "👤 Cliente" de un comprobante sin
+  // caption es solo el centinela "📷 Imagen recibida", así que esta línea es la
+  // única pista real de qué llegó.
+  if (verification) {
+    lines.push(`🧾 Verificación: ${escapeTelegramHtml(verification.slice(0, 200))}`);
   }
 
   if (clientMessage) {
@@ -1243,6 +1256,17 @@ async function extractIncomingFromEvent(
   const isImage = Boolean(event.message?.image) || event.message?.type === "image";
   const isDocument =
     Boolean(event.message?.document) || event.message?.type === "document";
+  // Referencia al adjunto. Kapso a veces expone una URL directa (kapso.media_url);
+  // si no viene, queda el media id de Meta para descargarlo por API. El payload se
+  // parsea crudo (snake_case), pero el SDK usa camelCase: aceptamos ambos.
+  const mediaId =
+    event.message?.image?.id ?? event.message?.document?.id ?? null;
+  const mediaUrl =
+    event.message?.kapso?.media_url ??
+    event.message?.kapso?.mediaUrl ??
+    event.message?.image?.link ??
+    event.message?.document?.link ??
+    null;
   const messageId = event.message?.id;
   const conversationId = event.conversation?.id ?? from;
   const contactName = event.conversation?.contact_name ?? null;
@@ -1255,6 +1279,8 @@ async function extractIncomingFromEvent(
     text,
     isImage,
     isDocument,
+    mediaId,
+    mediaUrl,
     messageId,
     conversationId,
     contactName,
@@ -2308,6 +2334,157 @@ async function generateAssistantTurn(params: {
 
     return FALLBACK_ASSISTANT_TURN;
   }
+}
+
+// Verificación por visión de que una imagen entrante es realmente un comprobante
+// de pago. Antes bastaba con que fuera imagen + hubiera contexto de pago (QR o
+// formulario enviado), así que cualquier selfie o captura disparaba el
+// "¡Gracias por el comprobante!" y la alerta 💰 a Telegram.
+type ReceiptCheck = {
+  isReceipt: boolean;
+  reason: string;
+  source: "vision" | "fallback";
+};
+
+const RECEIPT_VISION_TIMEOUT_MS = 8000;
+
+const ReceiptVisionSchema = z.object({
+  is_receipt: z
+    .boolean()
+    .describe("true solo si la imagen es un comprobante/constancia de pago"),
+  reason: z
+    .string()
+    .describe("Explicación de una frase corta, en español, de lo que se ve en la imagen"),
+});
+
+// Descarga los bytes de la imagen: URL directa de Kapso si vino en el webhook,
+// si no el media id de Meta a través del proxy de Kapso.
+async function downloadIncomingMedia(params: {
+  mediaId?: string | null;
+  mediaUrl?: string | null;
+  signal: AbortSignal;
+}): Promise<Uint8Array> {
+  if (params.mediaUrl) {
+    const response = await fetch(params.mediaUrl, {
+      signal: params.signal,
+      headers: params.mediaUrl.includes("kapso.ai")
+        ? { "X-API-Key": getRequiredEnv("KAPSO_API_KEY") }
+        : undefined,
+    });
+
+    if (!response.ok) {
+      throw new Error(`media url fetch failed ${response.status}`);
+    }
+
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  if (!params.mediaId) {
+    throw new Error("no media reference in message");
+  }
+
+  const kapso = getKapsoClient();
+  const buffer = await kapso.media.download({
+    mediaId: params.mediaId,
+    phoneNumberId: getRequiredEnv("KAPSO_PHONE_NUMBER_ID"),
+    as: "arrayBuffer",
+  });
+
+  return new Uint8Array(buffer as ArrayBuffer);
+}
+
+async function classifyReceiptImage(params: {
+  mediaId?: string | null;
+  mediaUrl?: string | null;
+  conversationId?: string;
+  messageId?: string;
+  phone?: string;
+}): Promise<ReceiptCheck> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RECEIPT_VISION_TIMEOUT_MS);
+
+  let check: ReceiptCheck;
+
+  try {
+    const image = await downloadIncomingMedia({
+      mediaId: params.mediaId,
+      mediaUrl: params.mediaUrl,
+      signal: controller.signal,
+    });
+
+    const result = await generateText({
+      model: openai(process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
+      abortSignal: controller.signal,
+      temperature: 0,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: [
+                "Eres un verificador de comprobantes de pago para un negocio peruano.",
+                "Responde is_receipt = true SOLO si la imagen muestra evidencia de una",
+                "transacción: monto pagado, fecha/hora de operación, nombre de un banco o",
+                "billetera (Yape, Plin, BCP, Interbank, BBVA, Scotiabank, etc.), número de",
+                "operación o una captura de pantalla de una app bancaria.",
+                "Responde is_receipt = false para cualquier otra cosa: fotos de personas o",
+                "selfies, memes, fotos de productos o lugares, documentos de identidad,",
+                "capturas de chats o de redes sociales, o imágenes ilegibles.",
+                "Ante la duda sobre si hay una transacción real, responde false.",
+              ].join(" "),
+            },
+            { type: "image", image },
+          ],
+        },
+      ],
+      output: Output.object({ schema: ReceiptVisionSchema }),
+    });
+
+    check = {
+      isReceipt: result.output.is_receipt,
+      reason: result.output.reason.trim(),
+      source: "vision",
+    };
+  } catch (error) {
+    console.error("receipt vision check failed", error);
+
+    // Conservador a propósito: si no pudimos ver la imagen, preferimos el
+    // comportamiento anterior (tratarla como comprobante) antes que perder un
+    // pago real. El evento queda registrado para poder medirlo.
+    check = {
+      isReceipt: true,
+      reason: "No se pudo verificar la imagen",
+      source: "fallback",
+    };
+
+    await logSystemEvent({
+      level: "warning",
+      eventType: "receipt_vision_failed",
+      conversationId: params.conversationId,
+      messageId: params.messageId,
+      contactPhone: params.phone,
+      errorMessage: getErrorMessage(error),
+      metadata: { fallback_used: true, had_media_url: Boolean(params.mediaUrl) },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  await logSystemEvent({
+    level: "info",
+    eventType: "receipt_vision_check",
+    conversationId: params.conversationId,
+    messageId: params.messageId,
+    contactPhone: params.phone,
+    metadata: {
+      is_receipt: check.isReceipt,
+      detection_source: check.source,
+      reason: check.reason,
+    },
+  });
+
+  return check;
 }
 
 async function hasMediaIntentBeenSent(
@@ -3438,9 +3615,29 @@ export async function POST(request: Request) {
         const normalizedPausedText = normalizeForMatch(lastMessage.text);
         const hasExplicitPaymentPhrasePaused =
           EXPLICIT_PAYMENT_PHRASES.test(normalizedPausedText);
+        const hasPaymentContextPaused =
+          mediaStatusPaused.payment_qr || intakeFormSentPaused;
+
+        // Misma verificación por visión que en la rama normal: una imagen solo
+        // cuenta como comprobante si de verdad se ve una transacción.
+        const receiptCheckPaused =
+          lastMessage.isImage && hasPaymentContextPaused
+            ? await classifyReceiptImage({
+                mediaId: lastMessage.mediaId,
+                mediaUrl: lastMessage.mediaUrl,
+                conversationId: lastMessage.conversationId,
+                messageId: lastMessage.messageId,
+                phone: lastMessage.from,
+              })
+            : null;
+
+        // Misma matriz que en la rama normal: la imagen la decide la visión; el
+        // PDF solo cuenta si el QR se envió antes.
         const isPlausibleReceiptPaused =
-          (lastMessage.isImage || lastMessage.isDocument) &&
-          (mediaStatusPaused.payment_qr || intakeFormSentPaused);
+          (Boolean(lastMessage.isImage) &&
+            hasPaymentContextPaused &&
+            (receiptCheckPaused === null || receiptCheckPaused.isReceipt)) ||
+          (Boolean(lastMessage.isDocument) && mediaStatusPaused.payment_qr);
 
         if (isPlausibleReceiptPaused || hasExplicitPaymentPhrasePaused) {
           const paymentContextLabelPaused = mediaStatusPaused.payment_qr
@@ -3457,6 +3654,10 @@ export async function POST(request: Request) {
               summary:
                 "El cliente envió un comprobante de pago mientras el chat estaba en atención humana.",
               contextLabel: paymentContextLabelPaused,
+              verification:
+                receiptCheckPaused?.source === "vision"
+                  ? receiptCheckPaused.reason
+                  : undefined,
             }),
           );
 
@@ -3476,7 +3677,12 @@ export async function POST(request: Request) {
             messageId: lastMessage.messageId,
             contactPhone: lastMessage.from,
             metadata: {
-              detection: isPlausibleReceiptPaused ? "media_heuristic" : "explicit_phrase",
+              detection: !isPlausibleReceiptPaused
+                ? "explicit_phrase"
+                : receiptCheckPaused?.source === "vision"
+                  ? "vision_confirmed"
+                  : "media_heuristic",
+              vision_reason: receiptCheckPaused?.reason ?? null,
               context_label: paymentContextLabelPaused,
               notified: paymentNotifiedWhilePaused,
             },
@@ -3627,13 +3833,51 @@ export async function POST(request: Request) {
     ].join("\n"),
   ];
 
-  // Comprobante de pago: solo se trata como confirmación válida si (a) es
-  // imagen/PDF y ya se envió el QR del curso antes, o (a') es imagen/PDF y el
-  // cliente ya completó el formulario de intake (contexto de paquetes, donde
-  // nunca se envía QR por el bot), o (b) el texto usa una frase explícita de
-  // pago. Frases vagas ("ya mandé/pasé/envié") sin archivo NO cuentan como
-  // comprobante. Sin QR y sin intake (cero contexto) tampoco cuenta.
-  if (lastMessage.isImage || lastMessage.isDocument) {
+  // Comprobante de pago — matriz de decisión:
+  //
+  //   contexto previo          | IMAGEN            | PDF/DOCUMENTO
+  //   -------------------------|-------------------|---------------------------
+  //   QR de pago ya enviado    | decide la visión  | sí cuenta (lo revisa un humano)
+  //   solo formulario de intake| decide la visión  | NO cuenta
+  //   ni QR ni intake          | NO cuenta         | NO cuenta
+  //
+  // El PDF no puede verificarse (el modelo de chat no acepta PDF), así que su
+  // única garantía es el QR previo: sin QR, un PDF es material del cliente
+  // (brief, cotización, guion), no un pago. La imagen sí se verifica con visión,
+  // por eso ahí basta con cualquier contexto de pago.
+  //
+  // Aparte de los archivos: el texto con una frase explícita de pago sí cuenta,
+  // y las frases vagas ("ya mandé/pasé/envié") sin archivo no.
+  const imageReceiptEligible =
+    Boolean(lastMessage.isImage) && (mediaStatus.payment_qr || intakeFormSent);
+  const documentReceiptEligible =
+    Boolean(lastMessage.isDocument) && mediaStatus.payment_qr;
+
+  const receiptCheck = imageReceiptEligible
+    ? await classifyReceiptImage({
+        mediaId: lastMessage.mediaId,
+        mediaUrl: lastMessage.mediaUrl,
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        phone: lastMessage.from,
+      })
+    : null;
+
+  const rejectedByVision = receiptCheck !== null && !receiptCheck.isReceipt;
+  // PDF sin QR previo: no es comprobante, pero tampoco se ignora — suele ser
+  // material real del cliente que merece respuesta.
+  const documentWithoutQr = Boolean(lastMessage.isDocument) && !documentReceiptEligible;
+  const receiptRejected = rejectedByVision || documentWithoutQr;
+
+  if (rejectedByVision) {
+    contextParts.push(
+      "El último mensaje del usuario es una IMAGEN que NO es un comprobante de pago (se verificó su contenido). Ignórala por completo: no la menciones, no la describas, no agradezcas ningún comprobante y NO marques payment_confirmation. Continúa la conversación desde donde quedó, como si ese mensaje no hubiera llegado; si no había nada pendiente, responde de forma breve y natural.",
+    );
+  } else if (documentWithoutQr) {
+    contextParts.push(
+      "El último mensaje del usuario es un DOCUMENTO/PDF y a este cliente NUNCA se le envió el QR de pago, así que NO puede ser un comprobante. NO marques payment_confirmation y NO agradezcas ningún comprobante. Pregúntale con amabilidad para qué te envía ese archivo o en qué te gustaría que te ayude con él.",
+    );
+  } else if (lastMessage.isImage || lastMessage.isDocument) {
     const mediaLabel = lastMessage.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
     if (mediaStatus.payment_qr) {
       contextParts.push(
@@ -3644,6 +3888,8 @@ export async function POST(request: Request) {
         `El último mensaje del usuario es ${mediaLabel} y el formulario de datos para paquetes de producción YA fue completado antes en esta conversación (no hay QR porque los paquetes no usan QR). Trátalo como un posible comprobante de pago de paquete: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y en breve un asesor se comunicará contigo." NO vuelvas a pedir los datos del formulario — ya se recopilaron antes. No digas que el pago ya quedó confirmado — la validación la hace el equipo.`,
       );
     } else {
+      // Solo se llega aquí con una IMAGEN sin QR y sin intake: sin contexto de
+      // pago no se verifica con visión, y sin verificar no se asume nada.
       contextParts.push(
         `El último mensaje del usuario es ${mediaLabel} y todavía NO se le ha enviado el QR de pago ni completó el formulario de datos. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
       );
@@ -4304,7 +4550,10 @@ export async function POST(request: Request) {
     // Pago: el cliente confirmó pago (comprobante). El contexto (curso/paquete)
     // se calcula de forma determinista a partir del estado real de materiales
     // enviados, no del LLM: payment_qr es exclusivo del curso.
-    if (turn.payment_confirmation && !telegramPaymentSent) {
+    // `receiptRejected` es una salvaguarda: si el archivo no calificaba como
+    // comprobante (imagen descartada por visión, o PDF sin QR previo), no se
+    // notifica aunque el modelo marque el flag por su cuenta.
+    if (turn.payment_confirmation && !telegramPaymentSent && !receiptRejected) {
       const paymentContextLabel = mediaStatus.payment_qr
         ? "Curso (Creación de Contenido o Edición CapCut — revisar chat)"
         : intakeFormSent
@@ -4318,6 +4567,8 @@ export async function POST(request: Request) {
           clientMessage: lastMessage.text,
           summary: turn.conversation_summary || "El cliente envió un comprobante de pago. Verificar.",
           contextLabel: paymentContextLabel,
+          verification:
+            receiptCheck?.source === "vision" ? receiptCheck.reason : undefined,
         }),
       );
 
