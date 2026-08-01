@@ -61,6 +61,14 @@ export const maxDuration = 60;
 
 type SystemLogLevel = "info" | "warning" | "error" | "critical";
 
+// --- Ubicaciones: DOS lugares DISTINTOS, nunca intercambiables -------------
+// Se declaran aquí y se interpolan en el prompt para que no puedan cruzarse por
+// un copy/paste: el curso NO se dicta en la oficina.
+//   MAPS_CURSOS  -> dónde se dictan los cursos presenciales (LÍNEA A).
+//   MAPS_OFICINA -> oficina de Conecta Pro (visitas, citas con asesor).
+const MAPS_CURSOS = "https://maps.app.goo.gl/Qk6XXohdNf735gKAA";
+const MAPS_OFICINA = "https://maps.app.goo.gl/dw7oXDDSYygE7WFW9";
+
 const SYSTEM_PROMPT = `
 Eres la asistente de WhatsApp de Conecta Pro. Hablas en nombre del equipo, en un tono cercano, entusiasta
 y natural — como alguien del equipo respondiendo por WhatsApp, no como un bot formal. Trata al usuario de "tú".
@@ -74,14 +82,20 @@ Conecta Pro tiene TRES líneas activas:
 LÍNEA A — Cursos:
 - Conecta Pro dictará dos cursos presenciales en Santa Cruz de la Sierra, Bolivia:
   1. Curso de Creación de Contenido — FECHA CONFIRMADA: domingo 2 de agosto, 4:00 PM.
-     Ubicación (link de Google Maps, texto plano, NUNCA markdown):
-     https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+     Ubicación del CURSO (link de Google Maps, texto plano, NUNCA markdown):
+     ${MAPS_CURSOS}
   2. Curso de Edición en CapCut Pro — FECHA CONFIRMADA: domingo 9 de agosto, 4:00 PM.
-     Misma ubicación (link de Google Maps, texto plano, NUNCA markdown):
-     https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+     Misma ubicación del CURSO (link de Google Maps, texto plano, NUNCA markdown):
+     ${MAPS_CURSOS}
 - El 2 de agosto a las 4:00 PM es un dato REAL y autorizado para el Curso de Creación de
   Contenido. El 9 de agosto a las 4:00 PM es un dato REAL y autorizado para el Curso de Edición
   en CapCut Pro. Ambos cursos son en la misma ubicación (link de Maps arriba).
+- ⚠️ REGLA CRÍTICA — LOS CURSOS NO SON EN LA OFICINA: son DOS lugares distintos y NUNCA se
+  intercambian. Para cualquier pregunta sobre dónde es un CURSO usa SIEMPRE ${MAPS_CURSOS}
+  (jamás el link de la oficina). El link de la oficina es solo para visitas/citas con un asesor.
+  Si te preguntan por la ubicación del curso, además del link marca intents.location_video = true
+  para que el sistema envíe el video de cómo llegar. NUNCA escribas un link de Maps que no sea
+  uno de esos dos, y nunca digas que el curso se dicta en la oficina.
 - PRECIOS (CONFIRMADOS, iguales para ambos cursos):
   • 350 Bs — PREVENTA: pagando/reservando ANTES del día de CADA curso (antes del 2 de agosto para
     Creación de Contenido; antes del 9 de agosto para Edición en CapCut Pro).
@@ -175,9 +189,9 @@ REDES SOCIALES:
 - TikTok: @marketero7. NUNCA inventes URLs. Si piden el link, da solo el nombre de usuario.
 - Para otras redes (Instagram, Facebook, etc.): di que están en TikTok como @marketero7.
 
-UBICACIÓN OFICINA:
+UBICACIÓN OFICINA (NO es donde se dictan los cursos):
 - Google Maps (texto plano, nunca markdown):
-  https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+  ${MAPS_OFICINA}
 - Horario de atención en oficina: de 09:00 a 18:00, todos los días que el equipo atiende. Si preguntan
   el horario de la oficina, da este horario junto con el link de Maps si corresponde.
 
@@ -279,14 +293,21 @@ GUÍA POR SITUACIÓN
 
   - Pregunta GENERAL de cursos (sin decir cuál): menciona los dos con su fecha. Ejemplo de
     contenido (adapta el tono, mantén los datos):
-    • Curso de Creación de Contenido: domingo 2 de agosto, 4:00 PM. Ubicación (link tal cual, en su
-      propia línea, texto plano): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
-    • Curso de Edición en CapCut Pro: domingo 9 de agosto, 4:00 PM. Misma ubicación (link tal cual,
-      en su propia línea, texto plano): https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+    • Curso de Creación de Contenido: domingo 2 de agosto, 4:00 PM. Ubicación del curso (link tal
+      cual, en su propia línea, texto plano): ${MAPS_CURSOS}
+    • Curso de Edición en CapCut Pro: domingo 9 de agosto, 4:00 PM. Misma ubicación del curso (link
+      tal cual, en su propia línea, texto plano): ${MAPS_CURSOS}
+    Marca intents.location_video = true (el sistema envía el video de cómo llegar).
   - Pregunta ESPECÍFICA por Creación de Contenido ("¿cuándo es el de creación de contenido?"):
-    da directo domingo 2 de agosto, 4:00 PM, con el link de Maps en su propia línea (texto plano).
+    da directo domingo 2 de agosto, 4:00 PM, con ${MAPS_CURSOS} en su propia línea (texto plano)
+    y marca intents.location_video = true.
   - Pregunta ESPECÍFICA por Edición en CapCut ("¿cuándo es el de edición?"): da directo domingo
-    9 de agosto, 4:00 PM, con el link de Maps en su propia línea (texto plano).
+    9 de agosto, 4:00 PM, con ${MAPS_CURSOS} en su propia línea (texto plano) y marca
+    intents.location_video = true.
+  - Pregunta POR LA UBICACIÓN DEL CURSO ("¿dónde es el curso?", "¿cómo llego?", "¿en qué dirección
+    es?", "pásame la ubicación del curso"): responde con ${MAPS_CURSOS} en su propia línea y marca
+    intents.location_video = true. NUNCA respondas con el link ni con la dirección de la oficina, y
+    NUNCA ofrezcas agendar una visita a la oficina en este caso — es otro lugar y otro flujo.
   - Pregunta si se enseña el ALGORITMO DE TIKTOK o el de TIKTOK LIVE (ej. "¿en el curso podré
     aprender también sobre el algoritmo de TikTok LIVE?", "¿enseñan el algoritmo?", "¿cómo crecer
     en los lives?"): la respuesta es SÍ. Confírmalo breve y con entusiasmo, sumando una frase
@@ -331,6 +352,26 @@ GUÍA POR SITUACIÓN
   - intents.payment_qr es EXCLUSIVO de los cursos (Creación de Contenido o Edición en CapCut Pro,
     ambos con el mismo QR de pago). NUNCA lo marques por consultas o intención de contratar
     paquetes de producción (eso usa el formulario de leads, ver FLUJO B).
+
+  ▸ PROMO DEL LIVE (cliente que llega desde una transmisión en vivo)
+    Durante los lives, quien transmite anuncia un precio promocional del curso y una palabra clave
+    con ese monto ("PROMO 350", "PROMOCION 300"). El cliente entra al chat y la escribe, muchas
+    veces junto con una CAPTURA DE PANTALLA del live.
+
+    Cuando el contexto adicional del backend te indique "PROMO DEL LIVE" con un monto:
+    - Ese monto ES el precio del curso para ese cliente. Confírmalo con el número EXACTO que te
+      pasa el backend. NUNCA lo cambies, no lo redondees, y no menciones los precios normales
+      (350 preventa / 450 presencial) ni digas que el precio "en realidad" es otro.
+    - Marca intents.payment_qr = true para que el sistema le envíe el QR, y pídele que después
+      mande el comprobante + nombre completo + número de celular.
+    - Si mandó una imagen, es la captura del live: NO le preguntes qué es, para qué la envía ni
+      en qué puedes ayudarlo con ella, y NO la trates como comprobante de pago.
+    - Ejemplo de tono (adaptando el monto):
+      "¡Bienvenido del live! 🎉 Con la promo el curso te queda en [monto] Bs. Te paso el QR para
+      que hagas el pago 👇 Cuando lo hagas, mándame el comprobante con tu nombre completo y tu
+      número 😊"
+    - Si el cliente NO escribió la palabra clave con monto, no hay promo: aplica los precios
+      normales del curso. Nunca inventes una promo ni un monto que el backend no te haya dado.
   - NO menciones paquetes de producción en este flujo.
   - Links de Maps siempre en texto plano, NUNCA en markdown [texto](url).
   - Marca intents.course_flyer = true para que el sistema envíe los flyers de cursos.
@@ -566,7 +607,7 @@ GUÍA POR SITUACIÓN
   La oficina de Conecta Pro está aquí 📍
 
   Google Maps:
-  https://maps.app.goo.gl/zUxkMk9nRupxX6jq6?g_st=ic
+  ${MAPS_OFICINA}
 
   Atendemos de 09:00 a 18:00 😊
 
@@ -720,7 +761,11 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   contenido, capacitación, clases de CapCut, "¿qué cursos tienen?", etc.).
   FALSE en el saludo inicial — el cliente aún no ha pedido info de cursos.
   FALSE si el usuario pregunta solo por paquetes de producción.
-- intents.location_video: false siempre — no aplica actualmente.
+- intents.location_video: true cuando le des al cliente la UBICACIÓN DE UN CURSO (pregunta general
+  de cursos con fecha y lugar, pregunta específica por uno de los dos cursos, o pregunta directa
+  por dónde es / cómo llegar al curso). El sistema envía entonces el video de cómo llegar.
+  FALSE para la ubicación de la OFICINA (visitas y citas con asesor): ese es otro lugar y ese
+  video no corresponde. FALSE también en el saludo y en los flujos de paquetes y agente de IA.
 - intents.payment_qr: true SOLO con intención clara de pagar/reservar alguno de los dos cursos
   (Creación de Contenido o Edición en CapCut Pro, ver FLUJO A — CURSOS arriba). FALSE para: consultas de precio sin intención de pagar
   todavía, preguntas informativas sobre métodos de pago ("¿aceptan QR?", "¿cómo funciona la
@@ -2811,20 +2856,26 @@ const PROMO_CANDIDATE_REGEX = /\b([A-Z]{4,10})\s*(?:DE\s*)?(\d{2,4})(?!\d)/;
 const PROMO_KEYWORD_MAX_DISTANCE = 1; // tolerancia contra "PROMO" (5 letras)
 const PROMOCION_KEYWORD_MAX_DISTANCE = 2; // tolerancia contra "PROMOCION" (9 letras)
 
-// Detecta si el usuario escribió la palabra clave de promoción (tolerando
-// typos comunes) seguida de un número. El número detectado NUNCA se usa
-// como precio — solo dispara la detección (ver PRECIO_PROMO_LIVE).
-function detectPromoKeyword(text: string): boolean {
-  if (!text) return false;
+// Detecta la palabra clave de promoción del live (tolerando typos comunes) seguida
+// del monto, y DEVUELVE ESE MONTO: en los lives, quien transmite anuncia un precio
+// promocional distinto cada vez, y el cliente lo escribe al entrar al chat
+// ("PROMO 350"). Ese monto es el precio que se le confirma y que viaja al asesor en
+// la alerta de Telegram para que lo valide contra el comprobante.
+function detectPromoAmount(text: string): number | null {
+  if (!text) return null;
 
   const match = normalizeForMatch(text).match(PROMO_CANDIDATE_REGEX);
-  if (!match) return false;
+  if (!match) return null;
 
   const word = match[1];
-  return (
+  const isPromoWord =
     levenshteinDistance(word, "PROMO") <= PROMO_KEYWORD_MAX_DISTANCE ||
-    levenshteinDistance(word, "PROMOCION") <= PROMOCION_KEYWORD_MAX_DISTANCE
-  );
+    levenshteinDistance(word, "PROMOCION") <= PROMOCION_KEYWORD_MAX_DISTANCE;
+
+  if (!isPromoWord) return null;
+
+  const amount = Number(match[2]);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
 
 // --- Red de seguridad: elección de paquete -------------------------------
@@ -3195,15 +3246,6 @@ function detectExplicitIntent(text: string): DetectedIntent | null {
 
   return null;
 }
-
-// --- Toggle manual de la promo del live ---------------------------------
-// Valores fijos en código a propósito (sin env var, sin columna en BD): el
-// equipo los cambia a mano aquí antes/durante cada transmisión live.
-// PROMO_LIVE_ACTIVA: false desactiva la promo aunque se detecte la palabra clave.
-// PRECIO_PROMO_LIVE: monto oficial (Bs) cuando la promo está activa — ignora
-// el número que haya escrito el usuario.
-const PROMO_LIVE_ACTIVA = false;
-const PRECIO_PROMO_LIVE = 350;
 
 const EXPLICIT_PAYMENT_PHRASES =
   /\b(COMPROBANTE|YA PAGUE|REALICE EL PAGO|HICE EL PAGO|PAGO REALIZADO)\b/;
@@ -4066,23 +4108,24 @@ export async function POST(request: Request) {
     getConversationFlowState(lastMessage.conversationId),
   ]);
 
-  // Palabra clave de promoción del live (PROMO[monto]/PROMOCION[monto], con
-  // tolerancia a typos): primero se revisa el mensaje actual; si no hay
-  // match, se busca la mención más reciente dentro de la ventana de
-  // historial ya cargada (sin queries adicionales). El monto que escriba el
-  // usuario NUNCA define el precio final — solo dispara la detección; el
-  // precio oficial sale de PRECIO_PROMO_LIVE cuando PROMO_LIVE_ACTIVA = true.
-  let promoKeywordDetected = detectPromoKeyword(lastMessage.text);
-  if (!promoKeywordDetected) {
+  // Promo del live (PROMO[monto]/PROMOCION[monto], con tolerancia a typos): primero
+  // se revisa el mensaje actual; si no hay match, se busca la mención más reciente
+  // dentro de la ventana de historial ya cargada (sin queries adicionales). El monto
+  // anunciado en el live es el precio que se le confirma al cliente.
+  let promoAmount = detectPromoAmount(lastMessage.text);
+  if (promoAmount === null) {
     for (let i = history.length - 1; i >= 0; i--) {
       const candidate = history[i];
       if (candidate.role !== "user") continue;
-      if (detectPromoKeyword(candidate.content)) {
-        promoKeywordDetected = true;
+      const found = detectPromoAmount(candidate.content);
+      if (found !== null) {
+        promoAmount = found;
         break;
       }
     }
   }
+
+  const promoDetected = promoAmount !== null;
 
   const normalizedLastMessageText = normalizeForMatch(lastMessage.text);
   const hasExplicitPaymentPhrase = EXPLICIT_PAYMENT_PHRASES.test(normalizedLastMessageText);
@@ -4112,6 +4155,15 @@ export async function POST(request: Request) {
         : []),
     ].join("\n"),
   ];
+
+  // Promo del live: el cliente llega con la palabra clave y el monto anunciado en la
+  // transmisión. Ese monto ES el precio que se le confirma (lo fija quien hace el live,
+  // no el catálogo), y el equipo lo valida después contra el comprobante.
+  if (promoDetected) {
+    contextParts.push(
+      `PROMO DEL LIVE: este cliente viene de una transmisión en vivo y escribió la palabra clave de la promo con el monto anunciado: ${promoAmount} Bs. Ese es el precio promocional del CURSO para él. Confírmaselo usando ese número exacto (no des otro precio, no lo redondees, no menciones el precio normal del curso) y envíale el QR de pago marcando intents.payment_qr=true. Salúdalo reconociendo que viene del live, en 2 o 3 líneas como máximo.`,
+    );
+  }
 
   // Comprobante de pago — matriz de decisión:
   //
@@ -4166,6 +4218,13 @@ export async function POST(request: Request) {
     } else if (intakeFormSent) {
       contextParts.push(
         `El último mensaje del usuario es ${mediaLabel} y el formulario de datos para paquetes de producción YA fue completado antes en esta conversación (no hay QR porque los paquetes no usan QR). Trátalo como un posible comprobante de pago de paquete: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y en breve un asesor se comunicará contigo." NO vuelvas a pedir los datos del formulario — ya se recopilaron antes. No digas que el pago ya quedó confirmado — la validación la hace el equipo.`,
+      );
+    } else if (promoDetected) {
+      // Cliente del live: junto con la palabra clave manda la captura de la
+      // transmisión. Preguntarle "¿en qué te ayudo con esa imagen?" es justo lo que
+      // no debe pasar — el contexto ya dice de dónde viene y qué está pidiendo.
+      contextParts.push(
+        `El último mensaje del usuario es ${mediaLabel} y viene de la PROMO DEL LIVE (ver arriba): es la captura de la transmisión con la que acredita la promoción. NO le preguntes qué es esa imagen, para qué te la envía ni en qué puedes ayudarlo con ella, y NO la trates como comprobante de pago (no marques payment_confirmation). Simplemente continúa: confírmale el precio promocional de ${promoAmount} Bs y envíale el QR (intents.payment_qr=true).`,
       );
     } else {
       // Solo se llega aquí con una IMAGEN sin QR y sin intake: sin contexto de
@@ -4380,6 +4439,32 @@ export async function POST(request: Request) {
     });
   }
 
+  // Red de seguridad de la PROMO DEL LIVE: el cliente ya dio la palabra clave con el
+  // monto, así que el QR del curso debe salir sí o sí. El dedup de material evita que
+  // se reenvíe si ya lo recibió antes.
+  if (turn.should_reply && promoDetected && !turn.intents.payment_qr) {
+    turn.intents.payment_qr = true;
+    turn.intents.service_packages = false;
+
+    console.log("payment_qr forced by safety net (live promo detected)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      promoAmount,
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "payment_qr_forced_by_promo",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        promo_amount: promoAmount,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
   // Exclusividad cita ↔ leads: con una cita en curso y sin una señal explícita de
   // contratar paquetes, el bot no abre el flujo de leads aunque el LLM lo haya marcado.
   // Evita el doble aviso a Telegram (cita + lead) por el mismo cliente.
@@ -4518,6 +4603,26 @@ export async function POST(request: Request) {
   // de otro producto, temas internos de un trabajo en curso, charla personal). El bot NO
   // responde y NO notifica nada; además apaga la conversación para que la atienda un
   // humano. Tiene prioridad sobre todo lo demás y hace su propio return.
+  // La promo del live nunca es "fuera de tema": el cliente llega con una palabra clave
+  // corta y una captura, justo el patrón que el modelo podría confundir con un mensaje
+  // ajeno. Si el backend detectó la promo, manda el backend.
+  if (turn.off_topic && promoDetected) {
+    turn.off_topic = false;
+    turn.should_reply = true;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "off_topic_overridden_by_promo",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        promo_amount: promoAmount,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
   if (turn.off_topic) {
     // Salvaguarda contra falsos positivos del modelo: si la conversación sí venía siendo
     // comercial (flyer/QR/formulario ya enviados o palabras de algún flujo), se guarda
@@ -4822,6 +4927,23 @@ export async function POST(request: Request) {
     });
   }
 
+  // Guarda determinista: el video de ubicación es EXCLUSIVO del curso. Si el turno gira
+  // en torno a la oficina (visita, cita, horario de atención) y no se está hablando de
+  // cursos, no debe salir — son dos lugares distintos y confundirlos ya causó problemas.
+  if (intentsToSend.has("location_video")) {
+    const asksAboutOffice =
+      APPOINTMENT_KEYWORDS.test(normalizedLastMessageText) &&
+      !COURSE_KEYWORDS.test(normalizedLastMessageText);
+
+    if (asksAboutOffice || turn.appointment_scheduled) {
+      intentsToSend.delete("location_video");
+      console.warn("location_video suppressed: office flow, not a course location", {
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+      });
+    }
+  }
+
   // Guarda determinista: el agente de IA (LÍNEA C) es un embudo independiente de los
   // cursos y de los paquetes de video. Si el LLM marcó el flyer de IA junto a otro de
   // esos flyers, el texto de la respuesta corresponde a uno solo — enviar ambos
@@ -5037,6 +5159,11 @@ export async function POST(request: Request) {
           clientMessage: lastMessage.text,
           summary: turn.conversation_summary || "El cliente envió un comprobante de pago. Verificar.",
           contextLabel: paymentContextLabel,
+          // El monto de la promo lo escribe el propio cliente: se muestra para que el
+          // asesor lo contraste con el comprobante antes de confirmar el cupo.
+          note: promoDetected
+            ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
+            : undefined,
           verification:
             receiptCheck?.source === "vision" ? receiptCheck.reason : undefined,
         }),
