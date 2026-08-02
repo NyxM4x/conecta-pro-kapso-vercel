@@ -96,10 +96,13 @@ LÍNEA A — Cursos:
   Si te preguntan por la ubicación del curso, además del link marca intents.location_video = true
   para que el sistema envíe el video de cómo llegar. NUNCA escribas un link de Maps que no sea
   uno de esos dos, y nunca digas que el curso se dicta en la oficina.
-- PRECIOS (CONFIRMADOS, iguales para ambos cursos):
-  • 350 Bs — PREVENTA: pagando/reservando ANTES del día de CADA curso (antes del 2 de agosto para
-    Creación de Contenido; antes del 9 de agosto para Edición en CapCut Pro).
-  • 450 Bs — PRESENCIAL: pagando el mismo día del curso correspondiente.
+- PRECIOS (CONFIRMADOS, DISTINTOS por curso — NUNCA los mezcles):
+  • Curso de Creación de Contenido:
+    - 350 Bs — PREVENTA: pagando/reservando ANTES del 2 de agosto.
+    - 450 Bs — PRESENCIAL: pagando el mismo día del curso (2 de agosto).
+  • Curso de Edición en CapCut Pro:
+    - 450 Bs — PREVENTA: pagando/reservando ANTES del 9 de agosto.
+    - 550 Bs — PRESENCIAL: pagando el mismo día del curso (9 de agosto).
 - CONTENIDO del Curso de Creación de Contenido (temas CONFIRMADOS, puedes afirmarlos con
   seguridad):
   • ALGORITMO DE TIKTOK, incluido el algoritmo de TIKTOK LIVE (transmisiones en vivo): cómo
@@ -317,17 +320,21 @@ GUÍA POR SITUACIÓN
 
     NUNCA respondas que el curso no lo incluye o que no tiene "un enfoque específico" en eso.
     NO inventes módulos, duración por tema, certificados ni material de apoyo.
-  - Pregunta por PRECIO de cualquiera de los dos cursos (ej. "¿cuánto cuesta el curso?",
-    "¿precio del curso de creación de contenido?", "¿precio del de CapCut?"): responde 350 Bs en
-    preventa (pagando antes del día del curso correspondiente) y 450 Bs presencial (pagando el
-    mismo día del curso). Puedes sumar urgencia natural de preventa (ej. "aprovecha la preventa"),
-    sin inventar cupos ni decir que "el precio sube" (son dos modalidades de pago, no un cambio de
-    precio).
-  - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que el precio de preventa
-    (350 Bs) aplica realizando el pago antes del día del curso correspondiente (2 de agosto para
-    Creación de Contenido, 9 de agosto para Edición en CapCut Pro); el mismo día del curso el
-    valor es 450 Bs presencial. NUNCA inventes una fecha de corte específica ni menciones cantidad
-    de cupos.
+  - Pregunta por PRECIO de alguno de los dos cursos (ej. "¿cuánto cuesta el curso?",
+    "¿precio del curso de creación de contenido?", "¿precio del de CapCut?"): los precios son
+    DISTINTOS por curso, NUNCA los mezcles:
+    • Creación de Contenido: 350 Bs preventa (antes del 2 de agosto) / 450 Bs presencial (el 2 de
+      agosto).
+    • Edición en CapCut Pro: 450 Bs preventa (antes del 9 de agosto) / 550 Bs presencial (el 9 de
+      agosto).
+    Si la pregunta es general (no especifica cuál curso), da los dos precios diferenciados por
+    curso. Puedes sumar urgencia natural de preventa (ej. "aprovecha la preventa"), sin inventar
+    cupos ni decir que "el precio sube" (son dos modalidades de pago, no un cambio de precio).
+  - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que el precio de preventa aplica
+    realizando el pago antes del día del curso correspondiente (2 de agosto para Creación de
+    Contenido, 9 de agosto para Edición en CapCut Pro); el mismo día del curso aplica el precio
+    presencial de ese curso (450 Bs para Creación de Contenido, 550 Bs para Edición en CapCut Pro).
+    NUNCA inventes una fecha de corte específica ni menciones cantidad de cupos.
   - Pregunta por modalidad VIRTUAL/online (ej. "¿hay curso virtual?", "¿lo puedo tomar online?",
     "¿tienen versión virtual?"): aclara con amabilidad que el curso es ÚNICAMENTE PRESENCIAL y
     que NUNCA habrá una fecha en modalidad virtual, ni ahora ni en el futuro. No prometas avisar
@@ -361,7 +368,7 @@ GUÍA POR SITUACIÓN
     Cuando el contexto adicional del backend te indique "PROMO DEL LIVE" con un monto:
     - Ese monto ES el precio del curso para ese cliente. Confírmalo con el número EXACTO que te
       pasa el backend. NUNCA lo cambies, no lo redondees, y no menciones los precios normales
-      (350 preventa / 450 presencial) ni digas que el precio "en realidad" es otro.
+      de preventa/presencial de ningún curso ni digas que el precio "en realidad" es otro.
     - Marca intents.payment_qr = true para que el sistema le envíe el QR, y pídele que después
       mande el comprobante + nombre completo + número de celular.
     - Si mandó una imagen, es la captura del live: NO le preguntes qué es, para qué la envía ni
@@ -1982,47 +1989,6 @@ async function notifyLeadToTelegram(params: {
   return notified;
 }
 
-// Actualización de un lead YA notificado: el cliente pidió llamada primero y después
-// completó el formulario. Evita un segundo lead independiente en Telegram; se envía
-// una sola vez, protegida por su propio marcador [TELEGRAM_LEAD_UPDATE_SENT].
-async function notifyLeadUpdateToTelegram(params: {
-  history: HistoryMessage[];
-  phone: string;
-  contactName?: string | null;
-  conversationId?: string;
-  fallbackText?: string;
-  summary?: string;
-  hasAppointment?: boolean;
-}): Promise<boolean> {
-  const lastClientMessage =
-    params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
-    params.fallbackText;
-
-  const notified = await sendTelegramNotification(
-    buildTelegramBody({
-      headline: "🔄 <b>Lead actualizado — datos completos</b>",
-      phone: params.phone,
-      clientMessage: lastClientMessage,
-      summary: params.summary,
-      note: params.hasAppointment
-        ? "📅 El cliente ya tiene una cita agendada en oficina"
-        : undefined,
-    }),
-  );
-
-  if (notified) {
-    await saveOutboundMessage({
-      conversationId: params.conversationId,
-      phone: params.phone,
-      content:
-        "[TELEGRAM_LEAD_UPDATE_SENT] actualización de lead enviada a Telegram",
-      rawPayload: { type: "telegram_notification", event: "lead_update" },
-    });
-  }
-
-  return notified;
-}
-
 type AdvisorHandoffReason =
   | "undocumented_info"
   | "out_of_catalog"
@@ -3325,29 +3291,6 @@ async function hasTelegramLeadBeenSent(conversationId?: string): Promise<boolean
   return (data ?? []).length > 0;
 }
 
-async function hasTelegramLeadUpdateBeenSent(
-  conversationId?: string,
-): Promise<boolean> {
-  if (!conversationId) return false;
-
-  const supabase = getSupabaseClient();
-
-  const { data, error } = await supabase
-    .from("kapso_messages")
-    .select("id")
-    .eq("kapso_conversation_id", conversationId)
-    .eq("direction", "outbound")
-    .ilike("content", "[TELEGRAM_LEAD_UPDATE_SENT]%")
-    .limit(1);
-
-  if (error) {
-    console.error("supabase check telegram lead update sent failed", error);
-    return false;
-  }
-
-  return (data ?? []).length > 0;
-}
-
 async function hasTelegramPaymentBeenSent(conversationId?: string): Promise<boolean> {
   if (!conversationId) return false;
 
@@ -4088,7 +4031,6 @@ export async function POST(request: Request) {
     paymentAcknowledged,
     intakeFormSent,
     telegramLeadSent,
-    telegramLeadUpdateSent,
     telegramPaymentSent,
     telegramAppointmentSent,
     telegramHandoffSent,
@@ -4100,7 +4042,6 @@ export async function POST(request: Request) {
     hasPaymentBeenAcknowledged(lastMessage.conversationId),
     hasIntakeFormBeenSent(lastMessage.conversationId),
     hasTelegramLeadBeenSent(lastMessage.conversationId),
-    hasTelegramLeadUpdateBeenSent(lastMessage.conversationId),
     hasTelegramPaymentBeenSent(lastMessage.conversationId),
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
     hasTelegramHandoffBeenSent(lastMessage.conversationId),
@@ -4757,21 +4698,6 @@ export async function POST(request: Request) {
         flowState.flowStage,
       );
     } else if (
-      turn.lead_data_submitted &&
-      telegramLeadSent &&
-      !telegramLeadUpdateSent &&
-      conversationIsCommercial
-    ) {
-      await notifyLeadUpdateToTelegram({
-        history,
-        phone: lastMessage.from,
-        contactName: lastMessage.contactName,
-        conversationId: lastMessage.conversationId,
-        fallbackText: lastMessage.text,
-        summary: turn.conversation_summary,
-        hasAppointment: hasScheduledAppointment,
-      });
-    } else if (
       (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
       !conversationIsCommercial
     ) {
@@ -5114,24 +5040,6 @@ export async function POST(request: Request) {
         lastMessage.from,
         flowState.flowStage,
       );
-    } else if (
-      // El lead ya se notificó (típicamente por pedido de llamada) y recién ahora
-      // el cliente completó el formulario: se envía UNA sola actualización en vez
-      // de un segundo lead, para no duplicar en Telegram.
-      turn.lead_data_submitted &&
-      telegramLeadSent &&
-      !telegramLeadUpdateSent &&
-      conversationIsCommercial
-    ) {
-      await notifyLeadUpdateToTelegram({
-        history,
-        phone: lastMessage.from,
-        contactName: lastMessage.contactName,
-        conversationId: mediaConversationId,
-        fallbackText: lastMessage.text,
-        summary: turn.conversation_summary,
-        hasAppointment: hasScheduledAppointment,
-      });
     } else if (
       (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
       !conversationIsCommercial
