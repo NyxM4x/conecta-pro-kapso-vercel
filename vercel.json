@@ -1,3 +1,5 @@
 {
-  "crons": []
+  "crons": [
+    { "path": "/api/cron/unattended-leads", "schedule": "*/10 * * * *" }
+  ]
 }
