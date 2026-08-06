@@ -4,6 +4,7 @@ import { openai } from "@ai-sdk/openai";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { sendTelegramNotification, escapeTelegramHtml, buildTelegramBody } from "../../../../lib/telegram";
+import { renderCourseContext } from "../../../../lib/courses";
 
 type IncomingMessage = {
   from: string;
@@ -81,29 +82,21 @@ INFORMACIÓN CONOCIDA
 Conecta Pro tiene TRES líneas activas:
 
 LÍNEA A — Cursos:
-- Conecta Pro dictará dos cursos presenciales en Santa Cruz de la Sierra, Bolivia:
-  1. Curso de Creación de Contenido — FECHA CONFIRMADA: domingo 2 de agosto, 4:00 PM.
-     Ubicación del CURSO (link de Google Maps, texto plano, NUNCA markdown):
-     ${MAPS_CURSOS}
-  2. Curso de Edición en CapCut Pro — FECHA CONFIRMADA: domingo 9 de agosto, 4:00 PM.
-     Misma ubicación del CURSO (link de Google Maps, texto plano, NUNCA markdown):
-     ${MAPS_CURSOS}
-- El 2 de agosto a las 4:00 PM es un dato REAL y autorizado para el Curso de Creación de
-  Contenido. El 9 de agosto a las 4:00 PM es un dato REAL y autorizado para el Curso de Edición
-  en CapCut Pro. Ambos cursos son en la misma ubicación (link de Maps arriba).
+- Conecta Pro dicta cursos presenciales en Santa Cruz de la Sierra, Bolivia: Curso de Creación de
+  Contenido y Curso de Edición en CapCut Pro. Ubicación del CURSO (link de Google Maps, texto
+  plano, NUNCA markdown), la misma para ambos:
+  ${MAPS_CURSOS}
+- ⚠️ FECHAS Y PRECIOS: NUNCA los recites de memoria. Llegan en el contexto adicional de cada
+  mensaje bajo "CURSOS — FECHAS Y PRECIOS VIGENTES" — esa es la ÚNICA fuente de verdad, se
+  actualiza sola y solo incluye los cursos con fecha vigente. Si un curso no aparece ahí como
+  vigente, no lo anuncies, no des su fecha ni su precio, ni prometas una fecha que no esté
+  confirmada en ese bloque.
 - ⚠️ REGLA CRÍTICA — LOS CURSOS NO SON EN LA OFICINA: son DOS lugares distintos y NUNCA se
   intercambian. Para cualquier pregunta sobre dónde es un CURSO usa SIEMPRE ${MAPS_CURSOS}
   (jamás el link de la oficina). El link de la oficina es solo para visitas/citas con un asesor.
   Si te preguntan por la ubicación del curso, además del link marca intents.location_video = true
   para que el sistema envíe el video de cómo llegar. NUNCA escribas un link de Maps que no sea
   uno de esos dos, y nunca digas que el curso se dicta en la oficina.
-- PRECIOS (CONFIRMADOS, DISTINTOS por curso — NUNCA los mezcles):
-  • Curso de Creación de Contenido:
-    - 350 Bs — PREVENTA: pagando/reservando ANTES del 2 de agosto.
-    - 450 Bs — PRESENCIAL: pagando el mismo día del curso (2 de agosto).
-  • Curso de Edición en CapCut Pro:
-    - 450 Bs — PREVENTA: pagando/reservando ANTES del 9 de agosto.
-    - 550 Bs — PRESENCIAL: pagando el mismo día del curso (9 de agosto).
 - CONTENIDO del Curso de Creación de Contenido (temas CONFIRMADOS, puedes afirmarlos con
   seguridad):
   • ALGORITMO DE TIKTOK, incluido el algoritmo de TIKTOK LIVE (transmisiones en vivo): cómo
@@ -121,7 +114,7 @@ LÍNEA A — Cursos:
   En ese caso responde en POSITIVO y breve: que el curso está enfocado en creación de contenido y
   el algoritmo de TikTok, y que un asesor le confirma el detalle del temario. Ejemplo de tono:
 
-  "El curso se enfoca en creación de contenido y en el algoritmo de TikTok 🎯 Un asesor te confirma el detalle del temario, ¿te reservo el cupo mientras?"
+  "El curso se enfoca en creación de contenido y en el algoritmo de TikTok 🎯 Un asesor te confirma el detalle del temario. Si quieres asegurar tu cupo, te paso el QR de pago 😊"
 
   Marca advisor_handoff = true con advisor_handoff_reason = "course_topic_unconfirmed" para que el
   asesor confirme el detalle real (el bot SÍ responde en este mismo turno, no se queda en
@@ -132,9 +125,9 @@ LÍNEA A — Cursos:
   virtuales/online y NUNCA habrá una fecha en modalidad virtual, aunque el cliente insista o
   pregunte varias veces. Sé claro y amable al respecto, sin prometer una futura versión virtual.
 - Hay un QR de pago disponible (almacenado en el sistema) para que el cliente reserve/pague la
-  preventa del Curso de Creación de Contenido. El sistema lo envía automáticamente cuando
-  corresponde — nunca prometas "te lo mando ahora", usa frases neutras ("el QR está disponible
-  para reservar tu cupo").
+  preventa de cualquiera de los dos cursos (el que tenga fecha vigente). El sistema lo envía
+  automáticamente cuando corresponde — nunca prometas "te lo mando ahora", usa frases neutras
+  ("el QR está disponible para reservar tu cupo").
 - Este flujo activa intents.course_flyer = true para que el sistema envíe los flyers de ambos cursos.
 
 LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
@@ -309,19 +302,17 @@ GUÍA POR SITUACIÓN
   Aplica cuando el usuario pregunta por los cursos, por aprender edición, por capacitación,
   por las clases, etc. (ej. "¿qué cursos tienen?", "¿cuándo es el curso?", "¿tienen clases de CapCut?").
 
-  - Pregunta GENERAL de cursos (sin decir cuál): menciona los dos con su fecha. Ejemplo de
-    contenido (adapta el tono, mantén los datos):
-    • Curso de Creación de Contenido: domingo 2 de agosto, 4:00 PM. Ubicación del curso (link tal
-      cual, en su propia línea, texto plano): ${MAPS_CURSOS}
-    • Curso de Edición en CapCut Pro: domingo 9 de agosto, 4:00 PM. Misma ubicación del curso (link
-      tal cual, en su propia línea, texto plano): ${MAPS_CURSOS}
+  - Pregunta GENERAL de cursos (sin decir cuál): menciona los que tengan FECHA VIGENTE según el
+    contexto adicional ("CURSOS — FECHAS Y PRECIOS VIGENTES"), con su fecha tal cual viene ahí. Si
+    solo hay uno vigente, menciona solo ese (NO ofrezcas uno sin fecha vigente). Si no hay ninguno
+    vigente, usa el caso "NINGÚN CURSO CON FECHA VIGENTE" más abajo. Junto a la fecha, incluye:
+    Ubicación del curso (link tal cual, en su propia línea, texto plano): ${MAPS_CURSOS}
     Marca intents.location_video = true (el sistema envía el video de cómo llegar).
-  - Pregunta ESPECÍFICA por Creación de Contenido ("¿cuándo es el de creación de contenido?"):
-    da directo domingo 2 de agosto, 4:00 PM, con ${MAPS_CURSOS} en su propia línea (texto plano)
-    y marca intents.location_video = true.
-  - Pregunta ESPECÍFICA por Edición en CapCut ("¿cuándo es el de edición?"): da directo domingo
-    9 de agosto, 4:00 PM, con ${MAPS_CURSOS} en su propia línea (texto plano) y marca
-    intents.location_video = true.
+  - Pregunta ESPECÍFICA por Creación de Contenido o por Edición en CapCut: si ese curso está
+    vigente en el contexto adicional, da directo su fecha (tal cual viene ahí) con ${MAPS_CURSOS}
+    en su propia línea (texto plano) y marca intents.location_video = true. Si NO está vigente
+    (no aparece en la lista de cursos vigentes), usa el flujo "CLIENTE MENCIONA UN CURSO CUYA
+    FECHA YA PASÓ" más abajo — NUNCA inventes ni repitas una fecha vieja.
   - Pregunta POR LA UBICACIÓN DEL CURSO ("¿dónde es el curso?", "¿cómo llego?", "¿en qué dirección
     es?", "pásame la ubicación del curso"): responde con ${MAPS_CURSOS} en su propia línea y marca
     intents.location_video = true. NUNCA respondas con el link ni con la dirección de la oficina, y
@@ -335,21 +326,18 @@ GUÍA POR SITUACIÓN
 
     NUNCA respondas que el curso no lo incluye o que no tiene "un enfoque específico" en eso.
     NO inventes módulos, duración por tema, certificados ni material de apoyo.
-  - Pregunta por PRECIO de alguno de los dos cursos (ej. "¿cuánto cuesta el curso?",
-    "¿precio del curso de creación de contenido?", "¿precio del de CapCut?"): los precios son
-    DISTINTOS por curso, NUNCA los mezcles:
-    • Creación de Contenido: 350 Bs preventa (antes del 2 de agosto) / 450 Bs presencial (el 2 de
-      agosto).
-    • Edición en CapCut Pro: 450 Bs preventa (antes del 9 de agosto) / 550 Bs presencial (el 9 de
-      agosto).
-    Si la pregunta es general (no especifica cuál curso), da los dos precios diferenciados por
-    curso. Puedes sumar urgencia natural de preventa (ej. "aprovecha la preventa"), sin inventar
-    cupos ni decir que "el precio sube" (son dos modalidades de pago, no un cambio de precio).
+  - Pregunta por PRECIO de alguno de los cursos (ej. "¿cuánto cuesta el curso?",
+    "¿precio del curso de creación de contenido?", "¿precio del de CapCut?"): usa SIEMPRE los
+    precios del curso vigente que vienen en el contexto adicional (preventa y presencial), NUNCA
+    los recites de memoria. Si el curso preguntado no está vigente, usa el flujo "CLIENTE MENCIONA
+    UN CURSO CUYA FECHA YA PASÓ". Si la pregunta es general (no especifica cuál curso) y hay más de
+    un curso vigente, da los precios diferenciados por curso. Puedes sumar urgencia natural de
+    preventa (ej. "aprovecha la preventa"), sin inventar cupos ni decir que "el precio sube" (son
+    dos modalidades de pago, no un cambio de precio).
   - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que el precio de preventa aplica
-    realizando el pago antes del día del curso correspondiente (2 de agosto para Creación de
-    Contenido, 9 de agosto para Edición en CapCut Pro); el mismo día del curso aplica el precio
-    presencial de ese curso (450 Bs para Creación de Contenido, 550 Bs para Edición en CapCut Pro).
-    NUNCA inventes una fecha de corte específica ni menciones cantidad de cupos.
+    realizando el pago antes del día del curso (la fecha exacta viene en el contexto adicional);
+    el mismo día del curso aplica el precio presencial de ese curso. NUNCA inventes una fecha de
+    corte distinta a la fecha del curso ni menciones cantidad de cupos.
   - Pregunta por modalidad VIRTUAL/online (ej. "¿hay curso virtual?", "¿lo puedo tomar online?",
     "¿tienen versión virtual?"): aclara con amabilidad que el curso es ÚNICAMENTE PRESENCIAL y
     que NUNCA habrá una fecha en modalidad virtual, ni ahora ni en el futuro. No prometas avisar
@@ -408,6 +396,28 @@ GUÍA POR SITUACIÓN
     advisor_handoff = true con advisor_handoff_reason = "refund_old_date". Esto aplica solo a
     quienes pagaron para el 26 de julio; si el reclamo es sobre la nueva fecha (2 o 9 de agosto) o
     no menciona pago previo, no es este caso.
+
+  ▸ CLIENTE MENCIONA UN CURSO CUYA FECHA YA PASÓ
+    Aplica cuando el cliente habla de un curso que NO aparece en la lista de "vigentes" del
+    contexto adicional (aparece en la lista de "SIN fecha vigente" o no está en ninguna lista), o
+    dice frases como "ya pasó", "se me pasó", "me lo perdí", "llegué tarde", "en ese estaba
+    interesado" (hablando en pasado de un curso), sobre un curso que ya se dictó.
+
+    - NUNCA repitas ni inventes la fecha vieja de ese curso.
+    - NUNCA envíes el formulario de leads de paquetes (📌 Nombre, empresa, rubro...) — ese
+      formulario es EXCLUSIVO de paquetes de producción (FLUJO B), jamás de cursos.
+    - NO marques advisor_handoff ni generes ningún aviso a un asesor por este caso — solo responde.
+
+    Si el contexto adicional tiene OTRO curso con fecha vigente:
+    reconoce con empatía que esa fecha ya pasó y ofrece el curso vigente con su fecha. Ejemplo de
+    tono (adapta el nombre y la fecha al que sí esté vigente):
+
+    "La fecha del [curso mencionado] ya pasó 😔 Pero tenemos el [curso vigente] el [fecha del contexto] — ¿te cuento más?"
+
+    Si el contexto adicional indica que NINGÚN curso tiene fecha vigente:
+    responde con este tono:
+
+    "Por ahora no tenemos una fecha oficial confirmada para ese curso 😊 Puedes seguirnos como ConectaPro o @marketero7 en TikTok, ahí anunciamos las nuevas fechas apenas salen."
 
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (consulta general)
   Aplica cuando preguntan por servicios, grabación, edición para su negocio, paquetes, planes,
@@ -803,6 +813,18 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   todavía, preguntas informativas sobre métodos de pago ("¿aceptan QR?", "¿cómo funciona la
   preventa?"), y SIEMPRE false para paquetes de producción (esos usan el formulario de leads, no
   el QR).
+
+- REGLA ABSOLUTA DEL CUPO DE UN CURSO — el cupo se reserva ÚNICA Y EXCLUSIVAMENTE cuando el
+  cliente paga y envía el comprobante. NUNCA, bajo ninguna circunstancia, digas ni des a entender
+  que el cupo "quedó reservado", "está reservado", "ya lo aparté", "te lo guardo", "quedaste
+  inscrito" o "estás registrado" ANTES de haber recibido el comprobante. Tampoco OFREZCAS
+  reservar ("¿te reservo el cupo?", "¿te aparto el lugar?"): genera una promesa que el sistema no
+  puede cumplir. Si el cliente muestra intención de inscribirse a un curso, el ÚNICO camino es:
+  afirmar el siguiente paso + marcar intents.payment_qr = true + pedir que, tras pagar, envíe el
+  comprobante + nombre completo + número de celular.
+  Incluso DESPUÉS de recibir el comprobante, el cupo sigue SIN estar confirmado: el equipo valida
+  el pago primero. La única frase válida ahí es que el equipo lo verifica y luego confirma (ver
+  la plantilla de agradecimiento del comprobante, más abajo).
 - intents.service_packages: true cuando pregunta por servicios, paquetes de producción, grabación,
   edición para su negocio, dron, o cantidad no estándar de videos.
   FALSE si el flujo es exclusivamente de cursos.
@@ -977,6 +999,57 @@ const LEAD_INTAKE_FORM = `¡Con gusto! Para coordinar todo, necesito algunos dat
 // determinista cuando el LLM intenta mandar el formulario con una cita ya en curso.
 // Sin día/hora concretos: el código no los conoce, y el asesor los confirma en la visita.
 const APPOINTMENT_OVERLAP_REPLY = `¡Perfecto! Ya tenemos tu cita agendada 📅 Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece? 😊`;
+
+// Respuesta de reemplazo cuando la red de seguridad bloquea el formulario de leads de
+// paquetes en una conversación que era de cursos (ver detectCourseContext). El cliente
+// se queda con una pregunta abierta en vez del formulario de empresa/rubro/Instagram,
+// que no aplica a cursos.
+const COURSE_FORM_BLOCKED_REPLY = `Para el curso no necesito esos datos 😊 Cuéntame, ¿qué te gustaría saber? (fecha, precio o cómo reservar tu cupo)`;
+
+// Afirmaciones de cupo/lugar reservado/confirmado/apartado/guardado. Solo son
+// legítimas DESPUÉS de un comprobante recibido; antes, son una promesa que el
+// negocio no puede cumplir (el cupo se reserva única y exclusivamente con el pago).
+// Sobre normalizeForMatch (sin tildes, mayúsculas). Tolera hasta 3 palabras de por
+// medio ("cupo YA FUE reservado", "cupo ya esta confirmado") para no depender de la
+// redacción exacta del LLM.
+const RESERVED_SPOT_STATE_REGEX =
+  /\b(CUPO|LUGAR)\b(?:\s+\S+){0,3}?\s+(RESERVADO|CONFIRMADO|APARTADO|GUARDADO|ASEGURADO)\b/;
+
+// El asistente afirma haber reservado/apartado/guardado el cupo/lugar por el cliente
+// ("te reservo el cupo", "te reservamos tu lugar").
+const RESERVED_SPOT_VERB_REGEX =
+  /\bTE\s+(RESERVE|RESERVO|RESERVAMOS|APARTE|APARTO|APARTAMOS|GUARDE|GUARDO|GUARDAMOS)\b(?:\s+\S+){0,3}?\s+(CUPO|LUGAR)\b/;
+
+// El cliente queda inscrito/registrado sin haber pagado.
+const ENROLLED_CLAIM_REGEX = /\b(QUEDASTE|QUEDAS|ESTAS)\s+(INSCRITO|REGISTRADO)\b/;
+
+// Ofertas de reservar SIN pago ("¿te reservo el cupo?", "¿quieres que te aparte el
+// lugar?"): el bot no debe ofrecer algo que solo el pago habilita.
+const RESERVATION_OFFER_REGEX =
+  /\bTE\s+(RESERVO|APARTO|GUARDO)\b(?:\s+\S+){0,3}?\s+(CUPO|LUGAR)\b|\bQUIERES\s+QUE\s+TE\s+(RESERVE|APARTE|GUARDE)\b/;
+
+function replyClaimsReservedSpot(reply: string): boolean {
+  if (!reply) return false;
+  const normalized = normalizeForMatch(reply);
+  return (
+    RESERVED_SPOT_STATE_REGEX.test(normalized) ||
+    RESERVED_SPOT_VERB_REGEX.test(normalized) ||
+    ENROLLED_CLAIM_REGEX.test(normalized) ||
+    RESERVATION_OFFER_REGEX.test(normalized)
+  );
+}
+
+// Reemplazo cuando el bot afirma/ofrece un cupo sin comprobante recibido: reconduce
+// SIEMPRE al pago. El QR se fuerza en el mismo turno (intents.payment_qr = true), así
+// que este texto acompaña una imagen que sí llega.
+const RESERVATION_REQUIRES_PAYMENT_REPLY = `¡Genial que quieras sumarte! 🙌 El cupo se asegura con el pago, así que te paso el QR ahora mismo.
+
+Cuando completes la transferencia, envíame por este chat:
+📌 La foto o PDF de tu comprobante
+📌 Tu nombre completo (verifica que esté bien escrito)
+📌 Tu número de celular
+
+Con eso el equipo valida el pago y te confirmamos tu cupo 😊`;
 
 // Texto EXACTO del Flujo B — consulta general de paquetes (mismo contenido que el
 // SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual
@@ -1316,6 +1389,26 @@ async function extractIncomingFromEvent(
               phone: humanPhone,
               content: "[INTAKE_FORM_SENT] formulario de datos enviado manualmente (business_app)",
               rawPayload: { type: "intake_form", source: "business_app_manual" },
+            });
+          }
+
+          // Un humano mandó una imagen/documento a mano (ej. el QR de pago, cuando el
+          // envío automático falló). No sabemos CUÁL archivo mandó, así que se marca
+          // un intent propio en vez de "payment_qr" — mezclarlos contaminaría la
+          // matriz de decisión de comprobantes. Solo habilita que la siguiente imagen
+          // del cliente se verifique con visión (ver manualHumanMediaSent más abajo).
+          const humanMessageType = event.message?.type;
+          const humanIsImage =
+            humanMessageType === "image" || Boolean(event.message?.image);
+          const humanIsDocument =
+            humanMessageType === "document" || Boolean(event.message?.document);
+
+          if (humanIsImage || humanIsDocument) {
+            await saveOutboundMessage({
+              conversationId,
+              phone: humanPhone,
+              content: "[MEDIA_SENT:manual_human] material enviado manualmente (business_app)",
+              rawPayload: { type: "manual_media", source: "business_app_manual", message_id: messageId },
             });
           }
         } catch (saveError) {
@@ -1933,6 +2026,46 @@ async function notifyLeadToTelegram(params: {
         kind: params.kind ?? "intake",
         trigger: params.trigger ?? "intake_form",
       },
+    });
+  }
+
+  return notified;
+}
+
+// Notifica un comprobante de pago al grupo de Telegram y guarda el marcador
+// [TELEGRAM_PAYMENT_SENT:<messageId>] para deduplicar (ver hasTelegramPaymentBeenSent
+// — ventana de 6h, no bloqueo permanente). Centralizada para invocarse desde un único
+// punto determinista apenas se detecta el comprobante, ANTES de cualquier return
+// temprano (debounce, off_topic, fallo de envío…) — la alerta no debe depender de que
+// el bot llegue a responder por WhatsApp.
+async function notifyPaymentToTelegram(params: {
+  phone: string;
+  conversationId?: string;
+  messageId?: string;
+  clientMessage: string;
+  summary?: string;
+  contextLabel: string;
+  note?: string;
+  verification?: string;
+}): Promise<boolean> {
+  const notified = await sendTelegramNotification(
+    buildTelegramBody({
+      headline: "💰 <b>Pago confirmado — Conecta Pro</b>",
+      phone: params.phone,
+      clientMessage: params.clientMessage,
+      summary: params.summary || "El cliente envió un comprobante de pago. Verificar.",
+      contextLabel: params.contextLabel,
+      note: params.note,
+      verification: params.verification,
+    }),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: `[TELEGRAM_PAYMENT_SENT:${params.messageId ?? "unknown"}] notificación de pago enviada a Telegram`,
+      rawPayload: { type: "telegram_notification", event: "payment" },
     });
   }
 
@@ -2960,6 +3093,30 @@ function detectPackagesPresented(
     });
 }
 
+// ¿La conversación está anclada en la línea de CURSOS? Red de seguridad determinista
+// contra el bug real: el LLM llegó a mandar el formulario de leads de paquetes (📌
+// Nombre, empresa, rubro...) a un cliente que solo había hablado de cursos, porque leyó
+// "en ese estaba interesado" (sobre un curso) como si eligiera un paquete. El prompt ya
+// aclara que el formulario es exclusivo de paquetes, pero esa regla es interpretable —
+// esta función es la guarda dura: si la conversación es de cursos y NUNCA se presentaron
+// paquetes, el formulario no debe salir pase lo que pase el LLM.
+function detectCourseContext(
+  history: HistoryMessage[],
+  flyerCourseAlreadySent: boolean,
+  packagesPresented: boolean,
+): boolean {
+  if (packagesPresented) return false;
+  if (flyerCourseAlreadySent) return true;
+
+  return history
+    .filter((message) => message.role === "assistant")
+    .some((message) => {
+      const normalized = normalizeForMatch(message.content);
+      if (normalized.includes("MEDIA_SENT:COURSE_FLYER")) return true;
+      return COURSE_KEYWORDS.test(normalized);
+    });
+}
+
 // ¿La conversación está en el flujo de CITA en oficina? Se mira si el asistente ya
 // propuso agendar o pidió confirmar la visita, buscando las frases fijas del prompt en
 // sus últimos mensajes. Sirve para que la confirmación de la cita ("sí", "confirmar",
@@ -2984,6 +3141,88 @@ function detectAppointmentPending(history: HistoryMessage[]): boolean {
         normalized.includes(marker),
       );
     });
+}
+
+// Frases fijas con las que el asistente OFRECE el pago/reserva de un curso. Si
+// aparecen en sus últimos mensajes, un afirmativo seco del cliente ("sí", "dale")
+// significa "quiero pagar" — mismo patrón que APPOINTMENT_PROMPT_MARKERS. Es la red
+// de seguridad para el bug real: el bot preguntó "¿te reservo el cupo mientras?", el
+// cliente dijo "sí", y el LLM no marcó intents.payment_qr porque los ejemplos del
+// prompt son mensajes explícitos del cliente, no una respuesta afirmativa a su propia
+// oferta.
+const PAYMENT_OFFER_PROMPT_MARKERS = [
+  "TE PASO EL QR",
+  "TE ENVIO EL QR",
+  "TE MANDO EL QR",
+  "QR DE PAGO",
+  "ASEGURAR TU CUPO",
+  "RESERVAR TU CUPO",
+  "TE RESERVO EL CUPO",
+  "APARTAR TU CUPO",
+  "QUIERES INSCRIBIRTE",
+  "QUIERES SUMARTE",
+  "PREVENTA",
+];
+
+function detectPaymentOfferPending(history: HistoryMessage[]): boolean {
+  return history
+    .filter((message) => message.role === "assistant")
+    .slice(-3)
+    .some((message) => {
+      const normalized = normalizeForMatch(message.content);
+      return PAYMENT_OFFER_PROMPT_MARKERS.some((marker) =>
+        normalized.includes(marker),
+      );
+    });
+}
+
+// Intención explícita de pagar/reservar un curso, autosuficiente (no necesita
+// contexto previo del asistente).
+const EXPLICIT_ENROLL_INTENT_REGEX =
+  /\b(QUIERO RESERVAR|QUIERO EL CUPO|QUIERO MI CUPO|RESERVAR MI CUPO|RESERVAR EL CUPO|APARTAR MI LUGAR|APARTAR EL LUGAR|COMO APARTO|COMO RESERVO|QUIERO INSCRIBIRME|ME INSCRIBO|QUIERO PAGAR|COMO PAGO|DONDE PAGO|PASAME EL QR|MANDAME EL QR|ENVIAME EL QR|QUIERO LA PREVENTA|QUIERO ANOTARME|ANOTAME)\b/;
+
+// Red de seguridad determinista para el QR de pago de cursos, análoga a
+// shouldForceIntakeForm para paquetes. Cubre dos casos: (1) el cliente pide pagar o
+// reservar de forma explícita, y (2) responde afirmativo a una oferta de pago que el
+// propio bot acaba de hacer, en contexto de curso — el caso real del bug.
+//
+// IMPORTANTE: la intención explícita se evalúa ANTES de cualquier guarda de pregunta.
+// PRICE_QUESTION_REGEX incluye un "?" suelto y bloquearía "¿cómo pago?" o "¿me pasas
+// el QR?", que son intenciones reales de inscripción, no preguntas informativas.
+function shouldForcePaymentQr(params: {
+  text: string;
+  history: HistoryMessage[];
+  courseContext: boolean;
+  packagesPresented: boolean;
+  qrAlreadySent: boolean;
+  appointmentContext: boolean;
+}): boolean {
+  // payment_qr es EXCLUSIVO de cursos (ver prompt). Si la conversación ya presentó
+  // paquetes de producción, NUNCA se fuerza el QR — un "cómo pago" ahí se refiere al
+  // formulario/asesor de paquetes, no a un curso. Evita forzar el QR por error en
+  // una conversación de paquetes solo porque el cliente usó una palabra genérica de
+  // pago ("quiero pagar", "cómo pago").
+  if (
+    params.qrAlreadySent ||
+    params.appointmentContext ||
+    params.packagesPresented ||
+    !params.text
+  ) {
+    return false;
+  }
+
+  const normalized = normalizeForMatch(params.text);
+
+  // packagesPresented ya se descartó arriba, así que una intención explícita de
+  // pagar/reservar aquí solo puede referirse a un curso (paquetes usa otro
+  // vocabulario: "contratar", "el paquete de X videos").
+  if (EXPLICIT_ENROLL_INTENT_REGEX.test(normalized)) return true;
+
+  // Afirmativo seco tras una oferta de pago del asistente, en conversación de curso.
+  if (!params.courseContext && !COURSE_KEYWORDS.test(normalized)) return false;
+  if (!detectPaymentOfferPending(params.history)) return false;
+
+  return AFFIRMATIVE_CHOICE_REGEX.test(normalized);
 }
 
 // Señal INEQUÍVOCA de que el cliente quiere contratar paquetes de producción. Es lo
@@ -3210,6 +3449,43 @@ async function hasIntakeFormBeenSent(conversationId?: string): Promise<boolean> 
   return (data ?? []).length > 0;
 }
 
+// ¿Un humano mandó a mano una imagen/documento desde WhatsApp Business en esta
+// conversación (ej. el QR de pago, cuando el envío automático falló o no se marcó)?
+// Habilita que la siguiente imagen del cliente se verifique con visión aunque
+// mediaStatus.payment_qr siga en false — ver imageReceiptEligible.
+async function hasManualHumanMediaBeenSent(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "[MEDIA_SENT:manual_human]%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check manual human media sent failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "supabase_manual_human_media_check_failed",
+      conversationId,
+      errorMessage: error.message,
+      metadata: {
+        code: error.code,
+        details: error.details,
+      },
+    });
+
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
 async function hasTelegramLeadBeenSent(conversationId?: string): Promise<boolean> {
   if (!conversationId) return false;
 
@@ -3241,25 +3517,52 @@ async function hasTelegramLeadBeenSent(conversationId?: string): Promise<boolean
   return (data ?? []).length > 0;
 }
 
-async function hasTelegramPaymentBeenSent(conversationId?: string): Promise<boolean> {
-  if (!conversationId) return false;
+// Ventana de dedup: 6 h. Antes el marcador [TELEGRAM_PAYMENT_SENT] bloqueaba para
+// SIEMPRE cualquier pago posterior de la misma conversación (un cliente que pagara
+// un segundo curso meses después nunca habría alertado). Con la ventana, 3 fotos
+// del MISMO comprobante mandadas seguidas generan una sola alerta, pero un pago
+// real posterior (fuera de la ventana) sí alerta.
+const PAYMENT_ALERT_DEDUP_WINDOW_MINUTES = 360;
+
+async function hasTelegramPaymentBeenSent(params: {
+  conversationId?: string;
+  messageId?: string;
+}): Promise<boolean> {
+  if (!params.conversationId) return false;
 
   const supabase = getSupabaseClient();
 
   const { data, error } = await supabase
     .from("kapso_messages")
-    .select("id")
-    .eq("kapso_conversation_id", conversationId)
+    .select("content, created_at")
+    .eq("kapso_conversation_id", params.conversationId)
     .eq("direction", "outbound")
-    .ilike("content", "[TELEGRAM_PAYMENT_SENT]%")
-    .limit(1);
+    .ilike("content", "[TELEGRAM_PAYMENT_SENT%")
+    .order("created_at", { ascending: false })
+    .limit(5);
 
   if (error) {
     console.error("supabase check telegram payment sent failed", error);
     return false;
   }
 
-  return (data ?? []).length > 0;
+  const rows = data ?? [];
+  if (rows.length === 0) return false;
+
+  // Mismo mensaje ya notificado (reintento/reproceso del webhook): siempre dedup,
+  // sin importar cuánto tiempo pasó.
+  if (params.messageId) {
+    const sameMessage = rows.some((row) =>
+      String(row.content ?? "").includes(`:${params.messageId}]`),
+    );
+    if (sameMessage) return true;
+  }
+
+  const mostRecent = rows[0];
+  const ageMinutes =
+    (Date.now() - new Date(mostRecent.created_at as string).getTime()) / 60_000;
+
+  return ageMinutes < PAYMENT_ALERT_DEDUP_WINDOW_MINUTES;
 }
 
 async function hasTelegramAppointmentBeenSent(conversationId?: string): Promise<boolean> {
@@ -3462,13 +3765,24 @@ async function sendKapsoVideo(params: {
   }
 }
 
+// Resultado discriminado: antes `sendMediaForIntent` devolvía `boolean`, indistinguible
+// entre "ya se había enviado" (benigno) y "no hay asset activo" / "falló Kapso"
+// (crítico e invisible — el cliente nunca recibe el QR y nadie se entera). Ver
+// notifyMediaFailureToTelegram, que usa este resultado para avisar solo en los casos
+// críticos.
+type MediaSendResult =
+  | { status: "sent" }
+  | { status: "skipped_already_sent" }
+  | { status: "no_assets" }
+  | { status: "send_failed"; error: string };
+
 async function sendMediaForIntent(params: {
   intent: MediaIntent;
   conversationId?: string;
   phone: string;
   phoneNumberId: string;
   force?: boolean;
-}): Promise<boolean> {
+}): Promise<MediaSendResult> {
   if (!params.force) {
     const alreadySent = await hasMediaIntentBeenSent(params.phone, params.intent);
     if (alreadySent) {
@@ -3477,7 +3791,7 @@ async function sendMediaForIntent(params: {
         params.intent,
         maskPhone(params.phone),
       );
-      return false;
+      return { status: "skipped_already_sent" };
     }
   }
 
@@ -3485,10 +3799,11 @@ async function sendMediaForIntent(params: {
 
   if (assets.length === 0) {
     console.log("no active media assets found for intent", params.intent);
-    return false;
+    return { status: "no_assets" };
   }
 
   let sentAny = false;
+  let lastError = "unknown error";
 
   for (const asset of assets) {
     try {
@@ -3523,6 +3838,7 @@ async function sendMediaForIntent(params: {
       sentAny = true;
       console.log("Kapso media sent successfully", params.intent, asset.title);
     } catch (error) {
+      lastError = getErrorMessage(error);
       console.error("kapso media send/save failed", params.intent, asset.title, error);
 
       await logSystemEvent({
@@ -3530,7 +3846,7 @@ async function sendMediaForIntent(params: {
         eventType: "media_send_failed",
         conversationId: params.conversationId,
         contactPhone: params.phone,
-        errorMessage: getErrorMessage(error),
+        errorMessage: lastError,
         metadata: {
           intent: params.intent,
           asset_title: asset.title,
@@ -3540,7 +3856,73 @@ async function sendMediaForIntent(params: {
     }
   }
 
-  return sentAny;
+  return sentAny ? { status: "sent" } : { status: "send_failed", error: lastError };
+}
+
+// ¿Ya se avisó a Telegram que el envío automático de este intent falló en esta
+// conversación? Evita repetir la alerta si el cliente insiste varias veces mientras
+// el asset sigue inactivo o Kapso sigue fallando.
+async function hasMediaFailureAlertBeenSent(
+  conversationId: string | undefined,
+  intent: MediaIntent,
+): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", `[TELEGRAM_MEDIA_FAILURE_SENT:${intent}]%`)
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check media failure alert sent failed", error);
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
+
+// Avisa a Telegram cuando el envío AUTOMÁTICO de un material crítico (QR de pago,
+// flyer de curso) falla, para que un humano lo mande a mano desde Kapso. Antes esto
+// era invisible: el cliente nunca recibía el QR y nadie se enteraba — es la otra
+// mitad del incidente real (paso 2 registra cuando un humano lo manda a mano; este
+// paso avisa para que lo haga).
+const MEDIA_FAILURE_ALERT_INTENTS: MediaIntent[] = ["payment_qr", "course_flyer"];
+
+async function notifyMediaFailureToTelegram(params: {
+  intent: MediaIntent;
+  phone: string;
+  conversationId?: string;
+  reason: "no_assets" | "send_failed";
+}): Promise<void> {
+  if (!MEDIA_FAILURE_ALERT_INTENTS.includes(params.intent)) return;
+  if (await hasMediaFailureAlertBeenSent(params.conversationId, params.intent)) return;
+
+  const reasonLabel =
+    params.reason === "no_assets"
+      ? "no hay ningún material activo configurado para este intent"
+      : "el envío por Kapso falló";
+
+  const notified = await sendTelegramNotification(
+    buildTelegramBody({
+      headline: `⚠️ <b>Material NO enviado — Conecta Pro</b>\n🏷️ Intent: ${params.intent}`,
+      phone: params.phone,
+      note: `El sistema no pudo enviar "${params.intent}" a este cliente automáticamente (${reasonLabel}). Envíalo a mano desde Kapso lo antes posible.`,
+    }),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: `[TELEGRAM_MEDIA_FAILURE_SENT:${params.intent}] alerta de fallo de envío enviada a Telegram`,
+      rawPayload: { type: "telegram_notification", event: "media_failure", intent: params.intent, reason: params.reason },
+    });
+  }
 }
 
 export async function POST(request: Request) {
@@ -3821,17 +4203,26 @@ export async function POST(request: Request) {
     // 100% determinista: no llama a generateAssistantTurn, cero costo extra de OpenAI.
     let paymentNotifiedWhilePaused = false;
     try {
-      const telegramPaymentSentPaused = await hasTelegramPaymentBeenSent(
-        lastMessage.conversationId,
-      );
+      const telegramPaymentSentPaused = await hasTelegramPaymentBeenSent({
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+      });
 
       if (!telegramPaymentSentPaused) {
-        const mediaStatusPaused = await getMediaSentStatus(lastMessage.from);
+        const [mediaStatusPaused, manualHumanMediaSentPaused] = await Promise.all([
+          getMediaSentStatus(lastMessage.from),
+          hasManualHumanMediaBeenSent(lastMessage.conversationId),
+        ]);
         const normalizedPausedText = normalizeForMatch(lastMessage.text);
         const hasExplicitPaymentPhrasePaused =
           EXPLICIT_PAYMENT_PHRASES.test(normalizedPausedText);
+        // manualHumanMediaSentPaused cubre el caso en que un humano ya tomó el chat
+        // (por eso el bot está pausado) y le mandó el QR a mano — sin esto, el
+        // comprobante que llegue después nunca calificaría.
         const hasPaymentContextPaused =
-          mediaStatusPaused.payment_qr || intakeFormSentPaused;
+          mediaStatusPaused.payment_qr ||
+          intakeFormSentPaused ||
+          manualHumanMediaSentPaused;
 
         // Misma verificación por visión que en la rama normal: una imagen solo
         // cuenta como comprobante si de verdad se ve una transacción.
@@ -3847,43 +4238,36 @@ export async function POST(request: Request) {
             : null;
 
         // Misma matriz que en la rama normal: la imagen la decide la visión; el
-        // PDF solo cuenta si el QR se envió antes.
+        // PDF solo cuenta si alguien (bot o humano) ya mandó el QR antes.
         const isPlausibleReceiptPaused =
           (Boolean(lastMessage.isImage) &&
             hasPaymentContextPaused &&
             (receiptCheckPaused === null || receiptCheckPaused.isReceipt)) ||
-          (Boolean(lastMessage.isDocument) && mediaStatusPaused.payment_qr);
+          (Boolean(lastMessage.isDocument) &&
+            (mediaStatusPaused.payment_qr || manualHumanMediaSentPaused));
 
         if (isPlausibleReceiptPaused || hasExplicitPaymentPhrasePaused) {
           const paymentContextLabelPaused = mediaStatusPaused.payment_qr
             ? "Curso (Creación de Contenido o Edición CapCut — revisar chat)"
-            : intakeFormSentPaused
-              ? "Paquetes de producción"
-              : "Sin contexto claro — revisar chat";
+            : manualHumanMediaSentPaused
+              ? "Curso (QR enviado manualmente — revisar chat)"
+              : intakeFormSentPaused
+                ? "Paquetes de producción"
+                : "Sin contexto claro — revisar chat";
 
-          paymentNotifiedWhilePaused = await sendTelegramNotification(
-            buildTelegramBody({
-              headline: "💰 <b>Pago confirmado — Conecta Pro</b>",
-              phone: lastMessage.from,
-              clientMessage: lastMessage.text,
-              summary:
-                "El cliente envió un comprobante de pago mientras el chat estaba en atención humana.",
-              contextLabel: paymentContextLabelPaused,
-              verification:
-                receiptCheckPaused?.source === "vision"
-                  ? receiptCheckPaused.reason
-                  : undefined,
-            }),
-          );
-
-          if (paymentNotifiedWhilePaused) {
-            await saveOutboundMessage({
-              conversationId: lastMessage.conversationId,
-              phone: lastMessage.from,
-              content: "[TELEGRAM_PAYMENT_SENT] notificación de pago enviada a Telegram",
-              rawPayload: { type: "telegram_notification", event: "payment" },
-            });
-          }
+          paymentNotifiedWhilePaused = await notifyPaymentToTelegram({
+            phone: lastMessage.from,
+            conversationId: lastMessage.conversationId,
+            messageId: lastMessage.messageId,
+            clientMessage: lastMessage.text,
+            summary:
+              "El cliente envió un comprobante de pago mientras el chat estaba en atención humana.",
+            contextLabel: paymentContextLabelPaused,
+            verification:
+              receiptCheckPaused?.source === "vision"
+                ? receiptCheckPaused.reason
+                : undefined,
+          });
 
           await logSystemEvent({
             level: "info",
@@ -3986,17 +4370,22 @@ export async function POST(request: Request) {
     telegramHandoffSent,
     telegramZoomSent,
     flowState,
+    manualHumanMediaSent,
   ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
     hasPaymentBeenAcknowledged(lastMessage.conversationId),
     hasIntakeFormBeenSent(lastMessage.conversationId),
     hasTelegramLeadBeenSent(lastMessage.conversationId),
-    hasTelegramPaymentBeenSent(lastMessage.conversationId),
+    hasTelegramPaymentBeenSent({
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    }),
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
     hasTelegramHandoffBeenSent(lastMessage.conversationId),
     hasTelegramZoomBeenSent(lastMessage.conversationId),
     getConversationFlowState(lastMessage.conversationId),
+    hasManualHumanMediaBeenSent(lastMessage.conversationId),
   ]);
 
   // Promo del live (PROMO[monto]/PROMOCION[monto], con tolerancia a typos): primero
@@ -4026,9 +4415,25 @@ export async function POST(request: Request) {
     !lastMessage.isDocument &&
     !hasExplicitPaymentPhrase;
 
+  // Línea abierta de la conversación. Se calcula ANTES de generar el turno porque lo
+  // necesitan la elegibilidad del comprobante, la red determinista del QR y la guarda
+  // del cupo — todas corren antes o alrededor de la respuesta del modelo.
+  const packagesPresented = detectPackagesPresented(
+    history,
+    mediaStatus.service_packages,
+  );
+  const courseContext = detectCourseContext(
+    history,
+    mediaStatus.course_flyer,
+    packagesPresented,
+  );
+
   // Estado real (ground truth del backend) de qué ya se envió a este teléfono.
   // Reemplaza la inferencia del LLM sobre el historial de texto.
   const contextParts: string[] = [
+    // Fecha/hora actual y catálogo de cursos vigentes: única fuente de verdad, el
+    // prompt estático ya no trae fechas ni precios fijos de cursos (ver lib/courses.ts).
+    renderCourseContext(new Date()),
     [
       "Estado real (ground truth del backend) de materiales ya enviados a este usuario:",
       `- course_flyer: ${mediaStatus.course_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
@@ -4058,23 +4463,32 @@ export async function POST(request: Request) {
 
   // Comprobante de pago — matriz de decisión:
   //
-  //   contexto previo          | IMAGEN            | PDF/DOCUMENTO
-  //   -------------------------|-------------------|---------------------------
-  //   QR de pago ya enviado    | decide la visión  | sí cuenta (lo revisa un humano)
-  //   solo formulario de intake| decide la visión  | NO cuenta
-  //   ni QR ni intake          | NO cuenta         | NO cuenta
+  //   contexto previo               | IMAGEN            | PDF/DOCUMENTO
+  //   -------------------------------|-------------------|---------------------------
+  //   QR de pago ya enviado (bot)    | decide la visión  | sí cuenta (lo revisa un humano)
+  //   QR enviado a mano por humano   | decide la visión  | sí cuenta (lo revisa un humano)
+  //   solo formulario de intake      | decide la visión  | NO cuenta
+  //   conversación anclada en cursos | decide la visión  | NO cuenta
+  //   ninguno de los anteriores      | NO cuenta         | NO cuenta
   //
-  // El PDF no puede verificarse (el modelo de chat no acepta PDF), así que su
-  // única garantía es el QR previo: sin QR, un PDF es material del cliente
-  // (brief, cotización, guion), no un pago. La imagen sí se verifica con visión,
-  // por eso ahí basta con cualquier contexto de pago.
+  // El PDF no puede verificarse (el modelo de chat no acepta PDF), así que su única
+  // garantía es que alguien (bot o humano) ya mandó el QR: sin eso, un PDF es
+  // material del cliente (brief, cotización, guion), no un pago. La imagen sí se
+  // verifica con visión, por eso ahí basta con cualquier contexto de pago —
+  // incluido estar hablando de cursos, ya que ampliar la elegibilidad de una imagen
+  // solo dispara la verificación por visión, que es el filtro real.
+  //
+  // manualHumanMediaSent cubre el caso en que un asesor mandó el QR a mano desde
+  // Kapso (el envío automático falló o nunca se marcó): sin esto, mediaStatus.payment_qr
+  // queda en false para siempre y el comprobante posterior nunca calificaba.
   //
   // Aparte de los archivos: el texto con una frase explícita de pago sí cuenta,
   // y las frases vagas ("ya mandé/pasé/envié") sin archivo no.
   const imageReceiptEligible =
-    Boolean(lastMessage.isImage) && (mediaStatus.payment_qr || intakeFormSent);
+    Boolean(lastMessage.isImage) &&
+    (mediaStatus.payment_qr || intakeFormSent || manualHumanMediaSent || courseContext);
   const documentReceiptEligible =
-    Boolean(lastMessage.isDocument) && mediaStatus.payment_qr;
+    Boolean(lastMessage.isDocument) && (mediaStatus.payment_qr || manualHumanMediaSent);
 
   const receiptCheck = imageReceiptEligible
     ? await classifyReceiptImage({
@@ -4091,6 +4505,51 @@ export async function POST(request: Request) {
   // material real del cliente que merece respuesta.
   const documentWithoutQr = Boolean(lastMessage.isDocument) && !documentReceiptEligible;
   const receiptRejected = rejectedByVision || documentWithoutQr;
+
+  // Contexto (curso/paquete) calculado de forma determinista a partir del estado real
+  // de materiales enviados, no del LLM: payment_qr es exclusivo del curso.
+  const paymentContextLabel = mediaStatus.payment_qr
+    ? "Curso (Creación de Contenido o Edición CapCut — revisar chat)"
+    : manualHumanMediaSent
+      ? "Curso (QR enviado manualmente — revisar chat)"
+      : intakeFormSent
+        ? "Paquetes de producción"
+        : "Sin contexto claro — revisar chat";
+
+  // Comprobante detectado de forma determinista: imagen elegible confirmada por
+  // visión, o PDF con QR previo (del bot o mandado a mano). NO depende del LLM ni de
+  // que el bot llegue a responder por WhatsApp — la alerta a Telegram es la única
+  // forma en que un humano agenda al cliente, y no puede perderse por un debounce,
+  // un mensaje off-topic o un fallo al enviar la respuesta.
+  const receiptDetected =
+    (imageReceiptEligible && receiptCheck !== null && receiptCheck.isReceipt) ||
+    documentReceiptEligible;
+
+  if (receiptDetected && !telegramPaymentSent) {
+    await notifyPaymentToTelegram({
+      phone: lastMessage.from,
+      conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
+      messageId: lastMessage.messageId,
+      clientMessage: lastMessage.text,
+      contextLabel: paymentContextLabel,
+      note: promoDetected
+        ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
+        : undefined,
+      verification: receiptCheck?.source === "vision" ? receiptCheck.reason : undefined,
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "payment_notified_deterministic",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        detection: imageReceiptEligible ? "vision_confirmed" : "document_with_qr",
+        context_label: paymentContextLabel,
+      },
+    });
+  }
 
   if (rejectedByVision) {
     contextParts.push(
@@ -4117,9 +4576,25 @@ export async function POST(request: Request) {
       contextParts.push(
         `El último mensaje del usuario es ${mediaLabel} y viene de la PROMO DEL LIVE (ver arriba): es la captura de la transmisión con la que acredita la promoción. NO le preguntes qué es esa imagen, para qué te la envía ni en qué puedes ayudarlo con ella, y NO la trates como comprobante de pago (no marques payment_confirmation). Simplemente continúa: confírmale el precio promocional de ${promoAmount} Bs y envíale el QR (intents.payment_qr=true).`,
       );
+    } else if (manualHumanMediaSent) {
+      // Un humano ya mandó material a mano (probablemente el QR, si el envío
+      // automático falló). El sistema no sabe cuál archivo fue, así que se trata
+      // igual que si el QR ya se hubiera enviado.
+      contextParts.push(
+        `El último mensaje del usuario es ${mediaLabel} y un asesor ya le envió material a mano en esta conversación (posiblemente el QR de pago). Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y, una vez verificado, te confirmamos tu cupo. Para agregarte al grupo de participantes del curso, indícame tu nombre completo (verifica que esté bien escrito) y tu número de teléfono." No digas que el cupo ya quedó confirmado — la validación la hace el equipo.`,
+      );
+    } else if (courseContext && Boolean(lastMessage.isImage)) {
+      // Conversación anclada en cursos, sin QR ni intake ni material manual
+      // registrado: la imagen SÍ se verifica con visión (imageReceiptEligible),
+      // pero como no hay contexto de pago previo, se le pide confirmación al
+      // cliente en vez de asumir directo que es un comprobante.
+      contextParts.push(
+        `El último mensaje del usuario es una IMAGEN dentro de una conversación sobre cursos, pero todavía no se le envió el QR de pago. Si a partir de tu verificación parece un comprobante de pago o transferencia, trátalo como posible pago: marca payment_confirmation=true y responde agradeciendo el comprobante, indicando que el equipo lo va a validar y pidiendo nombre completo y número de teléfono. Si NO parece un comprobante, pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
+      );
     } else {
-      // Solo se llega aquí con una IMAGEN sin QR y sin intake: sin contexto de
-      // pago no se verifica con visión, y sin verificar no se asume nada.
+      // Solo se llega aquí con una IMAGEN sin QR, sin intake, sin material manual
+      // y fuera de contexto de cursos: sin contexto de pago no se verifica con
+      // visión, y sin verificar no se asume nada.
       contextParts.push(
         `El último mensaje del usuario es ${mediaLabel} y todavía NO se le ha enviado el QR de pago ni completó el formulario de datos. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
       );
@@ -4356,6 +4831,42 @@ export async function POST(request: Request) {
     });
   }
 
+  // Red de seguridad determinista del QR de cursos: cubre la intención explícita de
+  // pagar/reservar y el afirmativo seco tras una oferta de pago del propio bot — el
+  // caso real donde el cliente dijo "sí" a "¿te reservo el cupo?" y el LLM no marcó
+  // el intent. Ver shouldForcePaymentQr.
+  if (
+    turn.should_reply &&
+    !turn.intents.payment_qr &&
+    shouldForcePaymentQr({
+      text: lastMessage.text,
+      history,
+      courseContext,
+      packagesPresented,
+      qrAlreadySent: mediaStatus.payment_qr,
+      appointmentContext,
+    })
+  ) {
+    turn.intents.payment_qr = true;
+    turn.intents.service_packages = false;
+
+    console.log("payment_qr forced by safety net (enroll intent detected)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "payment_qr_forced_by_safety_net",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
   // Exclusividad cita ↔ leads: con una cita en curso y sin una señal explícita de
   // contratar paquetes, el bot no abre el flujo de leads aunque el LLM lo haya marcado.
   // Evita el doble aviso a Telegram (cita + lead) por el mismo cliente.
@@ -4391,6 +4902,73 @@ export async function POST(request: Request) {
         appointment_already_notified: telegramAppointmentSent,
         appointment_scheduled_this_turn: turn.appointment_scheduled,
         reply_replaced: replacedForm,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
+  // Exclusividad cursos ↔ leads de paquetes: red de seguridad determinista contra el
+  // bug real donde el LLM mandó el formulario de leads de paquetes (📌 Nombre, empresa,
+  // rubro...) a un cliente que solo había hablado de cursos ("en ese estaba interesado"
+  // sobre un curso se leyó como elegir un paquete). Si la conversación está anclada en
+  // cursos y nunca se presentaron paquetes, el formulario NUNCA sale, aunque el LLM lo
+  // haya marcado — salvo que el cliente pida paquetes de forma explícita en este mensaje.
+  if (
+    courseContext &&
+    !explicitPackageIntent &&
+    (turn.service_intake_requested || replyContainsIntakeForm(turn.reply))
+  ) {
+    const replacedCourseForm = replyContainsIntakeForm(turn.reply);
+
+    console.log("intake form blocked by course flow", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.service_intake_requested = false;
+    turn.intents.service_packages = false;
+
+    // Si el formulario ya venía dentro de la respuesta, se reemplaza por una pregunta
+    // abierta — nunca se le queda al cliente pidiendo datos de empresa por un curso.
+    if (replacedCourseForm) turn.reply = COURSE_FORM_BLOCKED_REPLY;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "intake_form_blocked_by_course_flow",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        reply_replaced: replacedCourseForm,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
+  // Red de seguridad determinista contra el bug real: el bot preguntó "¿te reservo
+  // el cupo mientras?", el cliente dijo "sí", y el LLM respondió que el cupo quedó
+  // reservado — falso, el cupo se reserva única y exclusivamente con el pago. Si la
+  // respuesta afirma o ES la que ofrece reservar sin que haya un comprobante en
+  // registro, se reemplaza por el texto que reconduce al pago y se fuerza el QR.
+  const receiptOnRecord = receiptDetected || hasExplicitPaymentPhrase || telegramPaymentSent;
+
+  if (turn.should_reply && !receiptOnRecord && replyClaimsReservedSpot(turn.reply)) {
+    console.log("reserved spot claim blocked (no receipt on record)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.reply = RESERVATION_REQUIRES_PAYMENT_REPLY;
+    turn.intents.payment_qr = true;
+    turn.intents.service_packages = false;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "reserved_spot_claim_blocked",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
         client_message: lastMessage.text.slice(0, 200),
       },
     });
@@ -4930,7 +5508,7 @@ export async function POST(request: Request) {
     for (const intent of MEDIA_SEND_ORDER) {
       if (!intentsToSend.has(intent)) continue;
 
-      const sent = await sendMediaForIntent({
+      const mediaResult = await sendMediaForIntent({
         intent,
         conversationId: mediaConversationId,
         phone: lastMessage.from,
@@ -4938,7 +5516,16 @@ export async function POST(request: Request) {
         force: forcedIntents.has(intent),
       });
 
-      if (sent) sentIntents.push(intent);
+      if (mediaResult.status === "sent") {
+        sentIntents.push(intent);
+      } else if (mediaResult.status === "no_assets" || mediaResult.status === "send_failed") {
+        await notifyMediaFailureToTelegram({
+          intent,
+          phone: lastMessage.from,
+          conversationId: mediaConversationId,
+          reason: mediaResult.status,
+        });
+      }
     }
 
     // Lead: el cliente envió sus datos de contratación, o pidió que un asesor lo
@@ -4997,44 +5584,29 @@ export async function POST(request: Request) {
       await logTelegramSkippedNoContext("lead");
     }
 
-    // Pago: el cliente confirmó pago (comprobante). El contexto (curso/paquete)
-    // se calcula de forma determinista a partir del estado real de materiales
-    // enviados, no del LLM: payment_qr es exclusivo del curso.
-    // `receiptRejected` es una salvaguarda: si el archivo no calificaba como
-    // comprobante (imagen descartada por visión, o PDF sin QR previo), no se
-    // notifica aunque el modelo marque el flag por su cuenta.
-    if (turn.payment_confirmation && !telegramPaymentSent && !receiptRejected) {
-      const paymentContextLabel = mediaStatus.payment_qr
-        ? "Curso (Creación de Contenido o Edición CapCut — revisar chat)"
-        : intakeFormSent
-          ? "Paquetes de producción"
-          : "Sin contexto claro — revisar chat";
-
-      const notified = await sendTelegramNotification(
-        buildTelegramBody({
-          headline: "💰 <b>Pago confirmado — Conecta Pro</b>",
-          phone: lastMessage.from,
-          clientMessage: lastMessage.text,
-          summary: turn.conversation_summary || "El cliente envió un comprobante de pago. Verificar.",
-          contextLabel: paymentContextLabel,
-          // El monto de la promo lo escribe el propio cliente: se muestra para que el
-          // asesor lo contraste con el comprobante antes de confirmar el cupo.
-          note: promoDetected
-            ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
-            : undefined,
-          verification:
-            receiptCheck?.source === "vision" ? receiptCheck.reason : undefined,
-        }),
-      );
-
-      if (notified) {
-        await saveOutboundMessage({
-          conversationId: mediaConversationId,
-          phone: lastMessage.from,
-          content: "[TELEGRAM_PAYMENT_SENT] notificación de pago enviada a Telegram",
-          rawPayload: { type: "telegram_notification", event: "payment" },
-        });
-      }
+    // Pago: red de seguridad para el caso de FRASE explícita de pago sin archivo
+    // ("ya pagué"), que `receiptDetected` no cubre porque no hay nada que verificar.
+    // El caso normal (imagen/PDF confirmados) ya se notificó de forma determinista
+    // más arriba, antes de cualquier return temprano — `!receiptDetected` evita
+    // duplicar la alerta dentro del mismo request.
+    if (
+      turn.payment_confirmation &&
+      !telegramPaymentSent &&
+      !receiptRejected &&
+      !receiptDetected
+    ) {
+      await notifyPaymentToTelegram({
+        phone: lastMessage.from,
+        conversationId: mediaConversationId,
+        messageId: lastMessage.messageId,
+        clientMessage: lastMessage.text,
+        summary: turn.conversation_summary,
+        contextLabel: paymentContextLabel,
+        note: promoDetected
+          ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
+          : undefined,
+        verification: receiptCheck?.source === "vision" ? receiptCheck.reason : undefined,
+      });
     }
 
     // Cita: el cliente confirmó una hora para visitar la oficina.
