@@ -5,6 +5,17 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { sendTelegramNotification, escapeTelegramHtml, buildTelegramBody } from "../../../../lib/telegram";
 import { renderCourseContext } from "../../../../lib/courses";
+import { getActivePromoAmounts, renderPromoContext } from "../../../../lib/promos";
+import { resolvePromoIntents } from "../../../../lib/media-intents";
+import { isMediaAssetInWindow } from "../../../../lib/media-assets";
+import {
+  normalizeForMatch,
+  containsExactNumber,
+  SERVICE_PACKAGES_KEYWORDS,
+  COURSE_KEYWORDS,
+  APPOINTMENT_KEYWORDS,
+  AI_AGENT_KEYWORDS,
+} from "../../../../lib/keywords";
 
 type IncomingMessage = {
   from: string;
@@ -33,6 +44,7 @@ type MediaIntent =
   | "location_video"
   | "payment_qr"
   | "service_packages"
+  | "service_packages_promo"
   | "ai_agent_flyer";
 
 type MediaAsset = {
@@ -44,11 +56,24 @@ type MediaAsset = {
 // Orden en que se envían los intents cuando aplica más de uno en un mismo turno.
 const MEDIA_SEND_ORDER: MediaIntent[] = [
   "course_flyer",
+  "service_packages_promo",
   "service_packages",
   "ai_agent_flyer",
   "location_video",
   "payment_qr",
 ];
+
+// Materiales que pertenecen a la misma LÍNEA de negocio. La promo temporal de video no
+// es una cuarta línea: es material de la LÍNEA B, así que abre y hereda las reglas de
+// service_packages (continuidad de contexto, cambio de línea) en vez de esquivarlas.
+const LINE_MEDIA_INTENTS: Record<
+  "course_flyer" | "service_packages" | "ai_agent_flyer",
+  MediaIntent[]
+> = {
+  course_flyer: ["course_flyer"],
+  service_packages: ["service_packages", "service_packages_promo"],
+  ai_agent_flyer: ["ai_agent_flyer"],
+};
 
 // Ventana de agrupación: al recibir un mensaje se espera este tiempo antes de
 // generar la respuesta. Si en ese lapso el cliente manda otro mensaje, este
@@ -147,6 +172,12 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   NO trates 2500/5000 como "cantidad de videos no estándar" (son precios, no cantidades) y
   NO recites el monto: el flyer lo muestra.
 - Este flujo activa intents.service_packages = true.
+- ⚠️ PROMOCIONES TEMPORALES: NUNCA las recites de memoria ni las inventes. Las promos vigentes
+  llegan en el contexto adicional de cada mensaje bajo "PROMOCIONES TEMPORALES" — esa es la ÚNICA
+  fuente de verdad y se actualiza sola. Si ahí dice que no hay ninguna vigente, entonces NO hay
+  promoción, aunque el cliente insista o diga que la vio en redes. Cuando SÍ hay una vigente y el
+  cliente pregunta por promos/ofertas/descuentos, se usa intents.service_packages_promo (ver
+  CLASIFICACIÓN) y NUNCA junto con intents.service_packages en el mismo turno.
 - FACTURACIÓN: Conecta Pro NO emite factura. Si preguntan si el precio/pago incluye factura, o por
   facturación en general, responde con naturalidad que por el momento no emitimos factura — sin
   inventar condiciones, sin ofrecer alternativas no confirmadas, y sin derivar a un asesor (es
@@ -829,6 +860,20 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   edición para su negocio, dron, o cantidad no estándar de videos.
   FALSE si el flujo es exclusivamente de cursos.
   FALSE si el cliente pregunta por el agente de IA / chatbot (eso es intents.ai_agent_flyer).
+  FALSE en el turno donde marques intents.service_packages_promo (son excluyentes, ver abajo).
+- intents.service_packages_promo: true SOLO si el contexto adicional lista una promoción como
+  VIGENTE y el cliente la pide o pregunta por promociones, ofertas, descuentos o rebajas de la
+  línea de video, o menciona los datos de esa promo (por ejemplo su cantidad de videos o su
+  precio promocional). El sistema envía entonces la imagen de la promo.
+  Es material de la LÍNEA B (paquetes de producción), NO de cursos ni del agente de IA.
+  FALSE siempre que el contexto adicional NO liste ninguna promo vigente — sin promo vigente no
+  hay imagen que enviar y no debes mencionar ninguna promoción.
+  FALSE en el saludo inicial.
+  FALSE cuando el cliente pregunta por los paquetes normales (6/14 videos) sin nombrar promoción:
+  ese caso sigue siendo intents.service_packages.
+  NUNCA marques service_packages y service_packages_promo en el mismo turno: el material de ambos
+  se contradice (oferta temporal vs. paquetes mensuales) y el cliente recibiría dos promociones
+  parecidas de golpe. Elige UNA según lo que el cliente preguntó.
 - intents.ai_agent_flyer: true cuando pregunta por el agente de IA / chatbot / bot para su propio
   negocio, por automatizar la atención de WhatsApp, o dice que vio el video del agente
   (ver FLUJO C arriba). FALSE en el saludo inicial. FALSE si pregunta por cursos o por paquetes de
@@ -927,6 +972,8 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   course_flyer solo para cursos.
   service_packages solo para paquetes de producción de video.
   ai_agent_flyer solo para el agente de IA.
+  service_packages_promo pertenece a la línea de paquetes de producción y es EXCLUYENTE con
+  service_packages: en un turno sale la promo temporal o el flyer normal de paquetes, nunca los dos.
   NUNCA marques dos de estos tres intents en el mismo turno, salvo el caso explícito de
   "CURSOS Y PAQUETES EN EL MISMO MENSAJE" descrito abajo.
   NO CONFUNDIR "SOLO EDICIÓN" (editor de ConectaPro, ver flujo arriba) CON PAQUETES DE PRODUCCIÓN:
@@ -2533,6 +2580,7 @@ const AssistantTurnSchema = z.object({
     location_video: z.boolean(),
     payment_qr: z.boolean(),
     service_packages: z.boolean(),
+    service_packages_promo: z.boolean(),
     ai_agent_flyer: z.boolean(),
   }),
 });
@@ -2563,6 +2611,7 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
     location_video: false,
     payment_qr: false,
     service_packages: false,
+    service_packages_promo: false,
     ai_agent_flyer: false,
   },
 };
@@ -2821,6 +2870,7 @@ async function getMediaSentStatus(
     location_video: false,
     payment_qr: false,
     service_packages: false,
+    service_packages_promo: false,
     ai_agent_flyer: false,
   };
 
@@ -2865,15 +2915,6 @@ async function getMediaSentStatus(
   }
 
   return status;
-}
-
-// Quita acentos/diacríticos y pasa a mayúsculas, para que las regex de
-// detección no dependan de cómo el usuario tildó las palabras (é/e, ó/o, etc.).
-function normalizeForMatch(text: string): string {
-  return text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toUpperCase();
 }
 
 // Distancia de edición clásica (Levenshtein), sin dependencias externas.
@@ -3005,16 +3046,6 @@ function detectGeneralPurchaseIntent(
   if (!packagesPresented) return false;
 
   return GENERIC_INTEREST_REGEX.test(normalized);
-}
-
-// Devuelve true si el texto contiene alguno de los números EXACTOS buscados como
-// grupo de dígitos completo (no como subcadena de otro número). Ej: buscar 2500 en
-// "25000" o "14000" da false; en "2500bs" o "2.500 bs" da true. Tolera separadores
-// de miles (2.500 / 2,500) quitándolos antes de tokenizar.
-function containsExactNumber(text: string, values: number[]): boolean {
-  const cleaned = text.replace(/(\d)[.,](\d)/g, "$1$2");
-  const groups: string[] = cleaned.match(/\d+/g) ?? [];
-  return values.some((value) => groups.includes(String(value)));
 }
 
 // Nombres propios de los paquetes tal como salen en el flyer (Exprés=6, Premium=14).
@@ -3324,21 +3355,6 @@ function detectPackagePriceMention(text: string): boolean {
   if (!text) return false;
   return containsExactNumber(normalizeForMatch(text), PACKAGE_PRICES);
 }
-
-// Palabras que denotan intención de cada línea, para suprimir el saludo genérico
-// cuando el primer mensaje ya trae contexto claro (ahorro de mensajes).
-const SERVICE_PACKAGES_KEYWORDS =
-  /\b(PAQUETE|PAQUETES|GRABACION|GRABACIONES|EDICION|SERVICIO|SERVICIOS|VIDEOS|PRODUCCION|CONTENIDO|DRON)\b/;
-const COURSE_KEYWORDS =
-  /\b(CURSO|CURSOS|TALLER|TALLERES|CAPACITACION|FORMACION|APRENDER|CAPCUT|CLASE|CLASES)\b/;
-const APPOINTMENT_KEYWORDS =
-  /\b(CITA|VISITA|OFICINA|AGENDAR|UBICACION|DIRECCION|HORARIO)\b/;
-// LÍNEA C — agente de IA. Se evalúa ANTES que los paquetes de video (ver
-// detectExplicitIntent): frases como "el servicio de agente de IA" o "edición
-// automatizada con bot" contienen palabras de SERVICE_PACKAGES_KEYWORDS y sin esta
-// prioridad los leads del video promocional caerían en el embudo equivocado.
-const AI_AGENT_KEYWORDS =
-  /\b(AGENTE|AGENTES|IA|CHAT ?BOT|CHAT ?BOTS|BOT|BOTS|INTELIGENCIA ARTIFICIAL|AUTOMATIZAR|AUTOMATIZACION|AUTOMATIZADO|AUTOMATIZADA|ASISTENTE|ASISTENTES|RESPOND[EA] SOLO|CONTEST[AE] SOLO)\b/;
 
 type DetectedIntent =
   | "service_packages"
@@ -3667,9 +3683,14 @@ async function hasPaymentBeenAcknowledged(conversationId?: string): Promise<bool
 async function getActiveMediaAssets(intent: MediaIntent): Promise<MediaAsset[]> {
   const supabase = getSupabaseClient();
 
+  // select("*") a propósito, no una lista de columnas: la vigencia se filtra en memoria
+  // (ver isMediaAssetInWindow) para que la query siga funcionando exista o no la columna
+  // starts_at/expires_at en la base. Pedir una columna inexistente devolvería 400 y esta
+  // función caería a [] — es decir, se dejarían de enviar el QR de pago y TODOS los
+  // demás materiales — si el código se desplegara antes de correr la migración.
   const { data, error } = await supabase
     .from("kapso_media_assets")
-    .select("title, url, media_type")
+    .select("*")
     .eq("business", "conecta-pro")
     .eq("intent", intent)
     .eq("is_active", true)
@@ -3692,7 +3713,21 @@ async function getActiveMediaAssets(intent: MediaIntent): Promise<MediaAsset[]> 
     return [];
   }
 
-  return (data ?? [])
+  // Vigencia: un material con expires_at pasado (o starts_at futuro) deja de enviarse
+  // aunque siga con is_active = true. Las filas sin fechas no cambian de comportamiento.
+  const now = Date.now();
+  const rows = data ?? [];
+  const inWindow = rows.filter((asset) => isMediaAssetInWindow(asset, now));
+
+  if (inWindow.length < rows.length) {
+    console.log(
+      "media assets skipped: out of validity window",
+      intent,
+      rows.length - inWindow.length,
+    );
+  }
+
+  return inWindow
     .map((asset): MediaAsset => ({
       title: String(asset.title ?? "Material enviado"),
       url: String(asset.url ?? ""),
@@ -4392,12 +4427,25 @@ export async function POST(request: Request) {
   // se revisa el mensaje actual; si no hay match, se busca la mención más reciente
   // dentro de la ventana de historial ya cargada (sin queries adicionales). El monto
   // anunciado en el live es el precio que se le confirma al cliente.
-  let promoAmount = detectPromoAmount(lastMessage.text);
+  const turnNow = new Date();
+
+  // Desambiguación con las PROMOS TEMPORALES de video (lib/promos.ts): esas también se
+  // piden diciendo "promo" + su precio, y sin este filtro un "promo 1000" de la promo de
+  // 4 videos se leería como promo del live y dispararía el QR del CURSO por 1.000 Bs.
+  // Si el monto coincide con el de una promo de video vigente, no es la promo del live.
+  const activePromoAmounts = getActivePromoAmounts(turnNow);
+  const detectLivePromoAmount = (text: string): number | null => {
+    const amount = detectPromoAmount(text);
+    if (amount === null) return null;
+    return activePromoAmounts.includes(amount) ? null : amount;
+  };
+
+  let promoAmount = detectLivePromoAmount(lastMessage.text);
   if (promoAmount === null) {
     for (let i = history.length - 1; i >= 0; i--) {
       const candidate = history[i];
       if (candidate.role !== "user") continue;
-      const found = detectPromoAmount(candidate.content);
+      const found = detectLivePromoAmount(candidate.content);
       if (found !== null) {
         promoAmount = found;
         break;
@@ -4433,11 +4481,16 @@ export async function POST(request: Request) {
   const contextParts: string[] = [
     // Fecha/hora actual y catálogo de cursos vigentes: única fuente de verdad, el
     // prompt estático ya no trae fechas ni precios fijos de cursos (ver lib/courses.ts).
-    renderCourseContext(new Date()),
+    renderCourseContext(turnNow),
+    // Promociones temporales vigentes: misma idea que los cursos — el prompt estático no
+    // nombra ninguna promo, así que cuando su ventana pasa el modelo se queda sin
+    // material para inventarla (ver lib/promos.ts).
+    renderPromoContext(turnNow),
     [
       "Estado real (ground truth del backend) de materiales ya enviados a este usuario:",
       `- course_flyer: ${mediaStatus.course_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
       `- service_packages: ${mediaStatus.service_packages ? "YA enviado antes" : "NUNCA enviado"}`,
+      `- service_packages_promo: ${mediaStatus.service_packages_promo ? "YA enviado antes" : "NUNCA enviado"}`,
       `- ai_agent_flyer: ${mediaStatus.ai_agent_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
       "Confía en este estado (no en lo que infieras del historial de mensajes) para saber si algo ya se envió.",
       ...(mediaStatus.course_flyer
@@ -4445,6 +4498,9 @@ export async function POST(request: Request) {
         : []),
       ...(mediaStatus.service_packages
         ? ["Como service_packages YA fue enviado: no presentes los paquetes como si fuera la primera vez. Responde asumiendo que ese material ya fue compartido antes, salvo que el usuario lo pida explícitamente de nuevo."]
+        : []),
+      ...(mediaStatus.service_packages_promo
+        ? ["Como service_packages_promo YA fue enviado: la imagen de la promo temporal ya la tiene. No la presentes como novedad ni repitas todo su detalle; continúa la conversación desde ahí, salvo que el usuario la pida explícitamente de nuevo."]
         : []),
       ...(mediaStatus.ai_agent_flyer
         ? ["Como ai_agent_flyer YA fue enviado: no presentes el agente de IA como si fuera la primera vez ni repitas el texto completo del FLUJO C. Continúa la conversación desde donde quedó (Zoom, datos o cotización), salvo que el usuario pida el flyer explícitamente de nuevo."]
@@ -4811,6 +4867,7 @@ export async function POST(request: Request) {
   if (turn.should_reply && promoDetected && !turn.intents.payment_qr) {
     turn.intents.payment_qr = true;
     turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
 
     console.log("payment_qr forced by safety net (live promo detected)", {
       conversationId: lastMessage.conversationId,
@@ -4849,6 +4906,7 @@ export async function POST(request: Request) {
   ) {
     turn.intents.payment_qr = true;
     turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
 
     console.log("payment_qr forced by safety net (enroll intent detected)", {
       conversationId: lastMessage.conversationId,
@@ -4887,6 +4945,7 @@ export async function POST(request: Request) {
     turn.service_intake_requested = false;
     turn.lead_data_submitted = false;
     turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
 
     // Si el formulario ya venía dentro de la respuesta, se reemplaza por el mensaje
     // que reconoce la cita y deja la contratación para la visita.
@@ -4927,6 +4986,7 @@ export async function POST(request: Request) {
 
     turn.service_intake_requested = false;
     turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
 
     // Si el formulario ya venía dentro de la respuesta, se reemplaza por una pregunta
     // abierta — nunca se le queda al cliente pidiendo datos de empresa por un curso.
@@ -4961,6 +5021,7 @@ export async function POST(request: Request) {
     turn.reply = RESERVATION_REQUIRES_PAYMENT_REPLY;
     turn.intents.payment_qr = true;
     turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
 
     await logSystemEvent({
       level: "info",
@@ -5365,14 +5426,56 @@ export async function POST(request: Request) {
   if (turn.intents.location_video) intentsToSend.add("location_video");
   if (turn.intents.payment_qr) intentsToSend.add("payment_qr");
   if (turn.intents.service_packages) intentsToSend.add("service_packages");
+  if (turn.intents.service_packages_promo) intentsToSend.add("service_packages_promo");
   if (turn.intents.ai_agent_flyer) intentsToSend.add("ai_agent_flyer");
+
+  // --- Promo temporal de video (LÍNEA B) ---------------------------------------
+  // Toda la resolución vive en lib/media-intents.ts, como función pura y probada:
+  // vencimiento, exclusión con cursos / agente de IA, y el desempate con el flyer normal
+  // de paquetes (sale exactamente uno de los dos). Aquí solo se aplica y se registra.
+  const promoResolution = resolvePromoIntents({
+    intents: [...intentsToSend],
+    message: lastMessage.text,
+    now: turnNow,
+    courseFlyerMarked: turn.intents.course_flyer,
+    aiAgentFlyerMarked: turn.intents.ai_agent_flyer,
+  });
+
+  if (promoResolution.reasons.length > 0) {
+    intentsToSend.clear();
+    for (const intent of promoResolution.intents) {
+      intentsToSend.add(intent as MediaIntent);
+    }
+
+    console.log("promo intents resolved", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      reasons: promoResolution.reasons,
+      intents: promoResolution.intents,
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "promo_intents_resolved",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        reasons: promoResolution.reasons,
+        resolved_intents: promoResolution.intents,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
 
   // Guarda determinista: el QR de pago es exclusivo del curso de Creación de
   // Contenido y nunca debe salir en un turno de paquetes de producción, aunque
   // el LLM haya clasificado mal y marcado ambos intents a la vez.
   if (
     intentsToSend.has("payment_qr") &&
-    (turn.intents.service_packages || turn.service_intake_requested)
+    (turn.intents.service_packages ||
+      intentsToSend.has("service_packages_promo") ||
+      turn.service_intake_requested)
   ) {
     intentsToSend.delete("payment_qr");
     console.warn("payment_qr suppressed: co-occurred with service_packages flow", {
@@ -5419,17 +5522,23 @@ export async function POST(request: Request) {
   // suelta de otra línea ("todo IA" hablando de paquetes) no debe traer el material de esa
   // otra línea. Solo se acepta el cambio si el cliente lo pidió de forma explícita.
   // Se mira el material realmente enviado: la línea abierta es la que ya tiene material.
+  // Una línea está abierta si YA se envió cualquiera de sus materiales — para la LÍNEA B
+  // eso incluye la imagen de la promo temporal, que también la abre (ver LINE_MEDIA_INTENTS).
   const openLines = (
     ["course_flyer", "service_packages", "ai_agent_flyer"] as const
-  ).filter((line) => mediaStatus[line]);
+  ).filter((line) => LINE_MEDIA_INTENTS[line].some((intent) => mediaStatus[intent]));
 
   if (openLines.length > 0 && !turn.explicit_resend_request) {
     for (const line of ["course_flyer", "service_packages", "ai_agent_flyer"] as const) {
-      if (!intentsToSend.has(line)) continue;
+      const lineIntents = LINE_MEDIA_INTENTS[line].filter((intent) =>
+        intentsToSend.has(intent),
+      );
+
+      if (lineIntents.length === 0) continue;
       if (openLines.includes(line)) continue;
       if (detectExplicitLineSwitch(lastMessage.text, line)) continue;
 
-      intentsToSend.delete(line);
+      for (const intent of lineIntents) intentsToSend.delete(intent);
 
       console.warn("line switch blocked: no explicit request from client", {
         conversationId: lastMessage.conversationId,
