@@ -333,6 +333,10 @@ GUÍA POR SITUACIÓN
   Aplica cuando el usuario pregunta por los cursos, por aprender edición, por capacitación,
   por las clases, etc. (ej. "¿qué cursos tienen?", "¿cuándo es el curso?", "¿tienen clases de CapCut?").
 
+  - ⚠️ NUNCA digas "hoy tenemos el curso" ni nada que dé a entender que el curso es hoy, salvo que
+    la fecha vigente sea literalmente la de hoy. Preséntalo como el próximo curso / el curso vigente
+    (ej. "el curso que tenemos programado es...", "nuestro próximo curso es...") y menciona el día
+    de la semana junto con la fecha tal cual viene en el contexto adicional.
   - Pregunta GENERAL de cursos (sin decir cuál): menciona los que tengan FECHA VIGENTE según el
     contexto adicional ("CURSOS — FECHAS Y PRECIOS VIGENTES"), con su fecha tal cual viene ahí. Si
     solo hay uno vigente, menciona solo ese (NO ofrezcas uno sin fecha vigente). Si no hay ninguno
