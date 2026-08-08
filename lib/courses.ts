@@ -34,7 +34,7 @@ const COURSES: Course[] = [
   {
     id: "capcut_pro",
     name: "Curso de Edición en CapCut Pro",
-    startsAt: "2026-08-09T16:00:00-04:00",
+    startsAt: "2026-08-16T16:00:00-04:00",
     pricePreventa: 450,
     pricePresencial: 550,
   },
