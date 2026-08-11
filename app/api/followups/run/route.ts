@@ -3,8 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 
 // Consumidor de kapso_followups: reactiva a los clientes que recibieron el
 // formulario de datos pero no lo completaron (ataca la caída del funnel
-// intake_sent -> asesor). Invocado por Vercel Cron (ver vercel.json) o manualmente
-// con el header X-Followup-Secret.
+// intake_sent -> asesor). Invocado cada 10 min por pg_cron desde Supabase (ver
+// supabase/migrations/20260811_pg_cron_schedulers.sql) o manualmente, siempre con
+// el header X-Followup-Secret.
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;

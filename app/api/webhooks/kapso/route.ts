@@ -5,7 +5,13 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { sendTelegramNotification, escapeTelegramHtml, buildTelegramBody } from "../../../../lib/telegram";
 import { renderCourseContext } from "../../../../lib/courses";
-import { getActivePromoAmounts, renderPromoContext } from "../../../../lib/promos";
+import {
+  getActivePromoAmounts,
+  renderPromoContext,
+  renderReliefContext,
+  mentionsActiveRelief,
+  getActiveReliefCampaigns,
+} from "../../../../lib/promos";
 import { resolvePromoIntents } from "../../../../lib/media-intents";
 import { isMediaAssetInWindow } from "../../../../lib/media-assets";
 import {
@@ -707,25 +713,41 @@ GUÍA POR SITUACIÓN
   Aplica cuando el cliente responde con un día y/o hora concretos después de que se le ofreció
   agendar una visita (ej. "el martes a las 10am", "mañana a las 3", "el jueves por la tarde").
 
-  Repite el día/hora que indicó y pide confirmación explícita antes de agendar. Ejemplo de tono
-  (adapta el día/hora al que dio el cliente):
+  Repite el día/hora que indicó y pide confirmación explícita antes de pasarlo al asesor. Ejemplo
+  de tono (adapta el día/hora al que dio el cliente):
 
-  "¡Perfecto! Para que un asesor te espere el [día] a las [hora] en la oficina, escribe 'confirmar' y le avisamos ✅"
+  "¡Perfecto! Anoto tu visita para el [día] a las [hora]. Escribe 'confirmar' y lo paso a un asesor para que revise disponibilidad ✅"
 
   - Si el cliente NO dio una hora clara (ej. "en la tarde", "cualquier día"), pide que precise
     día y hora antes de ofrecer confirmar.
   - NO marques appointment_scheduled en este mensaje — todavía falta que el cliente confirme.
 
-▸ CLIENTE CONFIRMA LA CITA
+▸ CLIENTE CONFIRMA SU SOLICITUD DE CITA
   Aplica SOLO cuando el cliente confirma explícitamente una cita que el asistente ya propuso en el
   mensaje anterior (ej. responde "confirmar", "sí, confirmo", "sí" a la pregunta de confirmación,
   o da el día/hora y confirma en el mismo mensaje, ej. "voy el martes a las 10am, confirmo").
 
-  Responde confirmando la cita con el día/hora acordado, ejemplo de tono:
+  REGLA CRÍTICA: tú NO confirmas citas. No sabes si hay un asesor disponible ese día y a esa hora,
+  así que solo registras la solicitud y avisas al equipo. Quien confirma es un asesor humano, por
+  este mismo chat. Ejemplo de tono:
 
-  "¡Listo! Un asesor te estará esperando el [día] a las [hora] en la oficina 📍 ¡Nos vemos pronto!"
+  "¡Gracias! Ya pasé tu solicitud para el [día] a las [hora] a un asesor 📋 Él te confirma por aquí en cuanto revise la agenda 😊"
 
-  - Marca appointment_scheduled = true SOLO en este mensaje de confirmación final, nunca antes.
+  - NUNCA digas que la cita está confirmada/agendada, ni "un asesor te estará esperando", ni
+    "nos vemos el [día]". Eso lo dice el asesor, no tú.
+  - Marca appointment_scheduled = true SOLO en este mensaje, nunca antes, y llena appointment_slot
+    con el día y la hora tal como los expresó el cliente.
+
+▸ CLIENTE PREGUNTA POR UNA CITA QUE YA SOLICITÓ
+  Aplica cuando el cliente vuelve a escribir sobre una cita que ya pasó a un asesor y todavía no
+  fue confirmada por un humano (ej. "¿ya está mi cita?", "¿me confirmaron?", "¿a qué hora era?").
+
+  "Tu solicitud para el [día] a las [hora] ya está con un asesor 📋 Te confirma por aquí en breve 😊"
+
+  - Sigue sin confirmar la cita: solo informas que está en manos del asesor.
+  - Si el cliente pide otro día/hora, trátalo como una propuesta nueva (vuelve al flujo
+    "CLIENTE INDICA DÍA/HORA... aún sin confirmar").
+  - NO vuelvas a marcar appointment_scheduled: ya se avisó al equipo.
 
 ▸ CLIENTE PIDE UNA LLAMADA / QUIERE CERRAR POR TELÉFONO
   Aplica cuando el cliente pide hablar por teléfono o que lo llamen para cerrar la contratación
@@ -772,13 +794,13 @@ GUÍA POR SITUACIÓN
     de prueba. Di que en el Zoom te explican cómo funcionaría en su caso a partir de cómo atiende
     hoy sus mensajes.
   - CLIENTE ACEPTA EL ZOOM Y DA DÍA/HORA (ej. "el jueves a las 3pm", "mañana a las 10 está bien"):
-    confirma con este tono y marca zoom_meeting_scheduled = true:
+    responde con este tono y marca zoom_meeting_scheduled = true:
 
-    "¡Perfecto! Un asesor te contactará para coordinar el Zoom el [día] a las [hora] 💻 Ten a mano cómo atiendes hoy los mensajes de tu negocio, así te explicamos cómo aplicarlo en tu caso 😊"
+    "¡Gracias! Ya pasé tu solicitud del Zoom para el [día] a las [hora] a un asesor 💻 Él te confirma el horario y te envía el link por aquí. Ten a mano cómo atiendes hoy los mensajes de tu negocio, así te explicamos cómo aplicarlo en tu caso 😊"
 
-    NO prometas un link ahora ("te envío el link"), no confirmes una hora exacta como definitiva —
-    el asesor coordina. Marca zoom_meeting_scheduled = true SOLO en ese turno, una vez por
-    conversación.
+    NO prometas un link ahora ("te envío el link"), no confirmes la hora como definitiva — el
+    asesor humano confirma. Marca zoom_meeting_scheduled = true SOLO en ese turno, una vez por
+    conversación, y llena zoom_slot con el día y la hora tal como los expresó el cliente.
   - FORMULARIO DE DATOS: cuando haya interés real (aceptó el Zoom, pidió cotización, o dijo que
     quiere avanzar), pide los datos con este texto exacto:
 
@@ -917,19 +939,33 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   Márcalo SOLO UNA VEZ por conversación, en el turno donde lo pide.
 - appointment_scheduled: true SOLO en el mensaje donde el cliente CONFIRMA explícitamente una cita
   ya propuesta (ej. "confirmar", "sí, confirmo", o da día/hora y confirma en el mismo mensaje como
-  "voy el martes a las 10am, confirmo"). Ver flujo "CLIENTE CONFIRMA LA CITA" arriba.
+  "voy el martes a las 10am, confirmo"). Ver flujo "CLIENTE CONFIRMA SU SOLICITUD DE CITA" arriba.
+  Significa "el cliente pidió esta cita y hay que avisar al asesor", NO "la cita quedó confirmada":
+  la confirmación la da un humano.
   NO lo marques cuando el cliente solo pregunta la ubicación/horario, ni cuando solo da un día/hora
   sin confirmar todavía (ese caso usa el flujo "CLIENTE INDICA DÍA/HORA... aún sin confirmar").
+- appointment_slot: el día y la hora que pidió el cliente, en texto literal y tal como los expresó
+  (ej. "mañana a las 6 de la tarde", "el martes 12 a las 10am"). Llénalo en el MISMO turno donde
+  marcas appointment_scheduled = true; en cualquier otro turno va null. Es lo que ve el asesor en
+  la alerta para poder confirmar, así que si el cliente lo dijo en un mensaje anterior del
+  historial, recupéralo de ahí en vez de dejarlo vacío. null si de verdad no hay día/hora.
 - zoom_meeting_scheduled: true SOLO en el turno donde el cliente acepta la reunión por Zoom del
   agente de IA y da un día/hora (ej. "el jueves a las 3pm", "mañana a las 10 está bien").
   Ver FLUJO C arriba. NO lo marques cuando apenas ofreciste el Zoom y el cliente aún no respondió,
   ni cuando solo pregunta qué es el agente. Es exclusivo de la LÍNEA C: para citas presenciales
   usa appointment_scheduled. Márcalo SOLO UNA VEZ por conversación.
+- zoom_slot: igual que appointment_slot pero para el Zoom — día/hora literal que pidió el cliente,
+  solo en el turno donde marcas zoom_meeting_scheduled = true. null en el resto.
 - ai_agent_lead_submitted: true cuando el cliente interesado en el agente de IA ya compartió, en
   cualquier punto del historial, al menos su nombre y su negocio/rubro (los mensajes por día y las
   sucursales son deseables, no bloqueantes). Ver FLUJO C arriba. Es el equivalente de
   lead_data_submitted pero para la LÍNEA C — NO marques lead_data_submitted por leads del agente
   de IA. Márcalo SOLO UNA VEZ por conversación.
+- fair_relief_claimed: true cuando el cliente afirma cumplir los requisitos de una campaña de apoyo
+  vigente (ver el bloque "CAMPAÑAS DE APOYO" del contexto), por ejemplo que es comerciante de la
+  feria Barrio Lindo o que perdió mercadería en el incendio. Marca que HAY QUE VERIFICARLO, no que
+  el descuento esté aprobado. NO lo marques si solo pregunta si existe algún descuento sin decir
+  que es de la feria, ni si no hay ninguna campaña vigente en el contexto.
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
   evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Cuatro motivos
@@ -1023,15 +1059,15 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   ═══ EXCLUSIVIDAD ENTRE CITA Y FORMULARIO DE LEADS ═══
   El flujo de CITA en oficina y el de LEADS (formulario de paquetes) no se pisan:
   - Si el cliente está en el flujo de cita (dio día/hora, está confirmando, escribió
-    "confirmar", o ya tiene la cita agendada), NO marques service_intake_requested ni
+    "confirmar", o ya solicitó la cita), NO marques service_intake_requested ni
     lead_data_submitted, y NO envíes el formulario, salvo que en ese mismo mensaje mencione
     explícitamente contratar / paquete / grabación / videos / 6 / 14. Un "sí", "dale",
     "confirmar" o "de acuerdo" en ese punto confirma LA CITA, nada más.
   - Si el cliente está llenando el formulario de leads, NO marques appointment_scheduled
     salvo que mencione explícitamente cita, visita u oficina.
-  - SUPERPOSICIÓN: si ya tiene cita agendada y además muestra interés en contratar, NO
-    reenvíes el formulario. Responde así (adaptando día y hora):
-    "¡Perfecto! Ya tenemos tu cita agendada para [día] a las [hora]. Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece?"
+  - SUPERPOSICIÓN: si ya solicitó la cita y además muestra interés en contratar, NO
+    reenvíes el formulario. Responde así (adaptando día y hora, sin dar la cita por confirmada):
+    "¡Perfecto! Tu solicitud de cita para [día] a las [hora] ya está con un asesor. Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece?"
 
   CLIENTE PIDE CURSOS Y PAQUETES EN EL MISMO MENSAJE: si el cliente pide información de
   cursos Y de paquetes de producción a la vez (ej. "los cursos y también paquetes de
@@ -1058,8 +1094,59 @@ const LEAD_INTAKE_FORM = `¡Con gusto! Para coordinar todo, necesito algunos dat
 
 // Respuesta de superposición cita + interés en contratar. La usa la red de seguridad
 // determinista cuando el LLM intenta mandar el formulario con una cita ya en curso.
-// Sin día/hora concretos: el código no los conoce, y el asesor los confirma en la visita.
-const APPOINTMENT_OVERLAP_REPLY = `¡Perfecto! Ya tenemos tu cita agendada 📅 Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece? 😊`;
+// Sin día/hora concretos: el código no los conoce (viajan solo en la alerta de Telegram).
+// Nunca da la cita por confirmada: eso lo hace un asesor humano.
+const APPOINTMENT_OVERLAP_REPLY = `¡Perfecto! Tu solicitud de cita ya está con un asesor 📅 Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece? 😊`;
+
+// El bot NO confirma citas: no sabe si hay un asesor libre ese día y a esa hora. Estas son
+// las afirmaciones que dan la cita (o el Zoom) por cerrada y que solo puede decir un humano.
+// Sobre normalizeForMatch (sin tildes, mayúsculas), mismo patrón que las afirmaciones de
+// cupo reservado de más abajo.
+// Tolera hasta 8 palabras entre el verbo y "oficina" porque el día y la hora van en medio
+// ("te espere el martes a las 10 en la oficina").
+const CONFIRMED_APPOINTMENT_REGEX =
+  /\b(TE|LO|LE)\s+(ESTARA|ESTAREMOS|VA\s+A\s+ESTAR)\s+ESPERANDO\b|\bTE\s+(ESPERA|ESPERE|ESPERO|ESPERARA|ESPERAMOS|ESPERAN)\b(?:\s+\S+){0,8}?\s+OFICINA\b|\bUN\s+ASESOR\s+TE\s+ESPERA\b|\b(TU\s+)?CITA\s+(YA\s+)?(ESTA|QUEDO|FUE)\s+(CONFIRMADA|AGENDADA|REGISTRADA|LISTA)\b|\b(YA\s+)?(TENEMOS|TIENES)\s+TU\s+CITA\s+AGENDADA\b|\bNOS\s+VEMOS\b(?:\s+\S+){0,8}?\s+OFICINA\b/;
+
+// El bot promete el link del Zoom: lo envía el asesor, nunca el bot.
+const ZOOM_LINK_PROMISE_REGEX =
+  /\bTE\s+(ENVIO|MANDO|PASO|ENVIARE|MANDARE|COMPARTO)\b(?:\s+\S+){0,3}?\s+LINK\b/;
+
+function replyConfirmsAppointment(reply: string): boolean {
+  if (!reply) return false;
+  const normalized = normalizeForMatch(reply);
+  return (
+    CONFIRMED_APPOINTMENT_REGEX.test(normalized) ||
+    ZOOM_LINK_PROMISE_REGEX.test(normalized)
+  );
+}
+
+// Reemplazo cuando el bot da la cita por confirmada. Sin día/hora (el código no los
+// interpreta) pero deja clarísimo quién confirma.
+const APPOINTMENT_REQUEST_PENDING_REPLY = `¡Gracias! Ya pasé tu solicitud a un asesor 📋 Él te confirma por aquí el día y la hora en cuanto revise la agenda 😊`;
+
+// Campaña de apoyo (feria Barrio Lindo): el bot anuncia el 50% pero NUNCA el monto final
+// ni el descuento como aprobado — no puede verificar que el cliente sea un comerciante
+// afectado. Los montos son la mitad exacta del catálogo (2500/3500/5500): no aparecen en
+// ningún otro texto legítimo, así que detectarlos es señal inequívoca de que hizo la resta.
+const RELIEF_DISCOUNTED_AMOUNT_REGEX = /\b1[.,]?250\b|\b1[.,]?750\b|\b2[.,]?750\b/;
+
+// El bot da el descuento por concedido en vez de dejarlo en manos del asesor.
+const RELIEF_GRANTED_REGEX =
+  /\b(DESCUENTO|50%|CINCUENTA\s+POR\s+CIENTO)\b(?:\s+\S+){0,4}?\s+(APLICADO|CONFIRMADO|APROBADO|REGISTRADO)\b|\bYA\s+TE\s+(APLIQUE|APLICAMOS|HICE|HICIMOS)\b(?:\s+\S+){0,3}?\s+DESCUENTO\b|\bTE\s+QUEDA\s+EN\b/;
+
+function replyOverstatesRelief(reply: string): boolean {
+  if (!reply) return false;
+  const normalized = normalizeForMatch(reply);
+  return (
+    RELIEF_DISCOUNTED_AMOUNT_REGEX.test(normalized) ||
+    RELIEF_GRANTED_REGEX.test(normalized)
+  );
+}
+
+// Reemplazo cuando el bot se adelanta con el monto o da el descuento por aprobado.
+const RELIEF_PENDING_REPLY = `Lamento mucho lo que pasó en la feria 🙏 El apoyo es un 50% de descuento sobre cualquiera de nuestros paquetes de producción, para comerciantes de la feria Barrio Lindo que hayan perdido mercadería.
+
+Un asesor valida tu caso y te confirma el monto exacto con el descuento. ¿Me confirmas si eres comerciante de la feria y si perdiste mercadería? 😊`;
 
 // Respuesta de reemplazo cuando la red de seguridad bloquea el formulario de leads de
 // paquetes en una conversación que era de cursos (ver detectCourseContext). El cliente
@@ -2065,6 +2152,9 @@ async function notifyLeadToTelegram(params: {
   kind?: "intake" | "call_request" | "ai_agent";
   trigger?: LeadTrigger;
   hasAppointment?: boolean;
+  // El cliente dice calificar para una campaña de apoyo vigente. El bot no verifica
+  // nada: la nota le pide al asesor que valide antes de aplicar el descuento.
+  fairRelief?: boolean;
 }): Promise<boolean> {
   const lastClientMessage =
     params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
@@ -2077,15 +2167,22 @@ async function notifyLeadToTelegram(params: {
         ? "🤖 <b>Lead — Agente de IA</b>"
         : "🟢 <b>Nuevo lead — Conecta Pro</b>";
 
+  const notes = [
+    params.fairRelief
+      ? "🔥 FERIA BARRIO LINDO — el cliente dice ser comerciante afectado por el incendio. VERIFICAR que sea de la feria y que haya perdido mercadería antes de aplicar el 50%. El bot no le dio ningún monto con descuento."
+      : null,
+    params.hasAppointment
+      ? "📅 El cliente tiene una solicitud de cita en oficina pendiente de confirmar"
+      : null,
+  ].filter((note): note is string => note !== null);
+
   const notified = await sendTelegramNotification(
     buildTelegramBody({
       headline,
       phone: params.phone,
       clientMessage: lastClientMessage,
       summary: params.summary,
-      note: params.hasAppointment
-        ? "📅 El cliente ya tiene una cita agendada en oficina"
-        : undefined,
+      note: notes.length > 0 ? notes.join("\n") : undefined,
     }),
   );
 
@@ -2589,8 +2686,15 @@ const AssistantTurnSchema = z.object({
   lead_data_submitted: z.boolean(),
   call_request: z.boolean(),
   appointment_scheduled: z.boolean(),
+  // Día/hora literal que pidió el cliente. El código no lo interpreta ni lo persiste:
+  // viaja tal cual a la alerta de Telegram para que el asesor humano pueda confirmar.
+  appointment_slot: z.string().nullable(),
   zoom_meeting_scheduled: z.boolean(),
+  zoom_slot: z.string().nullable(),
   ai_agent_lead_submitted: z.boolean(),
+  // El cliente afirma calificar para una campaña de apoyo vigente (ver lib/promos.ts).
+  // No aplica ningún descuento: solo marca la alerta para que el asesor lo verifique.
+  fair_relief_claimed: z.boolean(),
   off_topic: z.boolean(),
   advisor_handoff: z.boolean(),
   advisor_handoff_reason: z
@@ -2625,8 +2729,11 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   lead_data_submitted: false,
   call_request: false,
   appointment_scheduled: false,
+  appointment_slot: null,
   zoom_meeting_scheduled: false,
+  zoom_slot: null,
   ai_agent_lead_submitted: false,
+  fair_relief_claimed: false,
   // Si OpenAI falla no se puede juzgar la relevancia del mensaje: se asume que sí
   // viene al caso para no apagar el bot por un error de infraestructura.
   off_topic: false,
@@ -3179,15 +3286,30 @@ function detectCourseContext(
 // propuso agendar o pidió confirmar la visita, buscando las frases fijas del prompt en
 // sus últimos mensajes. Sirve para que la confirmación de la cita ("sí", "confirmar",
 // "dale") no se lea como elección de paquete y dispare el formulario de leads.
+// Los tres primeros marcadores nuevos vienen de los textos actuales; "TE ESTARA ESPERANDO"
+// y "TE ESPERE EL" son de la redacción anterior (cuando el bot confirmaba la cita) y se
+// conservan para que las conversaciones con historial viejo se sigan detectando.
 const APPOINTMENT_PROMPT_MARKERS = [
   "QUIERES AGENDAR UNA VISITA",
   "INDICANOS EL DIA Y LA HORA",
   "ESCRIBE 'CONFIRMAR'",
   "ESCRIBE CONFIRMAR",
+  "ANOTO TU VISITA",
+  "PASE TU SOLICITUD",
+  "YA ESTA CON UN ASESOR",
   "TE ESTARA ESPERANDO",
   "TE ESPERE EL",
   "EN LA OFICINA",
 ];
+
+// ¿En algún momento de la conversación el cliente dijo algo que lo pondría dentro de una
+// campaña de apoyo vigente? Red de seguridad determinista sobre el flag del LLM: la marca
+// solo sirve para que el asesor verifique, así que es preferible marcarla de más.
+function detectFairReliefInHistory(history: HistoryMessage[], now: Date): boolean {
+  return history
+    .filter((message) => message.role === "user")
+    .some((message) => mentionsActiveRelief(message.content, now));
+}
 
 function detectAppointmentPending(history: HistoryMessage[]): boolean {
   return history
@@ -4225,6 +4347,7 @@ export async function POST(request: Request) {
             fallbackText: lastMessage.text,
             kind: callRequestPaused ? "call_request" : "intake",
             trigger,
+            fairRelief: detectFairReliefInHistory(pausedHistory, new Date()),
           });
 
           if (leadNotifiedWhilePaused) {
@@ -4519,6 +4642,9 @@ export async function POST(request: Request) {
     // nombra ninguna promo, así que cuando su ventana pasa el modelo se queda sin
     // material para inventarla (ver lib/promos.ts).
     renderPromoContext(turnNow),
+    // Campañas de apoyo (descuentos condicionados, como el 50% para los comerciantes de
+    // la feria Barrio Lindo afectados por el incendio). Misma ventana de vigencia.
+    renderReliefContext(turnNow),
     [
       "Estado real (ground truth del backend) de materiales ya enviados a este usuario:",
       `- course_flyer: ${mediaStatus.course_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
@@ -4839,11 +4965,18 @@ export async function POST(request: Request) {
   const callRequestHeuristic = detectCallRequestHeuristic(lastMessage.text);
   const callRequested = turn.call_request || callRequestHeuristic;
 
-  // Flujo de cita en curso: ya confirmada (marcador de Telegram) o propuesta y esperando
-  // el "confirmar" del cliente. Mientras dure, los afirmativos genéricos pertenecen a la
-  // cita y no deben abrir el formulario de leads ni generar un segundo aviso al asesor.
-  // Cita REAL (confirmada), para anotarla en las alertas de lead. `appointmentContext`
-  // es más amplio: incluye la cita apenas propuesta, que ya basta para no abrir leads.
+  // Campaña de apoyo (feria Barrio Lindo): basta con que el LLM o las palabras del cliente
+  // lo sugieran para marcar la alerta. No aplica ningún descuento: lo verifica el asesor.
+  const fairReliefClaimed =
+    turn.fair_relief_claimed || detectFairReliefInHistory(history, turnNow);
+
+  // Flujo de cita en curso: ya solicitada al asesor (marcador de Telegram) o propuesta y
+  // esperando el "confirmar" del cliente. Mientras dure, los afirmativos genéricos
+  // pertenecen a la cita y no deben abrir el formulario de leads ni generar un segundo
+  // aviso al asesor. `hasScheduledAppointment` = solicitud ya enviada al equipo (la
+  // confirmación final la da un humano, el código no la conoce), para anotarla en las
+  // alertas de lead. `appointmentContext` es más amplio: incluye la cita apenas propuesta,
+  // que ya basta para no abrir leads.
   const hasScheduledAppointment =
     telegramAppointmentSent || turn.appointment_scheduled;
 
@@ -5059,6 +5192,60 @@ export async function POST(request: Request) {
     await logSystemEvent({
       level: "info",
       eventType: "reserved_spot_claim_blocked",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
+  // Red de seguridad determinista contra el bug real (caso kbyJ): el cliente pidió una
+  // visita "mañana a las 6 de la tarde" y el bot respondió "un asesor te estará esperando"
+  // — una promesa que nadie verificó (la oficina cierra 18:00). El bot solo registra la
+  // solicitud; la cita la confirma un asesor humano tras ver la alerta de Telegram.
+  if (turn.should_reply && replyConfirmsAppointment(turn.reply)) {
+    console.log("appointment confirmation claim blocked", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.reply = APPOINTMENT_REQUEST_PENDING_REPLY;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "appointment_confirmation_blocked",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+        appointment_scheduled: turn.appointment_scheduled,
+        zoom_meeting_scheduled: turn.zoom_meeting_scheduled,
+      },
+    });
+  }
+
+  // Campaña de apoyo: el bot informa el 50% pero no hace la resta ni concede el descuento
+  // — no puede verificar que quien escribe sea un comerciante afectado de la feria. Si se
+  // adelantó con un monto rebajado o lo dio por aprobado, se reemplaza por el texto que
+  // devuelve la decisión al asesor. Solo mientras haya una campaña vigente.
+  if (
+    turn.should_reply &&
+    getActiveReliefCampaigns(turnNow).length > 0 &&
+    replyOverstatesRelief(turn.reply)
+  ) {
+    console.log("relief discount overstatement blocked", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.reply = RELIEF_PENDING_REPLY;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "relief_discount_overstatement_blocked",
       conversationId: lastMessage.conversationId,
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
@@ -5305,6 +5492,7 @@ export async function POST(request: Request) {
             ? "call_request"
             : "intake",
         hasAppointment: hasScheduledAppointment,
+        fairRelief: fairReliefClaimed,
         trigger: turn.call_request
           ? "call_request_assistant"
           : callRequestHeuristic
@@ -5711,6 +5899,7 @@ export async function POST(request: Request) {
             ? "call_request"
             : "intake",
         hasAppointment: hasScheduledAppointment,
+        fairRelief: fairReliefClaimed,
         trigger,
       });
 
@@ -5751,14 +5940,21 @@ export async function POST(request: Request) {
       });
     }
 
-    // Cita: el cliente confirmó una hora para visitar la oficina.
+    // Cita: el cliente pidió un día/hora para visitar la oficina. El bot NO la confirma —
+    // solo la solicita. Un asesor revisa la agenda y confirma por WhatsApp, por eso la
+    // alerta lleva el día/hora textual: sin él, el asesor solo ve "confirmar" y no puede
+    // decidir nada.
     if (turn.appointment_scheduled && !telegramAppointmentSent) {
       const notified = await sendTelegramNotification(
         buildTelegramBody({
-          headline: "📅 <b>Cita en oficina — Conecta Pro</b>",
+          headline: "📅 <b>Solicitud de cita en oficina — CONFIRMAR</b>",
           phone: lastMessage.from,
           clientMessage: lastMessage.text,
           summary: turn.conversation_summary,
+          contextLabel: "Pendiente de confirmación del asesor",
+          note: turn.appointment_slot
+            ? `🕒 Día/hora solicitados: ${turn.appointment_slot}\n⚠️ El bot NO confirmó la cita — confírmala tú por WhatsApp`
+            : "⚠️ El cliente confirmó pero no se pudo extraer día/hora — revisar el chat",
         }),
       );
 
@@ -5779,13 +5975,16 @@ export async function POST(request: Request) {
     if (turn.zoom_meeting_scheduled && !telegramZoomSent) {
       const notified = await sendTelegramNotification(
         buildTelegramBody({
-          headline: "📹 <b>Reunión por Zoom — Agente de IA</b>",
+          headline: "📹 <b>Solicitud de reunión por Zoom — CONFIRMAR</b>",
           phone: lastMessage.from,
           clientMessage: lastMessage.text,
           summary:
             turn.conversation_summary ||
             "El cliente aceptó la reunión por Zoom del agente de IA. Coordinar horario y enviar el link.",
-          contextLabel: "Agente de IA — coordinar Zoom y enviar link",
+          contextLabel: "Agente de IA — confirmar Zoom y enviar link",
+          note: turn.zoom_slot
+            ? `🕒 Día/hora solicitados: ${turn.zoom_slot}\n⚠️ El bot NO confirmó el horario ni envió link — hazlo tú`
+            : "⚠️ Sin día/hora extraído — revisar el chat",
         }),
       );
 
@@ -5908,6 +6107,7 @@ export async function POST(request: Request) {
       appointment_scheduled: turn.appointment_scheduled,
       zoom_meeting_scheduled: turn.zoom_meeting_scheduled,
       ai_agent_lead_submitted: turn.ai_agent_lead_submitted,
+      fair_relief_claimed: fairReliefClaimed,
       advisor_handoff: turn.advisor_handoff,
       advisor_handoff_reason: turn.advisor_handoff_reason,
       detected_intents: turn.intents,

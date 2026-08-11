@@ -4,8 +4,9 @@ import { notifyUnattendedLeadToTelegram } from "../../../../lib/telegram";
 // Consumidor de kapso_conversations: escala a Telegram con 🚨 los leads que ya
 // fueron notificados (🟢 Nuevo lead) pero que ningún asesor humano atendió dentro
 // del umbral configurado. Complementa la alerta ⚪ genérica de "Requiere asesor",
-// que el equipo suele pasar por alto. Invocado por Vercel Cron (ver vercel.json)
-// o manualmente con el header X-Followup-Secret.
+// que el equipo suele pasar por alto. Invocado cada 10 min por pg_cron desde
+// Supabase (ver supabase/migrations/20260811_pg_cron_schedulers.sql) o manualmente,
+// siempre con el header X-Followup-Secret.
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;

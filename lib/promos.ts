@@ -59,6 +59,114 @@ const PROMOS: Promo[] = [
   },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CAMPAÑAS DE APOYO (descuentos condicionados a que el cliente cumpla un requisito)
+//
+// Distintas de PROMOS: no tienen precio fijo, ni cantidad de videos, ni flyer. Son un
+// descuento sobre CUALQUIER paquete del catálogo, y solo aplican a quien cumple una
+// condición que el bot NO puede verificar (ser comerciante de tal feria, haber perdido
+// mercadería). Por eso el bot nunca las aprueba: informa, pregunta la condición y deja
+// que un asesor valide. Comparten con PROMOS la ventana de vigencia, así que también se
+// apagan solas.
+//
+// PARA ACTUALIZAR: edita SOLO la lista RELIEF_CAMPAIGNS.
+type ReliefCampaign = {
+  id: string;
+  name: string;
+  startsAt: string;
+  // Instante EXCLUSIVO en que deja de estar vigente (mismo criterio que Promo.endsAt).
+  endsAt: string;
+  // Requisitos que el asesor debe verificar antes de aplicar el descuento.
+  requirements: string[];
+  details: string[];
+  // Palabras del cliente que sugieren que podría calificar. Se usan como red de
+  // seguridad determinista para marcar la alerta de Telegram aunque el LLM no lo note.
+  clientHints: RegExp;
+};
+
+const RELIEF_CAMPAIGNS: ReliefCampaign[] = [
+  {
+    id: "relief_feria_barrio_lindo_2026_08",
+    name: "Apoyo a comerciantes de la feria Barrio Lindo — 50% de descuento",
+    startsAt: "2026-08-11T00:00:00-04:00",
+    endsAt: "2026-09-12T00:00:00-04:00",
+    requirements: [
+      "Ser comerciante/emprendedor de la feria Barrio Lindo.",
+      "Haber perdido mercadería en el incendio.",
+    ],
+    details: [
+      "50% de descuento sobre CUALQUIER paquete de producción de video del catálogo (Básico, Normal o Pro).",
+      "Es un apoyo por el incendio de la feria, no una promoción comercial: trátalo con respeto y sin euforia comercial (nada de '¡aprovecha!' ni '¡oferta imperdible!').",
+    ],
+    clientHints:
+      /\bBARRIO\s+LINDO\b|\bINCENDIO\b|\bSE\s+(ME\s+)?QUEMO\b|\bQUEMARON\b|\bPERDI\b(?:\s+\S+){0,3}?\s+MERCADERIA\b/,
+  },
+];
+
+function getActiveReliefCampaigns(now: Date): ReliefCampaign[] {
+  return RELIEF_CAMPAIGNS.filter((campaign) => {
+    const time = now.getTime();
+    return (
+      time >= new Date(campaign.startsAt).getTime() &&
+      time < new Date(campaign.endsAt).getTime()
+    );
+  });
+}
+
+// ¿El cliente dijo algo que sugiera que califica para alguna campaña vigente? Red de
+// seguridad determinista: si el LLM no marca el flag, la alerta al asesor igual se marca.
+// Fuera de la ventana devuelve false aunque el cliente nombre la feria.
+function mentionsActiveRelief(text: string, now: Date): boolean {
+  if (!text) return false;
+  const normalized = text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase();
+  return getActiveReliefCampaigns(now).some((campaign) =>
+    campaign.clientHints.test(normalized),
+  );
+}
+
+// Bloque de contexto de las campañas de apoyo. Igual que renderPromoContext: si no hay
+// ninguna vigente, el modelo se queda sin material para inventarla.
+function renderReliefContext(now: Date): string {
+  const active = getActiveReliefCampaigns(now);
+
+  if (active.length === 0) {
+    return [
+      "CAMPAÑAS DE APOYO / DESCUENTOS CONDICIONADOS: NINGUNA vigente en este momento.",
+      "- NUNCA ofrezcas ni menciones un descuento por incendio, desastre o pertenencia a una feria. Si el cliente lo pide, dile con amabilidad que esa campaña ya no está vigente y ofrécele los paquetes normales (FLUJO B).",
+    ].join("\n");
+  }
+
+  const lines = [
+    "CAMPAÑAS DE APOYO VIGENTES (fuente de verdad; si no aparece aquí, NO existe):",
+  ];
+
+  for (const campaign of active) {
+    lines.push(
+      `- ${campaign.name} — vigente hasta el ${formatPromoDay(
+        new Date(new Date(campaign.endsAt).getTime() - 1).toISOString(),
+      )} (hora de Bolivia).`,
+      ...campaign.details.map((detail) => `  • ${detail}`),
+      "  • REQUISITOS que el cliente debe cumplir:",
+      ...campaign.requirements.map((requirement) => `    - ${requirement}`),
+    );
+  }
+
+  lines.push(
+    "- CÓMO RESPONDER: si el cliente menciona la feria, el incendio o pregunta por este descuento, reconoce lo ocurrido con empatía y en una línea, confírmale que el descuento existe y explícale los requisitos. Si aún no sabes si califica, pregúntaselo directamente: si es comerciante de la feria y si perdió mercadería.",
+    "- NUNCA digas el monto final ni el precio ya rebajado, ni hagas la resta tú. Di que es 50% sobre el paquete que elija y que un asesor le confirma el monto exacto. Los precios normales del catálogo sí los puedes seguir dando con normalidad.",
+    "- NUNCA confirmes que el descuento ya está aplicado ni que 'ya quedó registrado'. Tú no verificas nada: un asesor valida que sea comerciante afectado y recién ahí se aplica. Di algo como 'un asesor valida tu caso y te confirma el precio con el descuento'.",
+    "- Si el cliente califica o dice que sí cumple, sigue el FLUJO B normal (pídele sus datos con el formulario de leads) para que un asesor lo contacte. Marca fair_relief_claimed = true en ese turno y en cualquier turno donde el cliente afirme ser de la feria o haber perdido mercadería.",
+    "- Si el cliente NO es de la feria, no le ofrezcas el descuento ni se lo insinúes: sigue con los paquetes normales.",
+    "- El descuento aplica SOLO a los paquetes de producción de video (LÍNEA B). NO aplica a los cursos ni al agente de IA. Si lo pide para un curso o para el agente, dile con amabilidad que esta campaña es solo para los paquetes de producción.",
+    "- NUNCA extiendas la campaña más allá de su fecha de vigencia ni prometas mantenerla.",
+  );
+
+  return lines.join("\n");
+}
+
 // ¿La promo está dentro de su ventana en este instante? La comparación es entre
 // instantes absolutos (los ISO llevan offset -04:00), así que no depende de la zona
 // horaria del servidor: en Vercel corre en UTC y da el mismo resultado.
@@ -146,6 +254,10 @@ function renderPromoContext(now: Date): string {
 
 export {
   PROMOS,
+  RELIEF_CAMPAIGNS,
+  getActiveReliefCampaigns,
+  mentionsActiveRelief,
+  renderReliefContext,
   getActivePromos,
   getActivePromoAmounts,
   getActivePromoVideoCounts,
@@ -153,4 +265,4 @@ export {
   isPromoIntentActive,
   renderPromoContext,
 };
-export type { Promo, PromoIntent };
+export type { Promo, PromoIntent, ReliefCampaign };
