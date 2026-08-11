@@ -31,7 +31,7 @@ type Promo = {
   // (ver getActivePromoAmounts).
   price: number;
   // Cantidad de videos de la promo. Es una cantidad que NO está en el catálogo normal
-  // (6/14), así que mientras la promo está vigente el backend tiene que reconocerla
+  // (6/12/18), así que mientras la promo está vigente el backend tiene que reconocerla
   // como "esta promo" y no como un pedido fuera de catálogo.
   videoCount: number;
   // Línea de negocio a la que pertenece: define con qué otros materiales es excluyente.
@@ -132,12 +132,12 @@ function renderPromoContext(now: Date): string {
 
   lines.push(
     "- Esta promo pertenece a la LÍNEA B (paquetes de producción). Cuando el cliente pregunte por promociones, ofertas o descuentos, o mencione los 4 videos / los 1.000 Bs, o pida esta promo: responde con sus datos concretos (sí puedes decir el precio y qué incluye, están arriba) y marca intents.service_packages_promo = true.",
-    "- En ese turno marca intents.service_packages = false: la promo y el flyer normal de paquetes NUNCA salen juntos, se enviaría material contradictorio (4 videos por 1.000 Bs vs. 6/14 videos mensuales).",
+    "- En ese turno marca intents.service_packages = false: la promo y el flyer normal de paquetes NUNCA salen juntos, se enviaría material contradictorio (4 videos por 1.000 Bs vs. 6/12/18 videos mensuales).",
     "- Si el cliente pregunta por los paquetes NORMALES sin mencionar promoción, sigue el FLUJO B de siempre (intents.service_packages = true) y, si viene al caso, menciona en UNA línea que hay una promo vigente por si le interesa. NO marques los dos intents a la vez.",
-    "- La promo NO reemplaza a los paquetes de 6 y 14 videos: es una oferta temporal adicional.",
+    "- La promo NO reemplaza a los paquetes de 6, 12 y 18 videos: es una oferta temporal adicional.",
     `- EXCEPCIÓN al flujo "CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR": mientras esta promo esté vigente, pedir ${active
       .map((promo) => promo.videoCount)
-      .join(" o ")} videos NO es una cantidad fuera de catálogo — es exactamente esta promo. En ese caso NO respondas que solo existen paquetes de 6 o 14, NO marques advisor_handoff con "out_of_catalog" y NO ofrezcas cotización a medida: ofrécele la promo y marca intents.service_packages_promo = true.`,
+      .join(" o ")} videos NO es una cantidad fuera de catálogo — es exactamente esta promo. En ese caso NO respondas que solo existen paquetes de 6, 12 o 18, NO marques advisor_handoff con "out_of_catalog" y NO ofrezcas cotización a medida: ofrécele la promo y marca intents.service_packages_promo = true.`,
     "- NUNCA prometas la promo para después de su última fecha de vigencia ni la extiendas.",
   );
 

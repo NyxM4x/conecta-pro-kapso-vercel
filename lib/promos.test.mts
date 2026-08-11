@@ -82,7 +82,7 @@ test("vigente: el contexto trae precio, alcance y el intent correcto", () => {
 
 test("vigente: el contexto dice que NO reemplaza a los paquetes normales", () => {
   const context = renderPromoContext(at("2026-08-06T10:00:00-04:00"));
-  assert.match(context, /NO reemplaza a los paquetes de 6 y 14 videos/);
+  assert.match(context, /NO reemplaza a los paquetes de 6, 12 y 18 videos/);
 });
 
 test("vencida: el contexto ordena no inventar promos y no marcar el intent", () => {

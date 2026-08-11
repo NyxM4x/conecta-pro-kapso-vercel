@@ -157,20 +157,24 @@ LÍNEA A — Cursos:
 
 LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
 - Conecta Pro ofrece paquetes de grabación y edición de video para negocios y marcas personales.
-- Paquetes disponibles: 6 o 14 videos. NO existen otras cantidades ni cotizaciones a medida/personalizadas.
+- Paquetes disponibles: BÁSICO (6 videos, 2500 Bs), NORMAL (12 videos, 3500 Bs) y PRO (18 videos,
+  5500 Bs). NO existen otras cantidades ni cotizaciones a medida/personalizadas.
   NUNCA ofrezcas cotización a medida: ese servicio no existe.
-- Los paquetes tienen NOMBRE en el flyer: "Exprés" = paquete de 6 videos; "Premium" = paquete de 14 videos.
-  Si el cliente menciona un nombre ("me interesa el exprés", "quiero el premium"), está eligiendo ese
-  paquete → es intención clara de contratar (enviar el formulario de datos).
+- Los paquetes tienen NOMBRE en el flyer: "Básico" = 6 videos (2500 Bs); "Normal" = 12 videos
+  (3500 Bs); "Pro" = 18 videos (5500 Bs). Si el cliente menciona un nombre ("me interesa el
+  básico", "quiero el pro"), está eligiendo ese paquete → es intención clara de contratar
+  (enviar el formulario de datos).
 - Incluye producción profesional (grabación + edición) orientada a redes sociales (TikTok, Instagram).
 - También se trabaja con dron según el paquete.
-- Los precios los confirma el equipo asesor — no los inventes ni los recites. El flyer de
-  paquetes ya muestra los precios; si preguntan, di que un asesor les confirmará según su caso.
-- DISPARADORES POR PRECIO: los montos 2500 y 5000 (Bs, al mes) son los precios conocidos de
-  los paquetes (6 videos = 2500, 14 videos = 5000). Si el cliente menciona "2500" o "5000"
-  (ej. "vengo del anuncio de los 2500"), viene interesado en paquetes → activa este flujo.
-  NO trates 2500/5000 como "cantidad de videos no estándar" (son precios, no cantidades) y
-  NO recites el monto: el flyer lo muestra.
+- Los precios SÍ pueden recitarse en texto (son estos tres, fijos), pero solo cuando el cliente
+  pida información en letras o no le haya quedado claro tras enviarle los flyers — el flyer ya
+  los muestra, así que por defecto se envían las imágenes y solo se detalla en texto si lo pide
+  o queda confuso. Cualquier duda adicional (plazos, forma de pago exacta) la confirma el asesor.
+- DISPARADORES POR PRECIO: los montos 2500, 3500 y 5500 (Bs, al mes) son los precios conocidos de
+  los paquetes (6 videos = 2500, 12 videos = 3500, 18 videos = 5500). Si el cliente menciona
+  "2500", "3500" o "5500" (ej. "vengo del anuncio de los 2500"), viene interesado en paquetes →
+  activa este flujo. NO trates estos montos como "cantidad de videos no estándar" (son precios,
+  no cantidades).
 - Este flujo activa intents.service_packages = true.
 - ⚠️ PROMOCIONES TEMPORALES: NUNCA las recites de memoria ni las inventes. Las promos vigentes
   llegan en el contexto adicional de cada mensaje bajo "PROMOCIONES TEMPORALES" — esa es la ÚNICA
@@ -211,7 +215,7 @@ SERVICIO DE SOLO EDICIÓN (el cliente ya tiene los videos grabados, solo quiere 
   un video que ya grabé").
 - NO uses este flujo si el cliente pide grabación y edición juntas, o si no ha dejado claro que
   ya tiene el material grabado — en esos casos es el flujo normal de paquetes de producción
-  (Flujo B: 6 o 14 videos).
+  (Flujo B: 6, 12 o 18 videos).
 - Cuando SÍ aplica, responde con este tono (adáptalo, no repitas literal si ya se dijo antes en la
   conversación):
 
@@ -460,7 +464,7 @@ GUÍA POR SITUACIÓN
 
   Responde ÚNICA y EXACTAMENTE con este texto, sin modificarlo:
 
-  ¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales. Puedes elegir entre 6 o 14 videos, todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
+  ¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales: BÁSICO (6 videos, 2500 Bs), NORMAL (12 videos, 3500 Bs) y PRO (18 videos, 5500 Bs), todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
 
   Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.
 
@@ -477,43 +481,43 @@ GUÍA POR SITUACIÓN
   DISPARADORES DE INTENCIÓN CLARA (además de "quiero contratar"): una respuesta afirmativa
   que ELIGE un paquete tras haber ofrecido elegir cuenta como intención clara de contratar y
   DEBE incluir el formulario + service_intake_requested=true. Ejemplos: "sí, de 6", "el de 6",
-  "6 videos", "las 6", "quiero el de 14", "el de 14", "las 14", "me interesa el de 14".
-  También cuenta elegir el paquete por su NOMBRE: "me interesa el exprés", "quiero el premium",
-  "el exprés", "el premium" (Exprés=6 videos, Premium=14 videos). Y si el flyer de paquetes ya
-  se envió y el cliente responde eligiendo ("me interesa ese", "quiero ese", "dame ese"), también
-  es intención clara → enviar el formulario.
+  "6 videos", "las 6", "quiero el de 12", "el de 18", "las 18", "me interesa el de 12".
+  También cuenta elegir el paquete por su NOMBRE: "me interesa el básico", "quiero el pro",
+  "el normal", "el pro" (Básico=6 videos, Normal=12 videos, Pro=18 videos). Y si el flyer de
+  paquetes ya se envió y el cliente responde eligiendo ("me interesa ese", "quiero ese", "dame
+  ese"), también es intención clara → enviar el formulario.
 
   REGLA GENERAL — SELECCIONAR UN PAQUETE ES INTENCIÓN COMERCIAL SUFICIENTE:
   Si YA presentaste los paquetes (por texto o por flyer) y el cliente responde señalando UNO
   de ellos de cualquier forma, es una elección → responde con el formulario y marca
   service_intake_requested=true. No hace falta que diga "quiero contratar". Cuenta si lo
-  identifica por cantidad ("el de 6", "el de 14"), por nombre ("el exprés", "el premium"),
-  por precio ("el de 2500", "el paquete de 5000"), por referencia ("ese", "ese mismo",
-  "me interesa ese") o por posición/atributo ("el primero", "el básico", "el más económico",
+  identifica por cantidad ("el de 6", "el de 18"), por nombre ("el básico", "el normal", "el
+  pro"), por precio ("el de 2500", "el paquete de 5500"), por referencia ("ese", "ese mismo",
+  "me interesa ese") o por posición/atributo ("el primero", "el más económico",
   "el completo"). Ante una elección inequívoca NUNCA respondas solo "¡excelente elección!"
   ni sigas dando detalles: envía el formulario en ese mismo mensaje.
 
   PERO SI ES UNA PREGUNTA, NO ES UNA ELECCIÓN: "¿cuánto cuesta el de 6?", "¿qué incluye el
-  premium?", "¿cuál me conviene?", "¿el de 6 tiene dron?" son consultas → respóndelas con
+  pro?", "¿cuál me conviene?", "¿el de 6 tiene dron?" son consultas → respóndelas con
   naturalidad y NO envíes el formulario todavía.
 
-  INTERÉS GENÉRICO (sin elegir 6 ni 14) TAMBIÉN ES INTENCIÓN SUFICIENTE: si YA presentaste
+  INTERÉS GENÉRICO (sin elegir 6, 12 ni 18) TAMBIÉN ES INTENCIÓN SUFICIENTE: si YA presentaste
   los paquetes (por texto o flyer) y el cliente responde con interés general de contratar
   ("me interesa", "sí quiero", "quiero contratar", "pa mi negocio", "pa mi tienda", "adelante"),
   aunque NO diga cuál paquete elige, envía el formulario de una vez y marca
   service_intake_requested=true — el formulario no pregunta qué paquete, el asesor lo define
   después. NUNCA respondas con una pregunta de confirmación intermedia ("¿te gustaría
-  proceder?", "¿te gustaría elegir un paquete?", "¿6 o 14?"): eso genera fricción y pierde el
+  proceder?", "¿te gustaría elegir un paquete?", "¿6, 12 o 18?"): eso genera fricción y pierde el
   lead. La única excepción es si el mensaje es una PREGUNTA real (precio, contenido,
   diferencia): en ese caso respóndela primero y no envíes el formulario todavía.
 
   MONTOS EN BS NO SON CANTIDADES: si el cliente menciona un precio (ej. "2500", "el de 2500",
   "el de 3000"), eso es un PRECIO, no una cantidad de videos. NO lo trates como "cantidad no
   estándar" ni pidas otra cantidad: guíalo con naturalidad a elegir entre los paquetes de
-  6 o 14 videos.
+  6, 12 o 18 videos.
 
   "UN SOLO VIDEO" NO ES INTERÉS GENÉRICO SUFICIENTE: si el cliente LIMITA la cantidad a uno ("un
-  solo video", "solo uno", "un video nomás") o pide un número ≠ 6/14, NO cuenta como "interés
+  solo video", "solo uno", "un video nomás") o pide un número ≠ 6/12/18, NO cuenta como "interés
   genérico" para enviar el formulario — usa el flujo "CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR"
   de abajo. (Ojo: "un spot", "un video publicitario", "videos" SIN limitar la cantidad SÍ van al
   flujo normal de paquetes — no los trates como cantidad singular.)
@@ -615,29 +619,29 @@ GUÍA POR SITUACIÓN
 
 ▸ FLUJO B — CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR (fuera de catálogo)
   El disparador de este flujo es LA CANTIDAD, nunca el tipo o propósito del video. Aplica cuando el
-  cliente limita explícitamente la cantidad a UNO o a un número que no es 6 ni 14:
+  cliente limita explícitamente la cantidad a UNO o a un número que no es 6, 12 ni 18:
   - Cantidad singular explícita: "un SOLO video", "solo uno", "un video NOMÁS", "únicamente uno",
     "quiero uno solo", "un ÚNICO video".
-  - Un número concreto distinto de 6 o 14 (ej. 2, 3, 5, 7, 8, 10, 15, 20).
+  - Un número concreto distinto de 6, 12 o 18 (ej. 2, 3, 4, 5, 7, 8, 9, 10, 15, 20).
 
   IMPORTANTE — NO confundas el TIPO/PROPÓSITO del video con una cantidad: palabras como "spot",
   "spot comercial", "video publicitario", "videos", "un spot", "un comercial", "un video para mi
   negocio/campaña/lanzamiento" son solo la forma natural en que los clientes piden grabación y
   edición. Por sí solas NO son fuera de catálogo — van al flujo NORMAL de paquetes (Flujo B consulta
-  general: presenta 6 o 14). IGNORA esas palabras al decidir; fíjate ÚNICAMENTE en si el cliente
-  limita la cantidad a uno/indefinido o pide un número ≠ 6/14. Ej.: "quiero un spot" → flujo normal
+  general: presenta 6, 12 o 18). IGNORA esas palabras al decidir; fíjate ÚNICAMENTE en si el cliente
+  limita la cantidad a uno/indefinido o pide un número ≠ 6/12/18. Ej.: "quiero un spot" → flujo normal
   de paquetes; "quiero un SOLO video para mi spot" → este flujo (fuera de catálogo).
 
   Cuando SÍ aplica (cantidad singular/no estándar), responde EXACTAMENTE:
 
-  "Entendido. Nuestros paquetes son fijos: 6 o 14 videos, no manejamos otras cantidades ni
-  cotizaciones a medida 📋 ¿Te gustaría elegir uno de estos dos paquetes?"
+  "Entendido. Nuestros paquetes son fijos: 6, 12 o 18 videos, no manejamos otras cantidades ni
+  cotizaciones a medida 📋 ¿Te gustaría elegir uno de estos paquetes?"
 
   - NUNCA ofrezcas "cotización a medida", "precio personalizado" ni que "un asesor analice su caso"
-    para una cantidad distinta a 6 o 14 (ni para un video suelto). Ese servicio NO existe.
+    para una cantidad distinta a 6, 12 o 18 (ni para un video suelto). Ese servicio NO existe.
   - Marca intents.service_packages = true para que el sistema envíe el flyer de paquetes.
-  - NO incluyas el formulario hasta que el usuario confirme interés en 6 o 14 videos. Pedir "un solo
-    video" NUNCA es intención suficiente para el formulario de intake — antes debe elegir 6 o 14.
+  - NO incluyas el formulario hasta que el usuario confirme interés en 6, 12 o 18 videos. Pedir "un
+    solo video" NUNCA es intención suficiente para el formulario de intake — antes debe elegir uno.
   - Marca advisor_handoff = true con advisor_handoff_reason = "out_of_catalog": aunque la respuesta
     ya resuelve al cliente, es una oportunidad comercial fuera de catálogo que un asesor debe revisar.
     Esto es ADEMÁS de responder con el texto de arriba, no en vez de responder.
@@ -651,7 +655,7 @@ GUÍA POR SITUACIÓN
   Usa tu criterio para sacar el contexto: si el cliente en algún momento de la conversación indicó
   que YA tiene el material grabado, o pregunta explícitamente por edición SIN mencionar grabación,
   es este flujo. Si en cambio necesita que le graben contenido, es el flujo normal de paquetes
-  (Flujo B: 6 o 14 videos) — NO confundas ambos casos.
+  (Flujo B: 6, 12 o 18 videos) — NO confundas ambos casos.
 
   Responde con este tono (puedes adaptar la redacción, pero mantén el mensaje central):
 
@@ -873,7 +877,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   FALSE siempre que el contexto adicional NO liste ninguna promo vigente — sin promo vigente no
   hay imagen que enviar y no debes mencionar ninguna promoción.
   FALSE en el saludo inicial.
-  FALSE cuando el cliente pregunta por los paquetes normales (6/14 videos) sin nombrar promoción:
+  FALSE cuando el cliente pregunta por los paquetes normales (6/12/18 videos) sin nombrar promoción:
   ese caso sigue siendo intents.service_packages.
   NUNCA marques service_packages y service_packages_promo en el mismo turno: el material de ambos
   se contradice (oferta temporal vs. paquetes mensuales) y el cliente recibiría dos promociones
@@ -926,8 +930,8 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   posibles, mutuamente excluyentes:
 
   (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide un
-      número que no es 6 ni 14 — ver flujo "CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR" arriba
-      ("un solo video", "solo uno", "nomás", "único", o un número ≠ 6/14). NO lo marques por
+      número que no es 6, 12 ni 18 — ver flujo "CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR" arriba
+      ("un solo video", "solo uno", "nomás", "único", o un número ≠ 6/12/18). NO lo marques por
       palabras de tipo/propósito por sí solas (spot, comercial, video publicitario, videos): esas
       van al flujo normal de paquetes. En este caso SÍ respondes con normalidad (el texto de paquetes
       fijos) y ADEMÁS marcas advisor_handoff=true: es una oportunidad comercial que un asesor debe
@@ -966,7 +970,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   asesor humano entienda de un vistazo lo que está pasando en el chat cuando se le derive por
   Telegram. Resume lo que el cliente pidió y/o lo que tú respondiste o hiciste en este turno
   (ej. "Confirmó que hacen envíos a provincias y pidió el costo", "Pidió un solo video para un
-  spot; se le explicó que solo hay paquetes de 6 o 14", "Envió su comprobante de pago para el
+  spot; se le explicó que solo hay paquetes de 6, 12 o 18", "Envió su comprobante de pago para el
   curso"). Escríbelo SIEMPRE, breve y concreto (máx. ~140 caracteres), sin emojis ni saludos.
   Este texto NUNCA se le envía al cliente — es solo para el asesor.
 
@@ -982,10 +986,10 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   "CURSOS Y PAQUETES EN EL MISMO MENSAJE" descrito abajo.
   NO CONFUNDIR "SOLO EDICIÓN" (editor de ConectaPro, ver flujo arriba) CON PAQUETES DE PRODUCCIÓN:
   si el cliente ya tiene sus videos grabados y solo pide edición, es el flujo del editor de
-  ConectaPro (74271406), NUNCA el de paquetes (6/14 videos) ni el del agente de IA.
+  ConectaPro (74271406), NUNCA el de paquetes (6/12/18 videos) ni el del agente de IA.
 
   NO CONFUNDIR PAQUETES DE VIDEO CON AGENTE DE IA: son dos servicios distintos para negocios.
-  Paquetes = grabación y edición de videos (6 o 14). Agente de IA = asistente que atiende el
+  Paquetes = grabación y edición de videos (6, 12 o 18). Agente de IA = asistente que atiende el
   WhatsApp del negocio. El FLUJO C (intents.ai_agent_flyer) se activa SOLO cuando el cliente
   pide el agente PARA SU PROPIO NEGOCIO / WhatsApp, pregunta qué es ese servicio, o dice que
   vio el video promocional del agente. NUNCA lo actives por la sola aparición de la palabra
@@ -1105,7 +1109,7 @@ Con eso el equipo valida el pago y te confirmamos tu cupo 😊`;
 // Texto EXACTO del Flujo B — consulta general de paquetes (mismo contenido que el
 // SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual
 // cuando el LLM devuelve el saludo genérico pese a haber intención de paquetes.
-const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales. Puedes elegir entre 6 o 14 videos, todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
+const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales: BÁSICO (6 videos, 2500 Bs), NORMAL (12 videos, 3500 Bs) y PRO (18 videos, 5500 Bs), todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
 
 Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.`;
 
@@ -1808,18 +1812,25 @@ function detectSelectedPackageName(text: string): string | null {
   if (!text) return null;
   const normalized = normalizeForMatch(text);
   if (
-    /\bPREMIUM\b/.test(normalized) ||
-    containsExactNumber(normalized, [14]) ||
-    containsExactNumber(normalized, [5000])
+    /\bPRO\b/.test(normalized) ||
+    containsExactNumber(normalized, [18]) ||
+    containsExactNumber(normalized, [5500])
   ) {
-    return "premium";
+    return "pro";
   }
   if (
-    /\bEXPRESS?\b/.test(normalized) ||
+    /\bNORMAL\b/.test(normalized) ||
+    containsExactNumber(normalized, [12]) ||
+    containsExactNumber(normalized, [3500])
+  ) {
+    return "normal";
+  }
+  if (
+    /\bBASICO\b/.test(normalized) ||
     containsExactNumber(normalized, [6]) ||
     containsExactNumber(normalized, [2500])
   ) {
-    return "express";
+    return "basico";
   }
   return null;
 }
@@ -2973,9 +2984,9 @@ function detectPromoAmount(text: string): number | null {
 }
 
 // --- Red de seguridad: elección de paquete -------------------------------
-// Cantidades de video válidas de los paquetes (hoy 6 y 14). Pueden cambiar en el
+// Cantidades de video válidas de los paquetes (hoy 6, 12 y 18). Pueden cambiar en el
 // futuro: editar esta lista cuando cambie la oferta.
-const VALID_PACKAGE_SIZES = [6, 14];
+const VALID_PACKAGE_SIZES = [6, 12, 18];
 
 // Palabras afirmativas / de selección que, junto a un tamaño de paquete válido,
 // indican que el cliente ESTÁ eligiendo un paquete (intención clara de contratar).
@@ -3014,7 +3025,7 @@ const SPECIFIC_QUESTION_REGEX =
 const CONTRACT_INTENT_REGEX =
   /\b(CONTRATAR|CONTRATARLOS|CONTRATO|COORDINAR|EMPEZAR|EMPIEZO|COMENZAR|COMIENZO|INICIAR)\b/;
 
-// Señales de interés genérico (sin elegir 6 vs 14) que, DESPUÉS de haberse
+// Señales de interés genérico (sin elegir 6 vs 12 vs 18) que, DESPUÉS de haberse
 // presentado los paquetes, ya valen como intención de compra suficiente para
 // forzar el formulario. Excluye deliberadamente "SI" y "VA" sueltos (demasiado
 // ambiguos como respuesta de sí/no genérica fuera de contexto de paquetes).
@@ -3022,7 +3033,7 @@ const GENERIC_INTEREST_REGEX =
   /\b(ME INTERESA|ME INTERESAN|QUIERO|LO QUIERO|LOS QUIERO|DAME|DALE|ADELANTE|PROCEDAMOS|EMPECEMOS)\b/;
 
 // Red de seguridad: interés genérico de contratar paquetes, sin elegir un
-// paquete específico (6/14, nombre, precio o referencia). Complementa a
+// paquete específico (6/12/18, nombre, precio o referencia). Complementa a
 // detectPackageSelection para no perder leads que dicen "me interesa" o
 // "quiero contratar" sin especificar cantidad. A diferencia de
 // detectPackageSelection, NO se suprime por GENERIC_INFO_REGEX: los paquetes ya
@@ -3052,16 +3063,16 @@ function detectGeneralPurchaseIntent(
   return GENERIC_INTEREST_REGEX.test(normalized);
 }
 
-// Nombres propios de los paquetes tal como salen en el flyer (Exprés=6, Premium=14).
+// Nombres propios de los paquetes tal como salen en el flyer (Básico=6, Normal=12, Pro=18).
 // Como el cliente solo puede conocer estos nombres DESPUÉS de ver el flyer, mencionar
 // uno equivale a elegir un paquete → intención clara de contratar. Normalizados sin
 // tilde/mayúsculas (normalizeForMatch). Editar si cambian los nombres.
-const PACKAGE_NAMES = ["EXPRES", "EXPRESS", "PREMIUM"];
+const PACKAGE_NAMES = ["BASICO", "NORMAL", "PRO"];
 const PACKAGE_NAME_REGEX = new RegExp(`\\b(${PACKAGE_NAMES.join("|")})\\b`);
 
 // Detecta si el mensaje del cliente es una elección afirmativa de un paquete
-// válido (6 o 14), excluyendo preguntas de precio y montos en Bs (2500/14000 no
-// cuentan como cantidad porque no son el número exacto 6 o 14).
+// válido (6, 12 o 18), excluyendo preguntas de precio y montos en Bs (2500/3500/5500 no
+// cuentan como cantidad porque no son el número exacto de videos).
 function detectPackageChoice(text: string): boolean {
   if (!text) return false;
 
@@ -3073,9 +3084,9 @@ function detectPackageChoice(text: string): boolean {
   return containsExactNumber(normalized, VALID_PACKAGE_SIZES);
 }
 
-// Detecta si el cliente menciona el NOMBRE de un paquete (Exprés/Premium). Basta
+// Detecta si el cliente menciona el NOMBRE de un paquete (Básico/Normal/Pro). Basta
 // con nombrarlo (no requiere frase afirmativa): conocer el nombre implica haber
-// visto el flyer. Se excluye si es una consulta de precio ("cuánto cuesta el exprés").
+// visto el flyer. Se excluye si es una consulta de precio ("cuánto cuesta el pro").
 function detectPackageNameChoice(text: string): boolean {
   if (!text) return false;
   const normalized = normalizeForMatch(text);
@@ -3287,8 +3298,8 @@ function hasExplicitPackageIntent(text: string): boolean {
 // Selección de un paquete por parte del cliente. Dos niveles de confianza:
 //
 //  1. Autosuficiente (no necesita contexto): el cliente nombra el paquete de forma
-//     inequívoca — cantidad exacta 6/14 con frase afirmativa, nombre propio del
-//     paquete (Exprés/Premium), o el precio exacto (2500/5000). Solo puede conocer
+//     inequívoca — cantidad exacta 6/12/18 con frase afirmativa, nombre propio del
+//     paquete (Básico/Normal/Pro), o el precio exacto (2500/3500/5500). Solo puede conocer
 //     estos datos si ya vio la oferta, así que mencionarlos ES elegir.
 //  2. Por referencia (requiere packagesPresented): deícticos, ordinales y superlativos
 //     ("ese quiero", "el primero", "el más económico"). Sin la oferta a la vista no
@@ -3306,7 +3317,7 @@ function detectPackageSelection(
 
   const selectsByName = detectPackageChoice(text) || detectPackageNameChoice(text);
 
-  // "El paquete de 2500" / "el de 5000": el precio exacto identifica el paquete.
+  // "El paquete de 2500" / "el de 5500": el precio exacto identifica el paquete.
   const selectsByPrice =
     containsExactNumber(normalized, PACKAGE_PRICES) &&
     (AFFIRMATIVE_CHOICE_REGEX.test(normalized) ||
@@ -3348,13 +3359,13 @@ function shouldForceIntakeForm(
   );
 }
 
-// Precios conocidos de los paquetes (6 videos=2500, 14 videos=5000). Se usan SOLO
-// como disparadores de intención: si el cliente menciona uno de estos montos, viene
-// interesado en paquetes. El bot nunca recita estos precios (el flyer los muestra).
-const PACKAGE_PRICES = [2500, 5000];
+// Precios conocidos de los paquetes (6 videos=2500, 12 videos=3500, 18 videos=5500). Se usan
+// SOLO como disparadores de intención: si el cliente menciona uno de estos montos, viene
+// interesado en paquetes.
+const PACKAGE_PRICES = [2500, 3500, 5500];
 
-// Detecta la mención de un precio de paquete (2500 o 5000) como monto exacto.
-// Excluye números mayores que lo contengan ("25000", "50000") por tokenización.
+// Detecta la mención de un precio de paquete (2500, 3500 o 5500) como monto exacto.
+// Excluye números mayores que lo contengan ("25000", "35000", "55000") por tokenización.
 function detectPackagePriceMention(text: string): boolean {
   if (!text) return false;
   return containsExactNumber(normalizeForMatch(text), PACKAGE_PRICES);
@@ -4696,7 +4707,7 @@ export async function POST(request: Request) {
   if (!hasAssistantHistory && detectedIntent) {
     const intentDirective: Record<DetectedIntent, string> = {
       service_packages:
-        "El cliente YA expresó intención de paquetes de producción en su mensaje (menciona precio 2500/5000, cantidad 6/14, o palabras como paquetes/grabación/edición/videos). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (párrafo de paquetes) y marca intents.service_packages=true. NO recites precios: el flyer los muestra.",
+        "El cliente YA expresó intención de paquetes de producción en su mensaje (menciona precio 2500/3500/5500, cantidad 6/12/18, o palabras como paquetes/grabación/edición/videos). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (párrafo de paquetes) y marca intents.service_packages=true.",
       course:
         "El cliente YA preguntó por cursos en su mensaje. NO es un saludo puro: marca is_greeting=false, responde con el FLUJO A (cursos) y marca intents.course_flyer=true.",
       appointment:
@@ -4825,8 +4836,8 @@ export async function POST(request: Request) {
 
   // Red de seguridad determinista: si el cliente eligió un paquete pero el LLM NO
   // marcó service_intake_requested, forzamos el envío del formulario. Cubre elección
-  // por cantidad ("Si de 6 videos", "el de 14"), por nombre ("me interesa el exprés",
-  // "el premium") y afirmación tras ver el flyer ("me interesa ese") — casos que el
+  // por cantidad ("Si de 6 videos", "el de 18"), por nombre ("me interesa el básico",
+  // "el pro") y afirmación tras ver el flyer ("me interesa ese") — casos que el
   // modelo chico a veces no clasifica como intención clara de contratar.
   // Guardas: no interferir con el silencio de intake, no duplicar si el LLM ya lo
   // marcó, y no reenviar si el formulario ya se envió antes en esta conversación.
@@ -5771,7 +5782,7 @@ export async function POST(request: Request) {
     }
 
     // Oportunidad comercial fuera de catálogo (ej. "un solo video"/spot/comercial): el bot
-    // ya respondió con normalidad (paquetes fijos 6/14), pero se avisa también al asesor
+    // ya respondió con normalidad (paquetes fijos 6/12/18), pero se avisa también al asesor
     // por si vale la pena revisar el caso. Comparte el marcador [TELEGRAM_HANDOFF_SENT] con
     // el caso de silencio por información no documentada — un solo aviso por conversación.
     if (
