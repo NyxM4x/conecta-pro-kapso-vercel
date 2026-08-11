@@ -464,7 +464,13 @@ GUÍA POR SITUACIÓN
 
   Responde ÚNICA y EXACTAMENTE con este texto, sin modificarlo:
 
-  ¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales: BÁSICO (6 videos, 2500 Bs), NORMAL (12 videos, 3500 Bs) y PRO (18 videos, 5500 Bs), todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
+  ¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales 🎬
+
+  📦 *Básico:* 6 videos — 2500 Bs
+  📦 *Normal:* 12 videos — 3500 Bs
+  📦 *Pro:* 18 videos — 5500 Bs
+
+  Todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
 
   Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.
 
@@ -1109,7 +1115,13 @@ Con eso el equipo valida el pago y te confirmamos tu cupo 😊`;
 // Texto EXACTO del Flujo B — consulta general de paquetes (mismo contenido que el
 // SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual
 // cuando el LLM devuelve el saludo genérico pese a haber intención de paquetes.
-const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales: BÁSICO (6 videos, 2500 Bs), NORMAL (12 videos, 3500 Bs) y PRO (18 videos, 5500 Bs), todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
+const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales 🎬
+
+📦 *Básico:* 6 videos — 2500 Bs
+📦 *Normal:* 12 videos — 3500 Bs
+📦 *Pro:* 18 videos — 5500 Bs
+
+Todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
 
 Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.`;
 
