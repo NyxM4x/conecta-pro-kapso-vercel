@@ -3838,6 +3838,12 @@ type MediaSendResult =
   | { status: "no_assets" }
   | { status: "send_failed"; error: string };
 
+// Intents que NUNCA se deduplican por teléfono: el flyer de paquetes debe volver a
+// salir cada vez que el cliente pregunta, aunque ya lo haya recibido antes en la
+// conversación (o en una conversación anterior). Decisión de negocio: clientes que
+// dudan y vuelven a preguntar más tarde deben recibir el flyer de nuevo, no solo texto.
+const ALWAYS_RESEND_INTENTS: ReadonlySet<MediaIntent> = new Set(["service_packages"]);
+
 async function sendMediaForIntent(params: {
   intent: MediaIntent;
   conversationId?: string;
@@ -3845,7 +3851,7 @@ async function sendMediaForIntent(params: {
   phoneNumberId: string;
   force?: boolean;
 }): Promise<MediaSendResult> {
-  if (!params.force) {
+  if (!params.force && !ALWAYS_RESEND_INTENTS.has(params.intent)) {
     const alreadySent = await hasMediaIntentBeenSent(params.phone, params.intent);
     if (alreadySent) {
       console.log(
@@ -4524,7 +4530,7 @@ export async function POST(request: Request) {
         ? ["Como course_flyer YA fue enviado: no anuncies los flyers de cursos como si fuera la primera vez. Asume que ya se compartieron, salvo que el usuario los pida explícitamente de nuevo."]
         : []),
       ...(mediaStatus.service_packages
-        ? ["Como service_packages YA fue enviado: no presentes los paquetes como si fuera la primera vez. Responde asumiendo que ese material ya fue compartido antes, salvo que el usuario lo pida explícitamente de nuevo."]
+        ? ["Aunque service_packages YA se envió antes, el flyer de paquetes SIEMPRE se reenvía cada vez que el cliente pregunta por servicios/paquetes/precios, sin excepción — clientes que dudan y vuelven a preguntar después deben recibir el flyer otra vez, no solo texto. Marca intents.service_packages = true igual que la primera vez; el backend ya no deduplica este material."]
         : []),
       ...(mediaStatus.service_packages_promo
         ? ["Como service_packages_promo YA fue enviado: la imagen de la promo temporal ya la tiene. No la presentes como novedad ni repitas todo su detalle; continúa la conversación desde ahí, salvo que el usuario la pida explícitamente de nuevo."]
