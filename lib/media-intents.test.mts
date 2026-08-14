@@ -7,7 +7,13 @@
 // y el último mensaje del cliente. La guarda decide qué material sale de verdad.
 
 import assert from "node:assert/strict";
-import { asksForActivePromo, isCourseQuery, resolvePromoIntents } from "./media-intents.ts";
+import {
+  MEDIA_RESEND_WINDOW_HOURS,
+  asksForActivePromo,
+  isCourseQuery,
+  resolvePromoIntents,
+  shouldResendMedia,
+} from "./media-intents.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -218,6 +224,94 @@ test("isCourseQuery distingue cursos de servicios", () => {
   assert.equal(isCourseQuery("quiero pagar el curso de creación de contenido"), true);
   assert.equal(isCourseQuery("¿tienen promoción?"), false);
   assert.equal(isCourseQuery("quiero grabación de videos"), false);
+});
+
+// ---------------------------------------------------------------------------
+// Ventana de reenvío del flyer de paquetes (anti-spam)
+// ---------------------------------------------------------------------------
+
+const AHORA = new Date("2026-08-14T13:44:00-04:00");
+const horasAntes = (hours: number) =>
+  new Date(AHORA.getTime() - hours * 3_600_000);
+
+test("nunca enviado: el flyer de paquetes sale", () => {
+  const decision = shouldResendMedia({ intent: PAQUETES, lastSentAt: null, now: AHORA });
+  assert.equal(decision.send, true);
+  assert.equal(decision.reason, "never_sent");
+});
+
+test("dentro de las 24h: no se reenvía (caso del formulario)", () => {
+  // El cliente recibió el flyer a las 13:42 y a las 13:43 manda sus datos.
+  const reciente = shouldResendMedia({
+    intent: PAQUETES,
+    lastSentAt: horasAntes(1 / 60),
+    now: AHORA,
+  });
+  assert.equal(reciente.send, false);
+  assert.equal(reciente.reason, "within_window");
+
+  assert.equal(
+    shouldResendMedia({ intent: PAQUETES, lastSentAt: horasAntes(1), now: AHORA }).send,
+    false,
+  );
+  // Justo en el borde: 23:59h todavía dentro.
+  assert.equal(
+    shouldResendMedia({ intent: PAQUETES, lastSentAt: horasAntes(23.9), now: AHORA }).send,
+    false,
+  );
+});
+
+test("pasadas 24h: el flyer vuelve a salir (precios nuevos)", () => {
+  const exacto = shouldResendMedia({
+    intent: PAQUETES,
+    lastSentAt: horasAntes(24),
+    now: AHORA,
+  });
+  assert.equal(exacto.send, true);
+  assert.equal(exacto.reason, "window_expired");
+
+  // Vuelve a la semana: igual lo recibe.
+  assert.equal(
+    shouldResendMedia({ intent: PAQUETES, lastSentAt: horasAntes(24 * 7), now: AHORA }).send,
+    true,
+  );
+});
+
+test("force (reenvío pedido explícitamente) ignora la ventana", () => {
+  const decision = shouldResendMedia({
+    intent: PAQUETES,
+    lastSentAt: horasAntes(0.5),
+    now: AHORA,
+    force: true,
+  });
+  assert.equal(decision.send, true);
+  assert.equal(decision.reason, "forced");
+});
+
+test("intents sin ventana conservan el dedup permanente", () => {
+  for (const intent of ["payment_qr", "course_flyer", PROMO, "ai_agent_flyer"]) {
+    assert.equal(MEDIA_RESEND_WINDOW_HOURS[intent], undefined, intent);
+    const decision = shouldResendMedia({
+      intent,
+      lastSentAt: horasAntes(24 * 30),
+      now: AHORA,
+    });
+    assert.equal(decision.send, false, intent);
+    assert.equal(decision.reason, "already_sent", intent);
+    // Pero nunca enviado sí sale.
+    assert.equal(
+      shouldResendMedia({ intent, lastSentAt: null, now: AHORA }).send,
+      true,
+      intent,
+    );
+  }
+});
+
+test("timestamp futuro (reloj corrido) se trata como envío reciente", () => {
+  assert.equal(
+    shouldResendMedia({ intent: PAQUETES, lastSentAt: horasAntes(-5), now: AHORA }).send,
+    false,
+  );
 });
 
 console.log(`${passed} pruebas de guardas OK`);

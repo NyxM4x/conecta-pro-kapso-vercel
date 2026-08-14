@@ -150,5 +150,71 @@ function resolvePromoIntents(params: {
   return { intents, reasons };
 }
 
-export { asksForActivePromo, isCourseQuery, resolvePromoIntents, PROMO_INTENT };
-export type { PromoResolution, PromoResolutionReason };
+// --- Ventana de reenvío de material -------------------------------------------------
+//
+// Dos políticas para no repetir material que el cliente ya recibió:
+//
+//   a) Dedup PERMANENTE (por defecto): una vez enviado a ese teléfono, nunca más.
+//      Sirve para material que no cambia (QR de pago, video de ubicación).
+//   b) Dedup por VENTANA: el material vuelve a salir recién pasadas N horas del último
+//      envío. Es el caso del flyer de paquetes, cuyos precios cambian: quien vuelve a
+//      escribir al día siguiente o a la semana debe ver el flyer nuevo, pero quien sigue
+//      la misma conversación (respondiendo el formulario, preguntando por un paquete) no
+//      debe recibir las mismas imágenes cada dos mensajes.
+const MEDIA_RESEND_WINDOW_HOURS: Readonly<Record<string, number>> = {
+  service_packages: 24,
+};
+
+type MediaResendReason =
+  | "forced"
+  | "never_sent"
+  | "window_expired"
+  | "within_window"
+  | "already_sent";
+
+type MediaResendDecision = {
+  send: boolean;
+  reason: MediaResendReason;
+  // Solo cuando hay envío previo y el intent tiene ventana. Para logs y auditoría.
+  hoursSinceLastSent?: number;
+  windowHours?: number;
+};
+
+// Función PURA: el instante y el último envío entran por parámetro (sin base, sin reloj
+// propio), igual que resolvePromoIntents.
+function shouldResendMedia(params: {
+  intent: string;
+  lastSentAt: Date | null;
+  now: Date;
+  force?: boolean;
+}): MediaResendDecision {
+  // Reenvío explícito pedido por el cliente: siempre gana.
+  if (params.force) return { send: true, reason: "forced" };
+
+  if (!params.lastSentAt) return { send: true, reason: "never_sent" };
+
+  const windowHours = MEDIA_RESEND_WINDOW_HOURS[params.intent];
+
+  // Sin ventana configurada: dedup permanente, el comportamiento histórico.
+  if (windowHours === undefined) return { send: false, reason: "already_sent" };
+
+  const hoursSinceLastSent =
+    (params.now.getTime() - params.lastSentAt.getTime()) / 3_600_000;
+
+  // Fecha futura o corrida por reloj: se trata como envío reciente (no reenviar).
+  if (hoursSinceLastSent >= windowHours) {
+    return { send: true, reason: "window_expired", hoursSinceLastSent, windowHours };
+  }
+
+  return { send: false, reason: "within_window", hoursSinceLastSent, windowHours };
+}
+
+export {
+  asksForActivePromo,
+  isCourseQuery,
+  resolvePromoIntents,
+  shouldResendMedia,
+  MEDIA_RESEND_WINDOW_HOURS,
+  PROMO_INTENT,
+};
+export type { MediaResendDecision, MediaResendReason, PromoResolution, PromoResolutionReason };

@@ -12,7 +12,11 @@ import {
   mentionsActiveRelief,
   getActiveReliefCampaigns,
 } from "../../../../lib/promos";
-import { resolvePromoIntents } from "../../../../lib/media-intents";
+import {
+  MEDIA_RESEND_WINDOW_HOURS,
+  resolvePromoIntents,
+  shouldResendMedia,
+} from "../../../../lib/media-intents";
 import { isMediaAssetInWindow } from "../../../../lib/media-assets";
 import {
   normalizeForMatch,
@@ -2996,6 +3000,51 @@ async function hasMediaIntentBeenSent(
   return (data ?? []).length > 0;
 }
 
+// Instante del ÚLTIMO envío de un material a este teléfono, leyendo el marcador
+// "[MEDIA_SENT:<intent>]" que deja sendMediaForIntent. Alimenta la ventana de reenvío
+// (ver shouldResendMedia en lib/media-intents.ts). Mismo patrón que
+// hasTelegramPaymentBeenSent: última fila por created_at.
+async function getMediaIntentLastSentAt(
+  phone: string,
+  intent: MediaIntent,
+): Promise<Date | null> {
+  if (!phone) return null;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("created_at")
+    .eq("contact_phone", phone)
+    .eq("direction", "outbound")
+    .ilike("content", `[MEDIA_SENT:${intent}]%`)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error("supabase read media intent last sent failed", error);
+
+    await logSystemEvent({
+      level: "error",
+      eventType: "supabase_media_last_sent_failed",
+      contactPhone: phone,
+      errorMessage: error.message,
+      metadata: { code: error.code, details: error.details, intent },
+    });
+
+    // Fail-open: ante un error de lectura preferimos reenviar el material antes que
+    // dejar al cliente sin él.
+    return null;
+  }
+
+  const rawTimestamp = (data ?? [])[0]?.created_at as string | undefined;
+  if (!rawTimestamp) return null;
+
+  const sentAt = new Date(rawTimestamp);
+
+  return Number.isNaN(sentAt.getTime()) ? null : sentAt;
+}
+
 async function getMediaSentStatus(
   phone: string,
 ): Promise<Record<MediaIntent, boolean>> {
@@ -3960,12 +4009,6 @@ type MediaSendResult =
   | { status: "no_assets" }
   | { status: "send_failed"; error: string };
 
-// Intents que NUNCA se deduplican por teléfono: el flyer de paquetes debe volver a
-// salir cada vez que el cliente pregunta, aunque ya lo haya recibido antes en la
-// conversación (o en una conversación anterior). Decisión de negocio: clientes que
-// dudan y vuelven a preguntar más tarde deben recibir el flyer de nuevo, no solo texto.
-const ALWAYS_RESEND_INTENTS: ReadonlySet<MediaIntent> = new Set(["service_packages"]);
-
 async function sendMediaForIntent(params: {
   intent: MediaIntent;
   conversationId?: string;
@@ -3973,7 +4016,45 @@ async function sendMediaForIntent(params: {
   phoneNumberId: string;
   force?: boolean;
 }): Promise<MediaSendResult> {
-  if (!params.force && !ALWAYS_RESEND_INTENTS.has(params.intent)) {
+  // Intents con VENTANA de reenvío (hoy solo service_packages): el flyer de paquetes
+  // vuelve a salir pasadas 24h del último envío —precios que cambian, cliente que
+  // escribe al día siguiente o a la semana— pero no se repite dentro del mismo día,
+  // que era la causa del spam (el cliente recibía las mismas 2 imágenes mientras
+  // llenaba el formulario). El resto conserva el dedup permanente por teléfono.
+  const hasWindow = MEDIA_RESEND_WINDOW_HOURS[params.intent] !== undefined;
+
+  if (!params.force && hasWindow) {
+    const lastSentAt = await getMediaIntentLastSentAt(params.phone, params.intent);
+    const decision = shouldResendMedia({
+      intent: params.intent,
+      lastSentAt,
+      now: new Date(),
+    });
+
+    if (!decision.send) {
+      console.log(
+        "media intent within resend window, skipping",
+        params.intent,
+        maskPhone(params.phone),
+        decision.hoursSinceLastSent?.toFixed(1),
+      );
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "media_resend_window_skip",
+        conversationId: params.conversationId,
+        contactPhone: params.phone,
+        metadata: {
+          intent: params.intent,
+          reason: decision.reason,
+          hours_since_last_sent: decision.hoursSinceLastSent,
+          window_hours: decision.windowHours,
+        },
+      });
+
+      return { status: "skipped_already_sent" };
+    }
+  } else if (!params.force) {
     const alreadySent = await hasMediaIntentBeenSent(params.phone, params.intent);
     if (alreadySent) {
       console.log(
@@ -4562,6 +4643,7 @@ export async function POST(request: Request) {
     telegramZoomSent,
     flowState,
     manualHumanMediaSent,
+    packagesLastSentAt,
   ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
@@ -4577,6 +4659,9 @@ export async function POST(request: Request) {
     hasTelegramZoomBeenSent(lastMessage.conversationId),
     getConversationFlowState(lastMessage.conversationId),
     hasManualHumanMediaBeenSent(lastMessage.conversationId),
+    // Último envío del flyer de paquetes: define si este turno vuelve a mandarlo o
+    // responde solo en texto (ventana de 24h, ver sendMediaForIntent).
+    getMediaIntentLastSentAt(lastMessage.from, "service_packages"),
   ]);
 
   // Promo del live (PROMO[monto]/PROMOCION[monto], con tolerancia a typos): primero
@@ -4584,6 +4669,14 @@ export async function POST(request: Request) {
   // dentro de la ventana de historial ya cargada (sin queries adicionales). El monto
   // anunciado en el live es el precio que se le confirma al cliente.
   const turnNow = new Date();
+
+  // Misma decisión que aplicará el backend al enviar el material, calculada acá para
+  // que el TEXTO que escribe el modelo sea coherente con lo que realmente sale.
+  const packagesResendDecision = shouldResendMedia({
+    intent: "service_packages",
+    lastSentAt: packagesLastSentAt,
+    now: turnNow,
+  });
 
   // Desambiguación con las PROMOS TEMPORALES de video (lib/promos.ts): esas también se
   // piden diciendo "promo" + su precio, y sin este filtro un "promo 1000" de la promo de
@@ -4655,8 +4748,11 @@ export async function POST(request: Request) {
       ...(mediaStatus.course_flyer
         ? ["Como course_flyer YA fue enviado: no anuncies los flyers de cursos como si fuera la primera vez. Asume que ya se compartieron, salvo que el usuario los pida explícitamente de nuevo."]
         : []),
-      ...(mediaStatus.service_packages
-        ? ["Aunque service_packages YA se envió antes, el flyer de paquetes SIEMPRE se reenvía cada vez que el cliente pregunta por servicios/paquetes/precios, sin excepción — clientes que dudan y vuelven a preguntar después deben recibir el flyer otra vez, no solo texto. Marca intents.service_packages = true igual que la primera vez; el backend ya no deduplica este material."]
+      ...(mediaStatus.service_packages && !packagesResendDecision.send
+        ? ["El flyer de paquetes ya se le envió hace menos de un día: NO vuelve a salir en este turno. Responde sus dudas de servicios/paquetes/precios en TEXTO, sin anunciar el flyer, sin mencionar que se lo enviaste y sin ofrecer reenviarlo. Continúa la conversación desde donde quedó (por ejemplo, completar los datos que falten del formulario). Solo si el cliente pide explícitamente que se lo reenvíes, marca intents.service_packages = true."]
+        : []),
+      ...(mediaStatus.service_packages && packagesResendDecision.send
+        ? ["Aunque service_packages YA se envió antes, pasó más de un día desde entonces: el flyer de paquetes vuelve a salir cuando el cliente pregunta por servicios/paquetes/precios, porque los precios pueden haber cambiado. Marca intents.service_packages = true igual que la primera vez."]
         : []),
       ...(mediaStatus.service_packages_promo
         ? ["Como service_packages_promo YA fue enviado: la imagen de la promo temporal ya la tiene. No la presentes como novedad ni repitas todo su detalle; continúa la conversación desde ahí, salvo que el usuario la pida explícitamente de nuevo."]
