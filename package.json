@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node lib/promos.test.mts && node lib/media-intents.test.mts",
+    "test": "node lib/promos.test.mts && node lib/media-intents.test.mts && node lib/courses.test.mts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"

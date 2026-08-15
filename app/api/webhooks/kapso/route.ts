@@ -4,7 +4,8 @@ import { openai } from "@ai-sdk/openai";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { sendTelegramNotification, escapeTelegramHtml, buildTelegramBody } from "../../../../lib/telegram";
-import { renderCourseContext } from "../../../../lib/courses";
+import { renderCourseContext, hasActiveLocationOverride } from "../../../../lib/courses";
+import { MAPS_OFICINA } from "../../../../lib/locations";
 import {
   getActivePromoAmounts,
   renderPromoContext,
@@ -98,13 +99,9 @@ export const maxDuration = 60;
 
 type SystemLogLevel = "info" | "warning" | "error" | "critical";
 
-// --- Ubicaciones: DOS lugares DISTINTOS, nunca intercambiables -------------
-// Se declaran aquí y se interpolan en el prompt para que no puedan cruzarse por
-// un copy/paste: el curso NO se dicta en la oficina.
-//   MAPS_CURSOS  -> dónde se dictan los cursos presenciales (LÍNEA A).
-//   MAPS_OFICINA -> oficina de Conecta Pro (visitas, citas con asesor).
-const MAPS_CURSOS = "https://maps.app.goo.gl/Qk6XXohdNf735gKAA";
-const MAPS_OFICINA = "https://maps.app.goo.gl/dw7oXDDSYygE7WFW9";
+// Las dos ubicaciones viven en lib/locations.ts. Aquí solo se usa la de la OFICINA:
+// la del curso ya no se interpola en el prompt, la trae el contexto de cursos vigentes
+// (lib/courses.ts), porque una fecha puntual puede dictarse excepcionalmente en otro lado.
 
 const SYSTEM_PROMPT = `
 Eres la asistente de WhatsApp de Conecta Pro. Hablas en nombre del equipo, en un tono cercano, entusiasta
@@ -118,20 +115,22 @@ Conecta Pro tiene TRES líneas activas:
 
 LÍNEA A — Cursos:
 - Conecta Pro dicta cursos presenciales en Santa Cruz de la Sierra, Bolivia: Curso de Creación de
-  Contenido y Curso de Edición en CapCut Pro. Ubicación del CURSO (link de Google Maps, texto
-  plano, NUNCA markdown), la misma para ambos:
-  ${MAPS_CURSOS}
-- ⚠️ FECHAS Y PRECIOS: NUNCA los recites de memoria. Llegan en el contexto adicional de cada
-  mensaje bajo "CURSOS — FECHAS Y PRECIOS VIGENTES" — esa es la ÚNICA fuente de verdad, se
+  Contenido y Curso de Edición en CapCut Pro.
+- ⚠️ FECHAS, PRECIOS Y UBICACIÓN: NUNCA los recites de memoria. Llegan en el contexto adicional de
+  cada mensaje bajo "CURSOS — FECHAS Y PRECIOS VIGENTES" — esa es la ÚNICA fuente de verdad, se
   actualiza sola y solo incluye los cursos con fecha vigente. Si un curso no aparece ahí como
-  vigente, no lo anuncies, no des su fecha ni su precio, ni prometas una fecha que no esté
-  confirmada en ese bloque.
-- ⚠️ REGLA CRÍTICA — LOS CURSOS NO SON EN LA OFICINA: son DOS lugares distintos y NUNCA se
-  intercambian. Para cualquier pregunta sobre dónde es un CURSO usa SIEMPRE ${MAPS_CURSOS}
-  (jamás el link de la oficina). El link de la oficina es solo para visitas/citas con un asesor.
-  Si te preguntan por la ubicación del curso, además del link marca intents.location_video = true
-  para que el sistema envíe el video de cómo llegar. NUNCA escribas un link de Maps que no sea
-  uno de esos dos, y nunca digas que el curso se dicta en la oficina.
+  vigente, no lo anuncies, no des su fecha, ni su precio, ni su ubicación, ni prometas una fecha
+  que no esté confirmada en ese bloque.
+- ⚠️ REGLA CRÍTICA — LA UBICACIÓN DEL CURSO NUNCA LA ELIGES TÚ: cada curso vigente trae su propia
+  línea "Ubicación de ESTE curso" en ese bloque. Copia ESE link tal cual (texto plano, NUNCA
+  markdown), siempre. NUNCA lo deduzcas, NUNCA lo recites de memoria y NUNCA uses el link de la
+  oficina por tu cuenta para un curso: el link de la oficina es para visitas/citas con un asesor,
+  y son flujos distintos. Por defecto los cursos NO se dictan en la oficina; si por excepción
+  alguna fecha sí lo fuera, el propio bloque de cursos vigentes te lo dirá con todas las letras —
+  no lo asumas nunca por tu cuenta. NUNCA escribas un link de Maps que no venga de ese bloque o de
+  la sección UBICACIÓN OFICINA.
+  Al dar la ubicación de un curso marca intents.location_video = true para que el sistema envíe el
+  video de cómo llegar, SALVO que el bloque de cursos vigentes indique lo contrario para ese curso.
 - CONTENIDO del Curso de Creación de Contenido (temas CONFIRMADOS, puedes afirmarlos con
   seguridad):
   • ALGORITMO DE TIKTOK, incluido el algoritmo de TIKTOK LIVE (transmisiones en vivo): cómo
@@ -354,18 +353,24 @@ GUÍA POR SITUACIÓN
   - Pregunta GENERAL de cursos (sin decir cuál): menciona los que tengan FECHA VIGENTE según el
     contexto adicional ("CURSOS — FECHAS Y PRECIOS VIGENTES"), con su fecha tal cual viene ahí. Si
     solo hay uno vigente, menciona solo ese (NO ofrezcas uno sin fecha vigente). Si no hay ninguno
-    vigente, usa el caso "NINGÚN CURSO CON FECHA VIGENTE" más abajo. Junto a la fecha, incluye:
-    Ubicación del curso (link tal cual, en su propia línea, texto plano): ${MAPS_CURSOS}
-    Marca intents.location_video = true (el sistema envía el video de cómo llegar).
+    vigente, usa el caso "NINGÚN CURSO CON FECHA VIGENTE" más abajo. Junto a la fecha, incluye la
+    ubicación de ESE curso tal cual viene en su línea "Ubicación de ESTE curso" (en su propia
+    línea, texto plano) y respeta cualquier ⚠️ que traiga ese curso.
+    Marca intents.location_video = true (el sistema envía el video de cómo llegar), salvo que el
+    bloque de cursos vigentes indique lo contrario para ese curso.
   - Pregunta ESPECÍFICA por Creación de Contenido o por Edición en CapCut: si ese curso está
-    vigente en el contexto adicional, da directo su fecha (tal cual viene ahí) con ${MAPS_CURSOS}
-    en su propia línea (texto plano) y marca intents.location_video = true. Si NO está vigente
+    vigente en el contexto adicional, da directo su fecha (tal cual viene ahí) con la ubicación de
+    ESE curso (tal cual, en su propia línea, texto plano) y marca intents.location_video = true,
+    salvo que ese curso indique lo contrario en el bloque. Si NO está vigente
     (no aparece en la lista de cursos vigentes), usa el flujo "CLIENTE MENCIONA UN CURSO CUYA
     FECHA YA PASÓ" más abajo — NUNCA inventes ni repitas una fecha vieja.
   - Pregunta POR LA UBICACIÓN DEL CURSO ("¿dónde es el curso?", "¿cómo llego?", "¿en qué dirección
-    es?", "pásame la ubicación del curso"): responde con ${MAPS_CURSOS} en su propia línea y marca
-    intents.location_video = true. NUNCA respondas con el link ni con la dirección de la oficina, y
-    NUNCA ofrezcas agendar una visita a la oficina en este caso — es otro lugar y otro flujo.
+    es?", "pásame la ubicación del curso"): responde con la ubicación de ESE curso tal cual viene
+    en el bloque de cursos vigentes, en su propia línea, y marca intents.location_video = true
+    (salvo que ese curso indique lo contrario ahí). Si ese curso trae un ⚠️ avisando que el lugar
+    cambió por esta fecha, dilo con claridad para que el cliente no vaya al lugar de siempre.
+    NUNCA respondas con un link que no venga de ese bloque, y NUNCA ofrezcas agendar una visita a
+    la oficina en este caso — la visita a oficina es otro flujo, aunque la dirección coincidiera.
   - Pregunta si se enseña el ALGORITMO DE TIKTOK o el de TIKTOK LIVE (ej. "¿en el curso podré
     aprender también sobre el algoritmo de TikTok LIVE?", "¿enseñan el algoritmo?", "¿cómo crecer
     en los lives?"): la respuesta es SÍ. Confírmalo breve y con entusiasmo, sumando una frase
@@ -879,6 +884,8 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   por dónde es / cómo llegar al curso). El sistema envía entonces el video de cómo llegar.
   FALSE para la ubicación de la OFICINA (visitas y citas con asesor): ese es otro lugar y ese
   video no corresponde. FALSE también en el saludo y en los flujos de paquetes y agente de IA.
+  FALSE si el bloque de cursos vigentes lo indica expresamente para ese curso: cuando una fecha se
+  dicta en una ubicación excepcional, el video muestra la ubicación habitual y confundiría.
 - intents.payment_qr: true SOLO con intención clara de pagar/reservar alguno de los dos cursos
   (Creación de Contenido o Edición en CapCut Pro, ver FLUJO A — CURSOS arriba). FALSE para: consultas de precio sin intención de pagar
   todavía, preguntas informativas sobre métodos de pago ("¿aceptan QR?", "¿cómo funciona la
@@ -5816,6 +5823,19 @@ export async function POST(request: Request) {
         messageId: lastMessage.messageId,
       });
     }
+  }
+
+  // Guarda determinista: si un curso vigente se dicta excepcionalmente en otra ubicación,
+  // el video de "cómo llegar" muestra la habitual y contradiría el link que se acaba de
+  // dar — mandaría gente al lugar equivocado justo el día del curso. El prompt ya lo pide,
+  // pero esto no puede depender del criterio del modelo. Se vuelve inerte solo cuando la
+  // excepción vence (ver locationOverride.until en lib/courses.ts).
+  if (intentsToSend.has("location_video") && hasActiveLocationOverride(new Date())) {
+    intentsToSend.delete("location_video");
+    console.warn("location_video suppressed: active course location override", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
   }
 
   // Guarda determinista: el agente de IA (LÍNEA C) es un embudo independiente de los
