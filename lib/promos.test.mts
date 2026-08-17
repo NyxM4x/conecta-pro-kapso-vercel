@@ -9,8 +9,13 @@ import assert from "node:assert/strict";
 import {
   getActivePromoAmounts,
   getActivePromos,
+  getActiveReliefCampaigns,
+  getClosedReliefCampaigns,
+  getReliefClosedReply,
   isPromoIntentActive,
+  mentionsReliefCampaign,
   renderPromoContext,
+  renderReliefContext,
 } from "./promos.ts";
 import { isMediaAssetInWindow } from "./media-assets.ts";
 
@@ -95,6 +100,80 @@ test("vencida: el contexto ordena no inventar promos y no marcar el intent", () 
 
 test("vencida: getActivePromos queda vacío", () => {
   assert.equal(getActivePromos(at("2026-08-08T00:00:00-04:00")).length, 0);
+});
+
+// --- Campaña de apoyo de la feria Barrio Lindo (CERRADA) --------------------
+//
+// Se cerró a mano el 17 de agosto de 2026, antes de que expirara su ventana (que iba
+// hasta el 12 de septiembre): el alcance superó la capacidad del equipo. Estas pruebas
+// fijan las dos garantías que se pidieron — la campaña no se ofrece más, y los mismos
+// disparadores ahora producen un cierre sin formulario y sin pasar el caso a un asesor.
+
+const HOY = at("2026-08-17T10:00:00-04:00");
+
+test("status closed manda sobre las fechas: hoy la campaña NO está vigente", () => {
+  // Dentro de la ventana original (11 ago → 12 sep), pero cerrada a mano.
+  assert.equal(getActiveReliefCampaigns(HOY).length, 0);
+});
+
+test("ni siquiera el día que arrancó la ventana la reabre", () => {
+  assert.equal(getActiveReliefCampaigns(at("2026-08-11T00:00:00-04:00")).length, 0);
+});
+
+test("hoy sí figura como campaña CERRADA (el bot debe saber responderla)", () => {
+  const closed = getClosedReliefCampaigns(HOY);
+  assert.equal(closed.length, 1);
+  assert.equal(closed[0].id, "relief_feria_barrio_lindo_2026_08");
+});
+
+test("pasada la gracia de 60 días el cierre desaparece solo del prompt", () => {
+  // endsAt = 12 sep 2026; +60 días ≈ 11 nov. En enero ya no queda nada.
+  assert.equal(getClosedReliefCampaigns(at("2027-01-15T10:00:00-04:00")).length, 0);
+  assert.doesNotMatch(
+    renderReliefContext(at("2027-01-15T10:00:00-04:00")),
+    /Barrio Lindo/,
+  );
+});
+
+test("los disparadores del cliente siguen reconociéndose tras el cierre", () => {
+  for (const mensaje of [
+    "hola, soy comerciante de la feria Barrio Lindo",
+    "se me quemó todo en el incendio",
+    "perdí toda mi mercadería",
+    "quemaron mi puesto la semana pasada",
+    "vi que tenían apoyo por el INCENDIO",
+  ]) {
+    assert.equal(mentionsReliefCampaign(mensaje, HOY), true, mensaje);
+  }
+});
+
+test("un mensaje comercial normal no dispara el cierre", () => {
+  assert.equal(mentionsReliefCampaign("quiero el paquete de 12 videos", HOY), false);
+  assert.equal(mentionsReliefCampaign("", HOY), false);
+});
+
+test("getReliefClosedReply devuelve el texto de cierre, no un descuento", () => {
+  const reply = getReliefClosedReply("soy de la feria barrio lindo", HOY);
+  assert.ok(reply);
+  assert.match(reply, /ya no se encuentra vigente/);
+  assert.match(reply, /saturado/);
+  assert.doesNotMatch(reply, /50\s*%/);
+  assert.doesNotMatch(reply, /asesor/);
+});
+
+test("getReliefClosedReply es null si el mensaje no habla de la campaña", () => {
+  assert.equal(getReliefClosedReply("cuánto cuesta el paquete pro", HOY), null);
+});
+
+test("el contexto de hoy ordena cerrar: sin 50%, sin formulario, sin asesor", () => {
+  const context = renderReliefContext(HOY);
+  assert.match(context, /CAMPAÑAS DE APOYO CERRADAS/);
+  assert.match(context, /CERRADA\. Ya no admite nuevos casos/);
+  assert.match(context, /NUNCA envíes el formulario de datos de leads/);
+  assert.match(context, /NUNCA insinúes que todavía podría alcanzarle/);
+  // Lo que el bot decía antes y ya no debe decir.
+  assert.doesNotMatch(context, /50% de descuento sobre CUALQUIER paquete/);
+  assert.doesNotMatch(context, /un asesor valida tu caso/);
 });
 
 // --- Filtro de vigencia de kapso_media_assets -------------------------------

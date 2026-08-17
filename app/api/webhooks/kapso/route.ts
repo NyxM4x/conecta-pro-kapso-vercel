@@ -10,8 +10,8 @@ import {
   getActivePromoAmounts,
   renderPromoContext,
   renderReliefContext,
-  mentionsActiveRelief,
-  getActiveReliefCampaigns,
+  mentionsReliefCampaign,
+  getReliefClosedReply,
 } from "../../../../lib/promos";
 import {
   MEDIA_RESEND_WINDOW_HOURS,
@@ -163,6 +163,19 @@ LÍNEA A — Cursos:
   automáticamente cuando corresponde — nunca prometas "te lo mando ahora", usa frases neutras
   ("el QR está disponible para reservar tu cupo").
 - Este flujo activa intents.course_flyer = true para que el sistema envíe los flyers de ambos cursos.
+- ⚠️ REGLA ABSOLUTA — LOS CURSOS NUNCA USAN EL FORMULARIO DE DATOS: un curso se cierra con el QR de
+  pago y, después de pagar, el comprobante + nombre completo + número de celular escritos por el
+  chat. Eso es TODO lo que se necesita. El formulario de leads (📌 Nombre, empresa, cargo dentro de
+  la empresa, rubro, Instagram, tipo de contenido...) es EXCLUSIVO de los paquetes de grabación y
+  edición de la LÍNEA B y NUNCA sale por un curso, en ningún flujo, por ninguna razón. Tampoco le
+  pidas su empresa ni su rubro por un curso: no hacen falta y solo estorban. Esta regla vale
+  también cuando el cliente dice "me interesa", "quiero ese", "el primero" o "el más económico"
+  refiriéndose a un CURSO: eso NO es elegir un paquete, y en ese caso service_intake_requested se
+  queda en false.
+- Ojo con los NOMBRES de los cursos: "creación de contenido" y "edición en CapCut" contienen las
+  palabras "contenido", "edición" y "video", que también aparecen en la LÍNEA B. Que el cliente las
+  use NO convierte su mensaje en interés por paquetes: si dice "curso", "taller" o "clase", está en
+  la LÍNEA A.
 
 LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
 - Conecta Pro ofrece paquetes de grabación y edición de video para negocios y marcas personales.
@@ -972,11 +985,6 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   sucursales son deseables, no bloqueantes). Ver FLUJO C arriba. Es el equivalente de
   lead_data_submitted pero para la LÍNEA C — NO marques lead_data_submitted por leads del agente
   de IA. Márcalo SOLO UNA VEZ por conversación.
-- fair_relief_claimed: true cuando el cliente afirma cumplir los requisitos de una campaña de apoyo
-  vigente (ver el bloque "CAMPAÑAS DE APOYO" del contexto), por ejemplo que es comerciante de la
-  feria Barrio Lindo o que perdió mercadería en el incendio. Marca que HAY QUE VERIFICARLO, no que
-  el descuento esté aprobado. NO lo marques si solo pregunta si existe algún descuento sin decir
-  que es de la feria, ni si no hay ninguna campaña vigente en el contexto.
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
   evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Cuatro motivos
@@ -1135,29 +1143,17 @@ function replyConfirmsAppointment(reply: string): boolean {
 // interpreta) pero deja clarísimo quién confirma.
 const APPOINTMENT_REQUEST_PENDING_REPLY = `¡Gracias! Ya pasé tu solicitud a un asesor 📋 Él te confirma por aquí el día y la hora en cuanto revise la agenda 😊`;
 
-// Campaña de apoyo (feria Barrio Lindo): el bot anuncia el 50% pero NUNCA el monto final
-// ni el descuento como aprobado — no puede verificar que el cliente sea un comerciante
-// afectado. Los montos son la mitad exacta del catálogo (2500/3500/5500): no aparecen en
-// ningún otro texto legítimo, así que detectarlos es señal inequívoca de que hizo la resta.
-const RELIEF_DISCOUNTED_AMOUNT_REGEX = /\b1[.,]?250\b|\b1[.,]?750\b|\b2[.,]?750\b/;
+// Campaña de apoyo CERRADA (feria Barrio Lindo): el bot ya no puede tramitar nada. Estas
+// señales delatan que igual siguió el guion viejo — ofrecer el 50%, pedir datos o pasar el
+// caso a un asesor — y obligan a reemplazar la respuesta por el cierre.
+const RELIEF_STILL_OFFERING_REGEX =
+  /\b50\s*%|\bCINCUENTA\s+POR\s+CIENTO\b|\bMITAD\s+DE\s+PRECIO\b|\bUN\s+ASESOR\b(?:\s+\S+){0,4}?\s+(VALIDA|VALIDARA|VERIFICA|VERIFICARA|CONFIRMA|CONFIRMARA|CONTACTARA|SE\s+COMUNICARA)\b|\bDESCUENTO\b(?:\s+\S+){0,4}?\s+(APLICADO|CONFIRMADO|APROBADO|REGISTRADO|VIGENTE|DISPONIBLE)\b/;
 
-// El bot da el descuento por concedido en vez de dejarlo en manos del asesor.
-const RELIEF_GRANTED_REGEX =
-  /\b(DESCUENTO|50%|CINCUENTA\s+POR\s+CIENTO)\b(?:\s+\S+){0,4}?\s+(APLICADO|CONFIRMADO|APROBADO|REGISTRADO)\b|\bYA\s+TE\s+(APLIQUE|APLICAMOS|HICE|HICIMOS)\b(?:\s+\S+){0,3}?\s+DESCUENTO\b|\bTE\s+QUEDA\s+EN\b/;
-
-function replyOverstatesRelief(reply: string): boolean {
+// ¿La respuesta sigue tratando la campaña cerrada como si estuviera abierta?
+function replyStillOffersRelief(reply: string): boolean {
   if (!reply) return false;
-  const normalized = normalizeForMatch(reply);
-  return (
-    RELIEF_DISCOUNTED_AMOUNT_REGEX.test(normalized) ||
-    RELIEF_GRANTED_REGEX.test(normalized)
-  );
+  return RELIEF_STILL_OFFERING_REGEX.test(normalizeForMatch(reply));
 }
-
-// Reemplazo cuando el bot se adelanta con el monto o da el descuento por aprobado.
-const RELIEF_PENDING_REPLY = `Lamento mucho lo que pasó en la feria 🙏 El apoyo es un 50% de descuento sobre cualquiera de nuestros paquetes de producción, para comerciantes de la feria Barrio Lindo que hayan perdido mercadería.
-
-Un asesor valida tu caso y te confirma el monto exacto con el descuento. ¿Me confirmas si eres comerciante de la feria y si perdiste mercadería? 😊`;
 
 // Respuesta de reemplazo cuando la red de seguridad bloquea el formulario de leads de
 // paquetes en una conversación que era de cursos (ver detectCourseContext). El cliente
@@ -2163,9 +2159,6 @@ async function notifyLeadToTelegram(params: {
   kind?: "intake" | "call_request" | "ai_agent";
   trigger?: LeadTrigger;
   hasAppointment?: boolean;
-  // El cliente dice calificar para una campaña de apoyo vigente. El bot no verifica
-  // nada: la nota le pide al asesor que valide antes de aplicar el descuento.
-  fairRelief?: boolean;
 }): Promise<boolean> {
   const lastClientMessage =
     params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
@@ -2179,9 +2172,6 @@ async function notifyLeadToTelegram(params: {
         : "🟢 <b>Nuevo lead — Conecta Pro</b>";
 
   const notes = [
-    params.fairRelief
-      ? "🔥 FERIA BARRIO LINDO — el cliente dice ser comerciante afectado por el incendio. VERIFICAR que sea de la feria y que haya perdido mercadería antes de aplicar el 50%. El bot no le dio ningún monto con descuento."
-      : null,
     params.hasAppointment
       ? "📅 El cliente tiene una solicitud de cita en oficina pendiente de confirmar"
       : null,
@@ -2703,9 +2693,6 @@ const AssistantTurnSchema = z.object({
   zoom_meeting_scheduled: z.boolean(),
   zoom_slot: z.string().nullable(),
   ai_agent_lead_submitted: z.boolean(),
-  // El cliente afirma calificar para una campaña de apoyo vigente (ver lib/promos.ts).
-  // No aplica ningún descuento: solo marca la alerta para que el asesor lo verifique.
-  fair_relief_claimed: z.boolean(),
   off_topic: z.boolean(),
   advisor_handoff: z.boolean(),
   advisor_handoff_reason: z
@@ -2744,7 +2731,6 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   zoom_meeting_scheduled: false,
   zoom_slot: null,
   ai_agent_lead_submitted: false,
-  fair_relief_claimed: false,
   // Si OpenAI falla no se puede juzgar la relevancia del mensaje: se asume que sí
   // viene al caso para no apagar el bot por un error de infraestructura.
   off_topic: false,
@@ -3358,15 +3344,6 @@ const APPOINTMENT_PROMPT_MARKERS = [
   "EN LA OFICINA",
 ];
 
-// ¿En algún momento de la conversación el cliente dijo algo que lo pondría dentro de una
-// campaña de apoyo vigente? Red de seguridad determinista sobre el flag del LLM: la marca
-// solo sirve para que el asesor verifique, así que es preferible marcarla de más.
-function detectFairReliefInHistory(history: HistoryMessage[], now: Date): boolean {
-  return history
-    .filter((message) => message.role === "user")
-    .some((message) => mentionsActiveRelief(message.content, now));
-}
-
 function detectAppointmentPending(history: HistoryMessage[]): boolean {
   return history
     .filter((message) => message.role === "assistant")
@@ -3476,12 +3453,39 @@ function hasExplicitPackageIntent(text: string): boolean {
     return false;
   }
 
+  // Mismo criterio para los CURSOS, y por un motivo concreto: los dos cursos del catálogo
+  // se llaman "creación de CONTENIDO" y "EDICIÓN en CapCut", y esas palabras están dentro
+  // de SERVICE_PACKAGES_KEYWORDS. Sin esta guarda, "quiero el curso de creación de
+  // contenido" contaba como intención explícita de paquetes, desactivaba el bloqueo de
+  // cursos y le mandaba el formulario de datos de empresa a alguien que solo quiere un
+  // curso. Solo una señal FUERTE de paquete gana: la palabra "paquete", una cantidad del
+  // catálogo (6/12/18), un precio del catálogo (2500/3500/5500) o el nombre propio del
+  // paquete. "Contenido", "edición" y "videos" a secas NO alcanzan.
+  if (COURSE_KEYWORDS.test(normalized) && !hasStrongPackageSignal(text)) {
+    return false;
+  }
+
   return (
     SERVICE_PACKAGES_KEYWORDS.test(normalized) ||
     CONTRACT_INTENT_REGEX.test(normalized) ||
     detectPackagePriceMention(text) ||
     detectPackageChoice(text) ||
     detectPackageNameChoice(text)
+  );
+}
+
+// Señales que un cliente solo puede producir si está hablando de los paquetes de la
+// LÍNEA B, incluso si en el mismo mensaje nombra un curso ("hice el curso, ahora quiero
+// un paquete de 12"). Deliberadamente NO incluye CONTENIDO, EDICION ni VIDEOS.
+function hasStrongPackageSignal(text: string): boolean {
+  if (!text) return false;
+  const normalized = normalizeForMatch(text);
+
+  return (
+    /\bPAQUETE(S)?\b/.test(normalized) ||
+    PACKAGE_NAME_REGEX.test(normalized) ||
+    containsExactNumber(normalized, VALID_PACKAGE_SIZES) ||
+    containsExactNumber(normalized, PACKAGE_PRICES)
   );
 }
 
@@ -4435,7 +4439,6 @@ export async function POST(request: Request) {
             fallbackText: lastMessage.text,
             kind: callRequestPaused ? "call_request" : "intake",
             trigger,
-            fairRelief: detectFairReliefInHistory(pausedHistory, new Date()),
           });
 
           if (leadNotifiedWhilePaused) {
@@ -5068,10 +5071,12 @@ export async function POST(request: Request) {
   const callRequestHeuristic = detectCallRequestHeuristic(lastMessage.text);
   const callRequested = turn.call_request || callRequestHeuristic;
 
-  // Campaña de apoyo (feria Barrio Lindo): basta con que el LLM o las palabras del cliente
-  // lo sugieran para marcar la alerta. No aplica ningún descuento: lo verifica el asesor.
-  const fairReliefClaimed =
-    turn.fair_relief_claimed || detectFairReliefInHistory(history, turnNow);
+  // Campaña de apoyo cerrada (feria Barrio Lindo): si el cliente escribe por ese motivo,
+  // el turno se resuelve entero con el bot — no hay descuento que tramitar ni asesor al
+  // que pasarle el caso. `reliefClosedReply` es el texto exacto del cierre, o null si el
+  // mensaje no habla de ninguna campaña cerrada.
+  const reliefClosedReply = getReliefClosedReply(lastMessage.text, turnNow);
+  const mentionsClosedRelief = reliefClosedReply !== null;
 
   // Flujo de cita en curso: ya solicitada al asesor (marcador de Telegram) o propuesta y
   // esperando el "confirmar" del cliente. Mientras dure, los afirmativos genéricos
@@ -5330,32 +5335,45 @@ export async function POST(request: Request) {
     });
   }
 
-  // Campaña de apoyo: el bot informa el 50% pero no hace la resta ni concede el descuento
-  // — no puede verificar que quien escribe sea un comerciante afectado de la feria. Si se
-  // adelantó con un monto rebajado o lo dio por aprobado, se reemplaza por el texto que
-  // devuelve la decisión al asesor. Solo mientras haya una campaña vigente.
-  if (
-    turn.should_reply &&
-    getActiveReliefCampaigns(turnNow).length > 0 &&
-    replyOverstatesRelief(turn.reply)
-  ) {
-    console.log("relief discount overstatement blocked", {
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-    });
+  // Campaña de apoyo CERRADA (feria Barrio Lindo): quien escribe por el incendio recibe el
+  // cierre y nada más. Este turno no genera lead ni alerta — no hay nada que un asesor
+  // pueda tramitar, y pedirle sus datos a alguien que acaba de perder su mercadería para
+  // después no darle nada sería peor que no responderle. Red determinista sobre el prompt:
+  // si el LLM igual mandó el formulario o siguió ofreciendo el 50%, se reemplaza el texto.
+  if (turn.should_reply && mentionsClosedRelief) {
+    const replacedReply =
+      replyContainsIntakeForm(turn.reply) || replyStillOffersRelief(turn.reply);
 
-    turn.reply = RELIEF_PENDING_REPLY;
+    const killedLeadFlags =
+      turn.service_intake_requested || turn.lead_data_submitted || turn.call_request;
 
-    await logSystemEvent({
-      level: "info",
-      eventType: "relief_discount_overstatement_blocked",
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-      contactPhone: lastMessage.from,
-      metadata: {
-        client_message: lastMessage.text.slice(0, 200),
-      },
-    });
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.call_request = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+
+    if (replacedReply) turn.reply = reliefClosedReply;
+
+    if (replacedReply || killedLeadFlags) {
+      console.log("relief campaign closed notice enforced", {
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+      });
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "relief_campaign_closed_notice",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          reply_replaced: replacedReply,
+          lead_flags_cleared: killedLeadFlags,
+          client_message: lastMessage.text.slice(0, 200),
+        },
+      });
+    }
   }
 
   // Red de seguridad anti-saludo: si pese a la directiva el LLM devolvió el saludo
@@ -5577,6 +5595,7 @@ export async function POST(request: Request) {
     if (
       (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
       !telegramLeadSent &&
+      !mentionsClosedRelief &&
       conversationIsCommercial
     ) {
       const isAiAgentLead =
@@ -5595,7 +5614,6 @@ export async function POST(request: Request) {
             ? "call_request"
             : "intake",
         hasAppointment: hasScheduledAppointment,
-        fairRelief: fairReliefClaimed,
         trigger: turn.call_request
           ? "call_request_assistant"
           : callRequestHeuristic
@@ -5983,9 +6001,12 @@ export async function POST(request: Request) {
     // contacto nunca genera dos leads.
     // Solo se avisa si la conversación tiene contexto comercial real: un nombre y un
     // teléfono sueltos en un chat ajeno al negocio no son un lead.
+    // Tampoco se avisa si el cliente escribe por una campaña de apoyo ya cerrada: ese
+    // turno lo resuelve el bot entero, no hay nada que el asesor pueda gestionar.
     if (
       (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
       !telegramLeadSent &&
+      !mentionsClosedRelief &&
       conversationIsCommercial
     ) {
       // El lead del agente de IA (LÍNEA C) solo se etiqueta como tal si no hubo además
@@ -6015,7 +6036,6 @@ export async function POST(request: Request) {
             ? "call_request"
             : "intake",
         hasAppointment: hasScheduledAppointment,
-        fairRelief: fairReliefClaimed,
         trigger,
       });
 
@@ -6223,7 +6243,7 @@ export async function POST(request: Request) {
       appointment_scheduled: turn.appointment_scheduled,
       zoom_meeting_scheduled: turn.zoom_meeting_scheduled,
       ai_agent_lead_submitted: turn.ai_agent_lead_submitted,
-      fair_relief_claimed: fairReliefClaimed,
+      relief_campaign_closed_notice: mentionsClosedRelief,
       advisor_handoff: turn.advisor_handoff,
       advisor_handoff_reason: turn.advisor_handoff_reason,
       detected_intents: turn.intents,

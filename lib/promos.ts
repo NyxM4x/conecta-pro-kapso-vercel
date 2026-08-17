@@ -65,22 +65,45 @@ const PROMOS: Promo[] = [
 // Distintas de PROMOS: no tienen precio fijo, ni cantidad de videos, ni flyer. Son un
 // descuento sobre CUALQUIER paquete del catálogo, y solo aplican a quien cumple una
 // condición que el bot NO puede verificar (ser comerciante de tal feria, haber perdido
-// mercadería). Por eso el bot nunca las aprueba: informa, pregunta la condición y deja
-// que un asesor valide. Comparten con PROMOS la ventana de vigencia, así que también se
-// apagan solas.
+// mercadería). Comparten con PROMOS la ventana de vigencia, así que también se apagan
+// solas.
+//
+// TRES ESTADOS, no dos. Una campaña puede cerrarse ANTES de que expire su ventana (el
+// equipo se saturó y no puede recibir más gente). En ese caso no basta con borrarla:
+// los clientes siguen escribiendo por el mismo motivo durante semanas, y si la campaña
+// simplemente "no existe" el bot los manda al embudo normal. Por eso `status: "closed"`
+// mantiene los disparadores vivos pero cambia la respuesta a un cierre respetuoso, sin
+// formulario de leads y sin alertar a nadie.
 //
 // PARA ACTUALIZAR: edita SOLO la lista RELIEF_CAMPAIGNS.
+
+// Días durante los que se sigue respondiendo el cierre después de que la campaña acaba.
+// Pasada esa gracia el bloque desaparece del prompt solo, sin dejar texto muerto.
+const RELIEF_CLOSED_GRACE_DAYS = 60;
+
 type ReliefCampaign = {
   id: string;
   name: string;
+  // "active": el bot informa el descuento y deja que un asesor valide los requisitos.
+  // "closed": la campaña ya no recibe gente; el bot solo comunica el cierre.
+  status: "active" | "closed";
   startsAt: string;
   // Instante EXCLUSIVO en que deja de estar vigente (mismo criterio que Promo.endsAt).
   endsAt: string;
-  // Requisitos que el asesor debe verificar antes de aplicar el descuento.
+  // Requisitos que el asesor debe verificar antes de aplicar el descuento. Solo
+  // relevantes mientras status === "active".
   requirements: string[];
   details: string[];
-  // Palabras del cliente que sugieren que podría calificar. Se usan como red de
-  // seguridad determinista para marcar la alerta de Telegram aunque el LLM no lo note.
+  // Motivo del cierre, para que el LLM lo comunique con sus palabras. Una línea por
+  // viñeta del prompt.
+  closedReason: string[];
+  // Mensaje LITERAL de cierre. Lo usa la red determinista del webhook cuando el LLM se
+  // desvía (por ejemplo si igual manda el formulario de leads), así que el cliente
+  // recibe siempre el mismo texto revisado y no una improvisación.
+  closedReply: string;
+  // Palabras del cliente que hablan de esta campaña. Mientras está vigente marcan a
+  // quien podría calificar; una vez cerrada son los disparadores del mensaje de cierre.
+  // En ambos casos son una red determinista que no depende de que el LLM se dé cuenta.
   clientHints: RegExp;
 };
 
@@ -88,6 +111,8 @@ const RELIEF_CAMPAIGNS: ReliefCampaign[] = [
   {
     id: "relief_feria_barrio_lindo_2026_08",
     name: "Apoyo a comerciantes de la feria Barrio Lindo — 50% de descuento",
+    // CERRADA antes de que expire su ventana: el alcance superó la capacidad del equipo.
+    status: "closed",
     startsAt: "2026-08-11T00:00:00-04:00",
     endsAt: "2026-09-12T00:00:00-04:00",
     requirements: [
@@ -98,46 +123,111 @@ const RELIEF_CAMPAIGNS: ReliefCampaign[] = [
       "50% de descuento sobre CUALQUIER paquete de producción de video del catálogo (Básico, Normal o Pro).",
       "Es un apoyo por el incendio de la feria, no una promoción comercial: trátalo con respeto y sin euforia comercial (nada de '¡aprovecha!' ni '¡oferta imperdible!').",
     ],
+    closedReason: [
+      "El alcance fue mucho mayor al que esperábamos y desde hace más de una semana el equipo está completamente saturado, así que ya no podemos recibir a más personas en esta campaña.",
+      "Cierra con un deseo sincero de recuperación y ánimo (bendiciones, fuerza para levantarse). No es un cierre comercial: es acompañar.",
+    ],
+    closedReply: `Lamento mucho lo que pasó en la feria 🙏
+
+El apoyo que dimos a los comerciantes de la feria Barrio Lindo ya no se encuentra vigente. El alcance fue mucho mayor al que esperábamos y desde hace más de una semana el equipo está completamente saturado, así que no podemos recibir a más personas en esta campaña.
+
+Muchas bendiciones en la recuperación y muchos ánimos para levantarse 💪`,
     clientHints:
       /\bBARRIO\s+LINDO\b|\bINCENDIO\b|\bSE\s+(ME\s+)?QUEMO\b|\bQUEMARON\b|\bPERDI\b(?:\s+\S+){0,3}?\s+MERCADERIA\b/,
   },
 ];
 
+// ¿La campaña está dentro de su ventana en este instante? Igual que isPromoActive: la
+// comparación es entre instantes absolutos, así que no depende de la zona del servidor.
+function isWithinReliefWindow(campaign: ReliefCampaign, now: Date): boolean {
+  const time = now.getTime();
+  return (
+    time >= new Date(campaign.startsAt).getTime() &&
+    time < new Date(campaign.endsAt).getTime()
+  );
+}
+
+// Campañas que el bot puede ofrecer. `status` manda sobre las fechas: una campaña
+// cerrada nunca vuelve a estar vigente aunque su ventana no haya expirado todavía.
 function getActiveReliefCampaigns(now: Date): ReliefCampaign[] {
+  return RELIEF_CAMPAIGNS.filter(
+    (campaign) => campaign.status === "active" && isWithinReliefWindow(campaign, now),
+  );
+}
+
+// Campañas que ya no reciben gente pero de las que el bot todavía tiene que saber
+// responder: las cerradas a mano y las que se les pasó la ventana. Los clientes siguen
+// escribiendo por el mismo motivo durante semanas después del cierre.
+function getClosedReliefCampaigns(now: Date): ReliefCampaign[] {
   return RELIEF_CAMPAIGNS.filter((campaign) => {
-    const time = now.getTime();
-    return (
-      time >= new Date(campaign.startsAt).getTime() &&
-      time < new Date(campaign.endsAt).getTime()
-    );
+    if (getActiveReliefCampaigns(now).includes(campaign)) return false;
+
+    // La gracia se cuenta desde el cierre real: el fin de la ventana, o ahora mismo si
+    // se cerró antes de tiempo (en ese caso siempre está dentro de la gracia).
+    const graceEnd =
+      new Date(campaign.endsAt).getTime() +
+      RELIEF_CLOSED_GRACE_DAYS * 24 * 60 * 60 * 1000;
+
+    return now.getTime() < graceEnd;
   });
 }
 
-// ¿El cliente dijo algo que sugiera que califica para alguna campaña vigente? Red de
-// seguridad determinista: si el LLM no marca el flag, la alerta al asesor igual se marca.
-// Fuera de la ventana devuelve false aunque el cliente nombre la feria.
-function mentionsActiveRelief(text: string, now: Date): boolean {
+// ¿El cliente habló de alguna campaña de apoyo, vigente o recién cerrada? Red de
+// seguridad determinista que no depende de que el LLM se dé cuenta: mientras la campaña
+// estaba vigente marcaba a quien podía calificar, y ahora que está cerrada es lo que
+// dispara el mensaje de cierre (y mata el formulario de leads).
+function mentionsReliefCampaign(text: string, now: Date): boolean {
   if (!text) return false;
   const normalized = text
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toUpperCase();
-  return getActiveReliefCampaigns(now).some((campaign) =>
-    campaign.clientHints.test(normalized),
+  return [...getActiveReliefCampaigns(now), ...getClosedReliefCampaigns(now)].some(
+    (campaign) => campaign.clientHints.test(normalized),
   );
+}
+
+// Bloque de las campañas ya cerradas. No es lo mismo que "no existe ninguna": aquí el
+// bot SÍ tiene que saber de qué le hablan, porque los clientes siguen escribiendo por el
+// mismo motivo. Lo único que cambia es el desenlace: se acompaña y se cierra, sin pedir
+// datos y sin pasar a nadie a un asesor.
+function renderClosedReliefContext(closed: ReliefCampaign[]): string {
+  const lines = [
+    "CAMPAÑAS DE APOYO CERRADAS (ya NO están vigentes; no se puede acceder a ellas):",
+  ];
+
+  for (const campaign of closed) {
+    lines.push(
+      `- ${campaign.name} — CERRADA. Ya no admite nuevos casos.`,
+      ...campaign.closedReason.map((reason) => `  • ${reason}`),
+    );
+  }
+
+  lines.push(
+    "- CÓMO RESPONDER: si el cliente menciona la feria, el incendio, que se le quemó o perdió su mercadería, o pregunta por este descuento, reconoce lo ocurrido con empatía en una línea y dile con claridad que la campaña ya no se encuentra vigente, explicándole el motivo (el equipo está saturado por el alcance que tuvo). Cierra deseándole una buena recuperación y dándole ánimos.",
+    "- NUNCA insinúes que todavía podría alcanzarle, ni prometas excepciones, revisiones, cupos, listas de espera ni 'consultarlo con el equipo'. La campaña está cerrada: no hay nada pendiente que gestionar.",
+    "- NUNCA envíes el formulario de datos de leads por este motivo, ni le pidas nombre, empresa, cargo ni rubro, ni le digas que un asesor lo contactará o validará su caso. No hay nada que verificar.",
+    "- NUNCA des un monto con descuento ni hagas la resta. Los precios normales del catálogo los puedes seguir dando con normalidad si te los pregunta.",
+    "- Si DESPUÉS del cierre el cliente muestra interés en contratar a precio normal, esa es una intención comercial nueva: sigue el FLUJO B de siempre con normalidad.",
+  );
+
+  return lines.join("\n");
 }
 
 // Bloque de contexto de las campañas de apoyo. Igual que renderPromoContext: si no hay
 // ninguna vigente, el modelo se queda sin material para inventarla.
 function renderReliefContext(now: Date): string {
   const active = getActiveReliefCampaigns(now);
+  const closed = getClosedReliefCampaigns(now);
 
-  if (active.length === 0) {
+  if (active.length === 0 && closed.length === 0) {
     return [
       "CAMPAÑAS DE APOYO / DESCUENTOS CONDICIONADOS: NINGUNA vigente en este momento.",
       "- NUNCA ofrezcas ni menciones un descuento por incendio, desastre o pertenencia a una feria. Si el cliente lo pide, dile con amabilidad que esa campaña ya no está vigente y ofrécele los paquetes normales (FLUJO B).",
     ].join("\n");
   }
+
+  if (active.length === 0) return renderClosedReliefContext(closed);
 
   const lines = [
     "CAMPAÑAS DE APOYO VIGENTES (fuente de verdad; si no aparece aquí, NO existe):",
@@ -158,13 +248,33 @@ function renderReliefContext(now: Date): string {
     "- CÓMO RESPONDER: si el cliente menciona la feria, el incendio o pregunta por este descuento, reconoce lo ocurrido con empatía y en una línea, confírmale que el descuento existe y explícale los requisitos. Si aún no sabes si califica, pregúntaselo directamente: si es comerciante de la feria y si perdió mercadería.",
     "- NUNCA digas el monto final ni el precio ya rebajado, ni hagas la resta tú. Di que es 50% sobre el paquete que elija y que un asesor le confirma el monto exacto. Los precios normales del catálogo sí los puedes seguir dando con normalidad.",
     "- NUNCA confirmes que el descuento ya está aplicado ni que 'ya quedó registrado'. Tú no verificas nada: un asesor valida que sea comerciante afectado y recién ahí se aplica. Di algo como 'un asesor valida tu caso y te confirma el precio con el descuento'.",
-    "- Si el cliente califica o dice que sí cumple, sigue el FLUJO B normal (pídele sus datos con el formulario de leads) para que un asesor lo contacte. Marca fair_relief_claimed = true en ese turno y en cualquier turno donde el cliente afirme ser de la feria o haber perdido mercadería.",
+    "- Si el cliente califica o dice que sí cumple, sigue el FLUJO B normal (pídele sus datos con el formulario de leads) para que un asesor lo contacte y verifique su caso.",
     "- Si el cliente NO es de la feria, no le ofrezcas el descuento ni se lo insinúes: sigue con los paquetes normales.",
     "- El descuento aplica SOLO a los paquetes de producción de video (LÍNEA B). NO aplica a los cursos ni al agente de IA. Si lo pide para un curso o para el agente, dile con amabilidad que esta campaña es solo para los paquetes de producción.",
     "- NUNCA extiendas la campaña más allá de su fecha de vigencia ni prometas mantenerla.",
   );
 
+  // Puede haber una campaña vigente y otra recién cerrada a la vez: el bot necesita las
+  // dos, para no ofrecer la cerrada ni negar la vigente.
+  if (closed.length > 0) lines.push("", renderClosedReliefContext(closed));
+
   return lines.join("\n");
+}
+
+// Mensaje literal de cierre de la primera campaña cerrada que reconozca lo que dijo el
+// cliente. Es lo que envía la red determinista del webhook cuando el LLM se desvía.
+function getReliefClosedReply(text: string, now: Date): string | null {
+  if (!text) return null;
+  const normalized = text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase();
+
+  const match = getClosedReliefCampaigns(now).find((campaign) =>
+    campaign.clientHints.test(normalized),
+  );
+
+  return match?.closedReply ?? null;
 }
 
 // ¿La promo está dentro de su ventana en este instante? La comparación es entre
@@ -256,7 +366,9 @@ export {
   PROMOS,
   RELIEF_CAMPAIGNS,
   getActiveReliefCampaigns,
-  mentionsActiveRelief,
+  getClosedReliefCampaigns,
+  getReliefClosedReply,
+  mentionsReliefCampaign,
   renderReliefContext,
   getActivePromos,
   getActivePromoAmounts,
