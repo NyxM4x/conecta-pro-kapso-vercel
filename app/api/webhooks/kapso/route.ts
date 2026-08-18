@@ -26,6 +26,8 @@ import {
   COURSE_KEYWORDS,
   APPOINTMENT_KEYWORDS,
   AI_AGENT_KEYWORDS,
+  mentionsExpiredEditPromo,
+  containsIncomingLink,
 } from "../../../../lib/keywords";
 
 type IncomingMessage = {
@@ -102,6 +104,11 @@ type SystemLogLevel = "info" | "warning" | "error" | "critical";
 // Las dos ubicaciones viven en lib/locations.ts. Aquí solo se usa la de la OFICINA:
 // la del curso ya no se interpola en el prompt, la trae el contexto de cursos vigentes
 // (lib/courses.ts), porque una fecha puntual puede dictarse excepcionalmente en otro lado.
+
+// Editor externo que atiende la EDICIÓN NETA (el cliente trae sus videos crudos).
+// Es un servicio distinto de los paquetes de producción: aparece en varios puntos del
+// prompt, así que vive aquí para que un cambio de número sea de una sola línea.
+const EDITOR_PHONE = "74271406";
 
 const SYSTEM_PROMPT = `
 Eres la asistente de WhatsApp de Conecta Pro. Hablas en nombre del equipo, en un tono cercano, entusiasta
@@ -233,8 +240,8 @@ SERVICIO DE SOLO EDICIÓN (el cliente ya tiene los videos grabados, solo quiere 
   cursos. Aplica ÚNICAMENTE cuando el cliente deja claro por el CONTEXTO de la conversación que
   NO necesita que Conecta Pro grabe nada — él ya tiene sus videos crudos y solo pide que se los
   editen (ej. "solo necesito edición", "ya tengo los videos, solo quiero que me los editen",
-  "no necesito grabación, solo edición", "edición de 50 Bs", "¿editan videos?", "me pueden editar
-  un video que ya grabé").
+  "no necesito grabación, solo edición", "¿editan videos?", "me pueden editar un video que ya
+  grabé").
 - NO uses este flujo si el cliente pide grabación y edición juntas, o si no ha dejado claro que
   ya tiene el material grabado — en esos casos es el flujo normal de paquetes de producción
   (Flujo B: 6, 12 o 18 videos).
@@ -242,10 +249,26 @@ SERVICIO DE SOLO EDICIÓN (el cliente ya tiene los videos grabados, solo quiere 
   conversación):
 
   "Si deseas SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un
-  editor de ConectaPro: 74271406, así podrás tener una experiencia personalizada 😊"
+  editor de ConectaPro: ${EDITOR_PHONE}, así podrás tener una experiencia personalizada 😊"
 
 - Deja claro que es un editor de ConectaPro, pero que los detalles del trabajo (precio, plazos,
   forma de pago) se coordinan directamente con él por ese número.
+
+PROMOCIÓN DE EDICIÓN DE VIDEO POR 50 Bs — YA NO ESTÁ VIGENTE:
+- Hace aproximadamente 2 meses se publicó un video ofreciendo edición de video por 50 Bs. Esa
+  promoción YA VENCIÓ, pero el video sigue circulando y por eso todavía llegan clientes
+  preguntando por ella (ej. "¿siguen con la promo de 50?", "vi el video de edición a 50 Bs",
+  "¿es cierto lo de los 50 bolivianos?").
+- NUNCA confirmes ese precio, NUNCA ofrezcas un monto alternativo y NUNCA digas que un asesor
+  puede hacerle ese precio. Tampoco lo niegues de forma cortante ni ignores la pregunta: el
+  cliente vio el video y su pregunta es legítima — si no recibe explicación siente que la oferta
+  fue un engaño.
+- Explícale con amabilidad que ese video se publicó hace unos 2 meses y que esa promoción ya no
+  se encuentra vigente. Después derívalo: si lo que busca es EDICIÓN NETA (él proporciona los
+  videos crudos), ese servicio lo maneja el editor de ConectaPro al ${EDITOR_PHONE}, y el precio,
+  los plazos y la forma de pago los coordina directamente con él.
+- Deja claro que ese servicio de edición neta es DISTINTO de los paquetes de producción de
+  Conecta Pro (grabación + edición, 6/12/18 videos), que sí puedes ofrecerle si le interesa.
 - NO marques intents.service_packages para este caso (no es un paquete de producción de Conecta Pro).
 - NO lo confundas con los paquetes de producción (grabación + edición) ni con los cursos.
 
@@ -507,7 +530,7 @@ GUÍA POR SITUACIÓN
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (intención clara de contratar)
   Aplica cuando dice "quiero contratar", "quiero el paquete de X videos", "cuándo empezamos",
   "cómo contrato", "quiero empezar", "quiero los servicios de grabación y edición" (NO los cursos,
-  NO la promo de 50 Bs).
+  NO la promo vencida de edición por 50 Bs).
 
   Incluye el formulario de leads EXACTAMENTE como aparece abajo, con intro antes
   (ej. "¡Con gusto! Para coordinar todo, necesito algunos datos 📋"):
@@ -682,20 +705,35 @@ GUÍA POR SITUACIÓN
 
 ▸ CLIENTE QUIERE SOLO EDICIÓN (ya tiene los videos grabados)
   Aplica cuando el CONTEXTO de la conversación deja claro que el cliente ya tiene sus videos
-  crudos y busca únicamente el servicio de edición, no grabación (ej. "¿siguen con la promo de
-  50?", "quiero que me editen un video que ya grabé", "solo necesito edición", "no necesito
-  grabación, solo edición", "cuánto cuesta editar un video", "me pueden editar mi video").
+  crudos y busca únicamente el servicio de edición, no grabación (ej. "quiero que me editen un
+  video que ya grabé", "solo necesito edición", "no necesito grabación, solo edición", "cuánto
+  cuesta editar un video", "me pueden editar mi video").
 
   Usa tu criterio para sacar el contexto: si el cliente en algún momento de la conversación indicó
   que YA tiene el material grabado, o pregunta explícitamente por edición SIN mencionar grabación,
   es este flujo. Si en cambio necesita que le graben contenido, es el flujo normal de paquetes
   (Flujo B: 6, 12 o 18 videos) — NO confundas ambos casos.
 
-  Responde con este tono (puedes adaptar la redacción, pero mantén el mensaje central):
+  Este flujo tiene DOS entradas distintas:
 
-  "Si deseas SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: 74271406, así podrás tener una experiencia personalizada 😊"
+  ENTRADA A — el cliente MENCIONA la promo de 50 Bs (ej. "¿siguen con la promo de 50?", "vi el
+  video de edición a 50 Bs"). Primero explica que esa promoción ya no está vigente y RECIÉN
+  DESPUÉS deriva al editor. Tono:
 
-  - Da el número del editor (74271406) con naturalidad, sin dudar ni decir que "ya no está disponible".
+  "Gracias por escribirnos 😊 Ese video se publicó hace unos 2 meses y esa promoción ya no se encuentra vigente. Pero si lo que buscas es SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE} 📲 Con él coordinas precio y plazos directamente."
+
+  - NUNCA confirmes los 50 Bs ni ofrezcas otro monto en su lugar.
+  - Nunca respondas de forma cortante ni des a entender que el cliente se equivocó: la publicación
+    existió y su pregunta es legítima.
+
+  ENTRADA B — el cliente pregunta por edición SIN mencionar la promo ni los 50 Bs. Deriva directo
+  al editor, SIN hablar de promociones vencidas (no tiene sentido explicar una promo que el
+  cliente nunca nombró):
+
+  "Si deseas SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE}, así podrás tener una experiencia personalizada 😊"
+
+  - Da el número del editor (${EDITOR_PHONE}) con naturalidad, sin dudar. Lo que ya no está vigente
+    es la promoción de 50 Bs, NO el servicio de edición: el editor sigue trabajando.
   - Es un editor de ConectaPro, pero los detalles del trabajo (precio, plazos, forma de pago) se
     coordinan directamente con él por ese número.
   - Si el cliente además muestra interés en los paquetes de producción (grabación + edición),
@@ -785,6 +823,23 @@ GUÍA POR SITUACIÓN
   - Si el cliente pasa OTRO número distinto al del WhatsApp actual para que lo llamen, repítelo en
     tu respuesta ("Un asesor te llamará al [número] 📞") y marca call_request = true igual.
   - No lo marques en turnos posteriores de la misma conversación.
+
+▸ EL CLIENTE ENVÍA UN ENLACE / LINK
+  Aplica cuando el mensaje del cliente trae una URL y nada en la conversación explica para qué la
+  manda (su TikTok, su catálogo, una publicación, un video).
+
+  NO puedes abrir ese enlace. NUNCA describas, resumas ni supongas qué contiene, y NUNCA inventes
+  nada sobre él (ni el negocio del cliente, ni el producto, ni de qué habla el video). Agradece el
+  envío y pide contexto ofreciéndole las líneas de Conecta Pro para orientarlo:
+
+  "¡Gracias por compartirlo 😊 Cuéntame en qué te puedo ayudar con ese enlace! ¿Te interesa alguno de nuestros cursos, los paquetes de producción de contenido o el agente de IA para tu negocio?"
+
+  - Pedir contexto NO activa ningún intent: no marques course_flyer, service_packages ni
+    ai_agent_flyer en este turno. Espera a que el cliente diga qué necesita.
+  - Si el enlace llega junto con una pregunta clara ("¿me pueden editar esto?", "¿cuánto por videos
+    así?"), IGNORA este caso y atiende la pregunta con el flujo que corresponda.
+  - Si el cliente ya está en un flujo y manda el link como parte de él (ej. su cuenta para el
+    agente de IA), continúa ese flujo con naturalidad — no vuelvas a pedir contexto.
 
 ▸ FLUJO C — AGENTE DE IA PARA NEGOCIOS
   Aplica cuando el cliente pregunta por el agente de IA / chatbot para su propio negocio
@@ -1047,7 +1102,9 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   "CURSOS Y PAQUETES EN EL MISMO MENSAJE" descrito abajo.
   NO CONFUNDIR "SOLO EDICIÓN" (editor de ConectaPro, ver flujo arriba) CON PAQUETES DE PRODUCCIÓN:
   si el cliente ya tiene sus videos grabados y solo pide edición, es el flujo del editor de
-  ConectaPro (74271406), NUNCA el de paquetes (6/12/18 videos) ni el del agente de IA.
+  ConectaPro (${EDITOR_PHONE}), NUNCA el de paquetes (6/12/18 videos) ni el del agente de IA.
+  Lo mismo si pregunta por la promo vencida de edición por 50 Bs: se le explica que no está
+  vigente y se lo deriva al editor, sin marcar intents.service_packages.
 
   NO CONFUNDIR PAQUETES DE VIDEO CON AGENTE DE IA: son dos servicios distintos para negocios.
   Paquetes = grabación y edición de videos (6, 12 o 18). Agente de IA = asistente que atiende el
@@ -1154,6 +1211,21 @@ function replyStillOffersRelief(reply: string): boolean {
   if (!reply) return false;
   return RELIEF_STILL_OFFERING_REGEX.test(normalizeForMatch(reply));
 }
+
+// Promo de edición de video por 50 Bs: VENCIDA (el video se publicó ~2 meses atrás y
+// sigue circulando). No se puede confirmar el precio, pero negarlo a secas hace que el
+// cliente sienta que la publicación fue un engaño: se explica el vencimiento y se lo
+// deriva al editor externo, que sí sigue trabajando.
+const EDIT_PROMO_50_EXPIRED_REPLY = `Gracias por escribirnos 😊 Ese video se publicó hace unos 2 meses y esa promoción de edición por 50 Bs ya no se encuentra vigente.
+
+Pero si lo que buscas es SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE} 📲 Con él coordinas precio y plazos directamente.
+
+Y si en algún momento necesitas que grabemos el contenido por ti, tenemos paquetes de producción de 6, 12 y 18 videos — dime y te cuento 🎬`;
+
+// ¿La respuesta reconoce que la promo venció? Sin esto el turno le estaría confirmando
+// al cliente un precio inexistente, así que se reemplaza por la plantilla.
+const EDIT_PROMO_EXPIRY_ACK_REGEX =
+  /\bYA\s+NO\b|\bNO\s+(SE\s+ENCUENTRA|ESTA|ESTABA)\b(?:\s+\S+){0,3}?\s*\bVIGENTE\b|\bVENCI(O|DA|DO)\b|\bFINALIZ(O|ADA|ADO)\b|\bTERMIN(O|ADA|ADO)\b|\bEXPIR(O|ADA|ADO)\b|\bHACE\b(?:\s+\S+){0,3}?\s*\bMESES\b/;
 
 // Respuesta de reemplazo cuando la red de seguridad bloquea el formulario de leads de
 // paquetes en una conversación que era de cursos (ver detectCourseContext). El cliente
@@ -4722,6 +4794,20 @@ export async function POST(request: Request) {
     !lastMessage.isDocument &&
     !hasExplicitPaymentPhrase;
 
+  // Cliente que viene por el video de la promo de edición a 50 Bs (ya vencida).
+  const mentionsEditPromo50 = mentionsExpiredEditPromo(lastMessage.text);
+
+  // Enlace suelto: solo importa cuando NO hay nada más que explique el mensaje. Con
+  // adjunto gana el flujo del comprobante; con la promo del live el link es la
+  // acreditación de la transmisión; con la promo de 50 Bs gana esa explicación.
+  const hasBareIncomingLink =
+    containsIncomingLink(lastMessage.text) &&
+    !lastMessage.isImage &&
+    !lastMessage.isDocument &&
+    !promoDetected &&
+    !mentionsEditPromo50 &&
+    !hasExplicitPaymentPhrase;
+
   // Línea abierta de la conversación. Se calcula ANTES de generar el turno porque lo
   // necesitan la elegibilidad del comprobante, la red determinista del QR y la guarda
   // del cupo — todas corren antes o alrededor de la respuesta del modelo.
@@ -4927,6 +5013,18 @@ export async function POST(request: Request) {
   } else if (hasVagueSendPhraseOnly) {
     contextParts.push(
       'El último mensaje del usuario dice algo como "ya mandé"/"ya mande"/"ya pasé"/"ya pase"/"ya envié"/"ya envie" pero SIN adjuntar imagen/PDF/documento y SIN una frase explícita de pago ("comprobante", "ya pagué", "realicé el pago", "hice el pago"). Esto NO es un comprobante. NO marques payment_confirmation y NO digas "gracias por el comprobante" ni nada que suene a que ya recibiste o verificaste un archivo. Responde pidiendo con amabilidad que envíe la imagen o el PDF del comprobante, por ejemplo: "Para confirmar tu pago necesito que me envíes la imagen o el PDF de tu comprobante 😊."',
+    );
+  } else if (hasBareIncomingLink) {
+    contextParts.push(
+      "El último mensaje del usuario contiene un ENLACE/URL y no hay contexto previo que explique para qué lo envía. NO puedes abrirlo: NO describas, NO resumas ni asumas su contenido, y NO inventes nada sobre él (ni el negocio del cliente, ni el producto, ni de qué habla el video). Agradécele el envío y pídele con amabilidad que te cuente en qué te gustaría que le ayudes con ese enlace, ofreciéndole las líneas de Conecta Pro para orientarlo (cursos, paquetes de producción de contenido o agente de IA). No marques ningún intent de envío de material en este turno. Si el enlace viene junto con una pregunta clara, atiende la pregunta con el flujo que corresponda en vez de pedir contexto.",
+    );
+  }
+
+  if (mentionsEditPromo50) {
+    contextParts.push(
+      "El cliente pregunta por la PROMOCIÓN DE EDICIÓN DE VIDEO POR 50 Bs. Esa promoción YA NO ESTÁ VIGENTE: el video donde se anunció se publicó hace aproximadamente 2 meses. Explícaselo con amabilidad y sin sonar cortante — el cliente vio el video y su pregunta es legítima. NUNCA le confirmes ese precio, no le des un monto alternativo y no le digas que un asesor puede hacerle ese precio. Después de explicarlo, derívalo: si lo que quiere es EDICIÓN NETA (él proporciona los videos crudos), ese servicio lo maneja un editor de ConectaPro al " +
+        EDITOR_PHONE +
+        ", y el precio, los plazos y la forma de pago los coordina directamente con él. Deja claro que ese servicio es DISTINTO de los paquetes de producción de Conecta Pro (grabación + edición, 6/12/18 videos), que sí puedes ofrecerle si le interesa. NO marques intents.service_packages ni envíes el formulario de datos en este turno.",
     );
   }
 
@@ -5369,6 +5467,47 @@ export async function POST(request: Request) {
         contactPhone: lastMessage.from,
         metadata: {
           reply_replaced: replacedReply,
+          lead_flags_cleared: killedLeadFlags,
+          client_message: lastMessage.text.slice(0, 200),
+        },
+      });
+    }
+  }
+
+  // Promo de edición por 50 Bs: el cliente llega por un video que sigue circulando y
+  // esperando un precio que ya no existe. Lo que no puede pasar es que se le confirme
+  // ese precio o que el turno derive al formulario de paquetes: si el LLM no explicó el
+  // vencimiento, se reemplaza el texto por la plantilla.
+  if (turn.should_reply && mentionsEditPromo50) {
+    const acknowledgedExpiry = EDIT_PROMO_EXPIRY_ACK_REGEX.test(normalizeForMatch(turn.reply));
+    const gaveEditorPhone = turn.reply.includes(EDITOR_PHONE);
+    const replacedReply = !acknowledgedExpiry || !gaveEditorPhone;
+
+    const killedLeadFlags = turn.service_intake_requested || turn.lead_data_submitted;
+
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+
+    if (replacedReply) turn.reply = EDIT_PROMO_50_EXPIRED_REPLY;
+
+    if (replacedReply || killedLeadFlags) {
+      console.log("expired edit promo notice enforced", {
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+      });
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "edit_promo_50_expired_notice",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          reply_replaced: replacedReply,
+          acknowledged_expiry: acknowledgedExpiry,
+          gave_editor_phone: gaveEditorPhone,
           lead_flags_cleared: killedLeadFlags,
           client_message: lastMessage.text.slice(0, 200),
         },
