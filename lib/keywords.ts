@@ -78,6 +78,50 @@ function mentionsExpiredEditPromo(text: string): boolean {
   return EDIT_PROMO_50_MONEY.test(normalized) || EDIT_PROMO_50_CONTEXT.test(normalized);
 }
 
+// ACUERDO PREVIO CON UNA PERSONA DEL EQUIPO.
+//
+// El caso que motivó este detector: un cliente que ya había cerrado condiciones con un
+// asesor ("ayer quedamos en 80 Bs por video") escribió para coordinar, y el bot le
+// respondió con el catálogo — contradiciendo a su propio equipo delante del cliente, que
+// se fue y dijo que no volvería. Cuando alguien dice que YA acordó algo, el bot no tiene
+// forma de saber qué se acordó: no puede confirmarlo, y negarlo es peor. Lo único válido
+// es callarse y devolver la conversación a la persona que la venía llevando.
+//
+// El detector es deliberadamente ESTRECHO: cada falso positivo apaga el bot durante horas
+// en un chat que quizá solo quería información. Solo dispara con las tres formas
+// inequívocas; el resto (ej. "ya hablé con José", con un nombre propio que el código no
+// conoce) lo resuelve el prompt, que sí entiende el contexto.
+
+// (a) Un acuerdo cerrado, ACOMPAÑADO de una cifra: "ayer quedamos en 80 bs",
+//     "acordamos 2000 por el mes". Sin cifra no cuenta ("quedamos en que me escribes").
+const PRIOR_AGREEMENT_DEAL =
+  /\b(QUEDAMOS|QUEDE|QUEDAMO|ACORDAMOS|ACORDE|CONVINIMOS|CERRAMOS|PACTAMOS)\b/;
+
+// (b) Confirmaciones explícitas de que alguien del equipo ya dio el visto bueno o el precio.
+const PRIOR_AGREEMENT_CONFIRMATION =
+  /\bME\s+(DIO|DIERON)\s+EL\s+OK\b|\bME\s+(DIJERON|DIJO|CONFIRMARON|CONFIRMO|PASARON|COTIZARON|OFRECIERON)\b(?:\s+\S+){0,4}?\s+(PRECIO|COSTO|MONTO|DESCUENTO|OK|SI)\b|\bYA\s+(ESTA|ESTABA|QUEDO)\s+(ACORDADO|CERRADO|HABLADO|COORDINADO|CONFIRMADO)\b/;
+
+// (c) Habló con alguien del EQUIPO, nombrado como tal (no "hablé con mi socio").
+const PRIOR_AGREEMENT_TEAM =
+  /\b(HABLE|HABLAMOS|CONVERSE|CONVERSAMOS|COORDINE|COORDINAMOS|TRATE|TRATAMOS|ESCRIBI)\b(?:\s+\S+){0,4}?\s+(EL\s+ASESOR|LA\s+ASESORA|UN\s+ASESOR|SU\s+ASESOR|TU\s+ASESOR|EL\s+ENCARGADO|LA\s+ENCARGADA|TU\s+COMPANERO|SU\s+COMPANERO|EL\s+DUENO|LA\s+DUENA|EL\s+JEFE|USTEDES)\b/;
+
+// True si el cliente afirma tener algo YA acordado o hablado con el equipo. El bot no
+// puede confirmarlo ni negarlo: deriva a la persona que lo atendió y guarda silencio.
+function mentionsPriorAgreement(text: string): boolean {
+  if (!text) return false;
+
+  const normalized = normalizeForMatch(text);
+
+  // El acuerdo con cifra necesita las dos mitades: verbo de acuerdo + un número que no
+  // sea parte de una fecha suelta. Un "quedamos en el martes" no es un precio cerrado.
+  const hasNumber = /\b\d{2,5}\b/.test(normalized.replace(/(\d)[.,](\d)/g, "$1$2"));
+  if (PRIOR_AGREEMENT_DEAL.test(normalized) && hasNumber) return true;
+
+  if (PRIOR_AGREEMENT_CONFIRMATION.test(normalized)) return true;
+
+  return PRIOR_AGREEMENT_TEAM.test(normalized);
+}
+
 // ENLACES ENTRANTES.
 //
 // Un link que manda el cliente no dice nada por sí solo: puede ser su TikTok, su
@@ -105,5 +149,6 @@ export {
   PROMO_REQUEST_KEYWORDS,
   VIDEO_WORD_KEYWORDS,
   mentionsExpiredEditPromo,
+  mentionsPriorAgreement,
   containsIncomingLink,
 };

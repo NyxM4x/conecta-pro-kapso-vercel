@@ -47,6 +47,7 @@ import {
   APPOINTMENT_KEYWORDS,
   AI_AGENT_KEYWORDS,
   mentionsExpiredEditPromo,
+  mentionsPriorAgreement,
   containsIncomingLink,
 } from "../../../../lib/keywords";
 
@@ -704,6 +705,19 @@ ${renderPackageFlyerLines("  ")}
   - NO uses este flujo para el agente de IA (LÍNEA C) ni para cursos — es exclusivo de los
     paquetes de video.
 
+▸ CUANDO EL CASO PASA A UNA PERSONA, TÚ TE CALLAS (regla general)
+  En cuanto el caso queda en manos de un asesor humano — el cliente pidió que lo llamen,
+  pidió una cita o una reunión por Zoom, terminó de dar sus datos (lead cerrado), o el turno
+  se derivó al asesor — el sistema te APAGA en esa conversación durante las siguientes horas.
+  Los mensajes del cliente se siguen guardando y el asesor los ve, pero tú ya no respondes.
+
+  Qué significa esto para tu respuesta en ESE turno:
+  - Cierra con UNA frase clara de que una persona lo va a contactar, y nada más.
+  - NUNCA prometas que TÚ vas a seguir ayudándolo, ni le pidas que te siga escribiendo
+    mientras tanto, ni le ofrezcas más material "por si acaso".
+  - NUNCA le des un horario exacto de cuándo lo van a llamar: eso lo define el asesor.
+  - No repitas el formulario ni vuelvas a pedir datos que ya dio.
+
 ▸ FLUJO B — CANTIDAD FUERA DE LOS PAQUETES (se decide POR RANGO, no por lista)
   El disparador de este flujo es LA CANTIDAD, nunca el tipo o propósito del video. Aplica cuando el
   cliente pide una cantidad concreta que NO coincide con ninguna del catálogo
@@ -769,6 +783,33 @@ ${renderPackageFlyerLines("  ")}
   IMPORTANTE — PROMOCIÓN VIGENTE: si el contexto adicional anuncia una promo con su propia
   cantidad de videos, esa cantidad NO es "fuera de los paquetes" — es la promo, y se responde con
   el flujo de promociones.
+
+▸ EL CLIENTE YA ACORDÓ ALGO CON ALGUIEN DEL EQUIPO (máxima prioridad — gana sobre todo)
+  Aplica cuando el cliente da por hecho que YA habló, cotizó o cerró condiciones con una
+  persona de Conecta Pro: "ayer quedamos en 80 Bs por video", "ya hablé con José y me dio el
+  ok", "me dijeron que me hacían un precio", "quedó acordado con su asesor", "solo faltaba la
+  reunión", "ya me confirmaron".
+
+  TÚ NO SABES QUÉ SE ACORDÓ. No está en esta guía, no lo puedes verificar y puede ser
+  perfectamente cierto: los asesores cierran condiciones fuera de este chat todos los días.
+
+  PROHIBIDO en este caso, sin excepción:
+  - Responder con el catálogo, los precios o los paquetes ("nuestros paquetes son fijos...").
+    Contradecir a un compañero delante del cliente es la peor respuesta posible: el cliente
+    siente que le mintieron y se va.
+  - Negar el precio o el acuerdo que menciona, o decir que "no manejamos eso".
+  - Pedirle el formulario de datos, o volver a pedirle datos que ya dio.
+  - Prometer un precio, confirmarlo o "revisarlo" tú.
+
+  Responde SOLO esto (una línea, sin catálogo, sin formulario, sin precios):
+
+  "¡Gracias por avisar! 😊 Le paso ahora mismo tu caso al asesor que te atendió para que lo retome justo donde quedaron. Te escribe por aquí en un momento 🙌"
+
+  - Marca advisor_handoff = true con advisor_handoff_reason = "prior_agreement".
+  - TODOS los intents en false: no envíes flyers, ni el QR, ni material de ningún tipo.
+  - NO marques service_intake_requested ni lead_data_submitted.
+  - Si además el cliente está molesto o reclama, no discutas ni te justifiques: reconoce y
+    deriva. El asesor arregla lo demás.
 
 ▸ CLIENTE QUIERE SOLO EDICIÓN (ya tiene los videos grabados)
   Aplica cuando el CONTEXTO de la conversación deja claro que el cliente ya tiene sus videos
@@ -1109,7 +1150,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   de IA. Márcalo SOLO UNA VEZ por conversación.
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
-  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Cinco motivos
+  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Seis motivos
   posibles, mutuamente excluyentes:
 
   (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide MENOS
@@ -1128,7 +1169,13 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       advisor_handoff=true con este motivo. NO uses "out_of_catalog" para este caso: son cosas
       distintas y el asesor las trata distinto.
 
-  (3) advisor_handoff_reason = "undocumented_info": el cliente hace una pregunta CONCRETA sobre
+  (3) advisor_handoff_reason = "prior_agreement": el cliente afirma que ya habló, cotizó o
+      acordó algo con una persona del equipo — ver el flujo "EL CLIENTE YA ACORDÓ ALGO CON
+      ALGUIEN DEL EQUIPO" arriba. Es el motivo de MÁXIMA prioridad: si aplica, gana sobre
+      cualquier otro flujo (paquetes, cursos, cantidades, agente de IA). Respondes solo la
+      línea de derivación, sin catálogo y sin formulario.
+
+  (4) advisor_handoff_reason = "undocumented_info": el cliente hace una pregunta CONCRETA sobre
       servicios, políticas, condiciones o datos de Conecta Pro que NO están en esta guía (todo lo
       cubierto arriba — precios, fechas, ubicación, paquetes, facturación, promo descontinuada,
       TikTok, etc. — NO cuenta como "no documentado"). Si tuvieras que inventar un dato para
@@ -1139,19 +1186,19 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       NO uses este motivo para preguntas por TEMAS DEL CURSO: ese caso usa "course_topic_unconfirmed"
       abajo, que SÍ responde (este motivo deja "reply" vacío y silencia al cliente, que sería peor).
 
-  (4) advisor_handoff_reason = "refund_old_date": el cliente pagó para el curso de Creación de
+  (5) advisor_handoff_reason = "refund_old_date": el cliente pagó para el curso de Creación de
       Contenido con su fecha anterior (domingo 26 de julio) y ya no puede asistir por el cambio a
       la nueva fecha (2 de agosto) — ver detalle y ejemplos en FLUJO A. En este caso SÍ respondes
       con empatía confirmando que un asesor revisará el reembolso (no dejas "reply" vacío).
 
-  (5) advisor_handoff_reason = "course_topic_unconfirmed": el cliente pregunta si el curso de
+  (6) advisor_handoff_reason = "course_topic_unconfirmed": el cliente pregunta si el curso de
       Creación de Contenido incluye un tema que NO está en la lista de CONTENIDO confirmado de la
       LÍNEA A (ej. monetización, fotografía, Instagram Reels) — ver regla y ejemplo de tono en
       LÍNEA A. En este caso SÍ respondes en positivo, sin negar el tema y sin comprometerte a
       nada concreto (no dejas "reply" vacío); el asesor confirma el detalle real después.
 
-  Si ninguno de los cinco casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
-  Los cinco motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
+  Si ninguno de los seis casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
+  Los seis motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
   negocio, eso NO es un handoff: es off_topic=true (ver arriba) y no genera aviso al asesor.
   NUNCA marques advisor_handoff por leads, llamadas, citas, pagos ni por el agente de IA (Zoom o
   cotización personalizada) — esos flujos ya tienen su propio aviso al asesor y son independientes
@@ -1352,6 +1399,15 @@ Cuando completes la transferencia, envíame por este chat:
 📌 Tu número de celular
 
 Con eso el equipo valida el pago y te confirmamos tu cupo 😊`;
+
+// Cliente que dice tener algo YA acordado con una persona del equipo ("ayer quedamos en
+// 80 Bs", "ya hablé con el asesor y me dio el ok"). El bot no puede confirmar ni negar
+// ese acuerdo: cualquier cosa que diga sobre precios o paquetes contradice a su propio
+// equipo delante del cliente. Devuelve la conversación a quien la venía llevando y se
+// calla (la pausa la aplica pauseBotForHumanHandoff).
+const PRIOR_AGREEMENT_REPLY = `¡Gracias por avisar! 😊 Le paso ahora mismo tu caso al asesor que te atendió para que lo retome justo donde quedaron.
+
+Te escribe por aquí en un momento 🙌`;
 
 // Texto EXACTO del Flujo B — consulta general de paquetes (mismo contenido que el
 // SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual
@@ -2217,7 +2273,7 @@ function detectCallRequestHeuristic(text: string): boolean {
     /\b(quiero|queria|puedo|podria|deseo|necesito|me gustaria|prefiero|quisiera)\s+(hacer\s+una\s+)?llamar\b/.test(
       normalized,
     ) ||
-    /\b(llamenme|llamame|me pueden llamar|pueden llamarme|que me llamen|me pueden contactar|pueden contactarme|comuniquense conmigo)\b/.test(
+    /\b(llamenme|llamame|me pueden llamar|pueden llamarme|que me llamen|que me llame|que me llames|me pueden contactar|pueden contactarme|comuniquense conmigo)\b/.test(
       normalized,
     ) ||
     /\b(por|una|hacer una|mediante|en|mandar|manden)\s+(video)?llamada\b/.test(
@@ -2387,6 +2443,7 @@ type AdvisorHandoffReason =
   | "undocumented_info"
   | "out_of_catalog"
   | "custom_quantity"
+  | "prior_agreement"
   | "refund_old_date"
   | "course_topic_unconfirmed";
 
@@ -2394,10 +2451,13 @@ type AdvisorHandoffReason =
 // menos el lead por cantidad, que tiene el suyo (ver hasTelegramCustomQuantityBeenSent).
 const HANDOFF_MARKER = "[TELEGRAM_HANDOFF_SENT]";
 const CUSTOM_QUANTITY_MARKER = "[TELEGRAM_CUSTOM_QUANTITY_SENT]";
+const PRIOR_AGREEMENT_MARKER = "[TELEGRAM_PRIOR_AGREEMENT_SENT]";
 
 const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
   out_of_catalog: "Servicio fuera del catálogo estándar",
   custom_quantity: "LEAD — pidió una cantidad de videos fuera de los paquetes",
+  prior_agreement:
+    "URGENTE — dice que ya acordó algo con el equipo (el bot NO respondió por encima)",
   undocumented_info: "Información no documentada",
   refund_old_date: "Posible reembolso — pagó fecha anterior del curso (26 de julio)",
   course_topic_unconfirmed: "Preguntó por un tema del curso fuera del temario confirmado",
@@ -2433,9 +2493,7 @@ async function notifyAdvisorHandoffToTelegram(params: {
     await saveOutboundMessage({
       conversationId: params.conversationId,
       phone: params.phone,
-      content: `${
-        params.reason === "custom_quantity" ? CUSTOM_QUANTITY_MARKER : HANDOFF_MARKER
-      } aviso de derivación a asesor enviado a Telegram`,
+      content: `${handoffMarkerFor(params.reason)} aviso de derivación a asesor enviado a Telegram`,
       rawPayload: {
         type: "telegram_notification",
         event: "advisor_handoff",
@@ -2663,43 +2721,126 @@ async function resumeBotIfPauseExpired(conversationId?: string) {
   }
 }
 
-// Pausa automática de la conversación cuando se sospecha un loop bot-contra-bot
-// (ej. el número del "usuario" en realidad pertenece a otro asistente automatizado
-// de otra empresa, y ambos bots se responden entre sí indefinidamente). Requiere
-// intervención manual (/resume) para reanudar.
-async function pauseBotForSuspectedLoop(conversationId?: string) {
-  if (!conversationId) return;
+// Base común de las pausas automáticas. `minutes = null` deja la pausa indefinida
+// (solo la levanta un humano con /resume); con minutos, el propio webhook la reanuda
+// sola en el primer mensaje posterior al vencimiento (ver resumeBotIfPauseExpired).
+async function applyBotPause(params: {
+  conversationId?: string;
+  reason: string;
+  minutes: number | null;
+  failureEventType: string;
+  metadata?: Record<string, unknown>;
+}): Promise<boolean> {
+  if (!params.conversationId) return false;
 
   const supabase = getSupabaseClient();
   const nowIso = new Date().toISOString();
+  const expiresAtIso = params.minutes
+    ? new Date(Date.now() + params.minutes * 60_000).toISOString()
+    : null;
 
   const { error } = await supabase
     .from("kapso_conversations")
     .update({
       bot_paused: true,
       bot_paused_at: nowIso,
-      bot_pause_expires_at: null,
-      bot_paused_reason: "suspected_bot_to_bot_loop",
+      bot_pause_expires_at: expiresAtIso,
+      bot_paused_reason: params.reason,
       bot_pause_mode: "auto",
-      bot_pause_duration_minutes: null,
+      bot_pause_duration_minutes: params.minutes,
       updated_at: nowIso,
     })
-    .eq("kapso_conversation_id", conversationId);
+    .eq("kapso_conversation_id", params.conversationId);
 
   if (error) {
-    console.error("auto pause for suspected bot loop failed", error);
+    console.error("auto pause failed", { reason: params.reason, error });
 
     await logSystemEvent({
       level: "error",
-      eventType: "bot_loop_auto_pause_failed",
-      conversationId,
+      eventType: params.failureEventType,
+      conversationId: params.conversationId,
       errorMessage: error.message,
       metadata: {
         code: error.code,
         details: error.details,
+        pause_reason: params.reason,
+        ...params.metadata,
       },
     });
+
+    return false;
   }
+
+  return true;
+}
+
+// TRASPASO A UN HUMANO — apagado del bot.
+//
+// Cuando el caso pasa a manos de una persona (pidió que lo llamen, agendó una visita o
+// un Zoom, cerró su lead, o se derivó al asesor), el bot deja de hablar. No es un lujo:
+// mientras el asesor no ha entrado todavía al chat, cada respuesta automática puede
+// contradecir lo que esa persona ya acordó, repetir un formulario ya enviado o negar un
+// precio que el equipo sí dio — y ahí se pierde al cliente, no antes.
+//
+// 12 horas es el MÍNIMO: cubre el caso real de que el pedido entre de tarde y el asesor
+// lo atienda recién a la mañana siguiente. Al vencer, el bot se reactiva solo; un humano
+// puede reactivarlo antes con /resume.
+const HUMAN_HANDOFF_PAUSE_MINUTES = 12 * 60;
+
+type HumanHandoffPauseReason =
+  | "call_requested"
+  | "appointment_requested"
+  | "zoom_requested"
+  | "lead_closed"
+  | "advisor_handoff"
+  | "prior_agreement";
+
+async function pauseBotForHumanHandoff(params: {
+  conversationId?: string;
+  phone?: string;
+  messageId?: string;
+  reason: HumanHandoffPauseReason;
+}): Promise<void> {
+  const paused = await applyBotPause({
+    conversationId: params.conversationId,
+    reason: `human_handoff:${params.reason}`,
+    minutes: HUMAN_HANDOFF_PAUSE_MINUTES,
+    failureEventType: "bot_human_handoff_pause_failed",
+    metadata: { handoff_reason: params.reason },
+  });
+
+  if (!paused) return;
+
+  console.log("bot paused for human handoff", {
+    conversationId: params.conversationId,
+    reason: params.reason,
+    minutes: HUMAN_HANDOFF_PAUSE_MINUTES,
+  });
+
+  await logSystemEvent({
+    level: "info",
+    eventType: "bot_paused_for_human_handoff",
+    conversationId: params.conversationId,
+    messageId: params.messageId,
+    contactPhone: params.phone,
+    metadata: {
+      handoff_reason: params.reason,
+      pause_minutes: HUMAN_HANDOFF_PAUSE_MINUTES,
+    },
+  });
+}
+
+// Pausa automática de la conversación cuando se sospecha un loop bot-contra-bot
+// (ej. el número del "usuario" en realidad pertenece a otro asistente automatizado
+// de otra empresa, y ambos bots se responden entre sí indefinidamente). Requiere
+// intervención manual (/resume) para reanudar.
+async function pauseBotForSuspectedLoop(conversationId?: string) {
+  await applyBotPause({
+    conversationId,
+    reason: "suspected_bot_to_bot_loop",
+    minutes: null,
+    failureEventType: "bot_loop_auto_pause_failed",
+  });
 }
 
 // Duración de la pausa automática por mensaje fuera de tema. Se usa una pausa con
@@ -2712,41 +2853,12 @@ const OFF_TOPIC_PAUSE_MINUTES = 360;
 // El bot guarda silencio total y deja la conversación en manos de un humano; se reanuda
 // sola al vencer la pausa, o antes con /resume.
 async function pauseBotForOffTopic(conversationId?: string) {
-  if (!conversationId) return;
-
-  const supabase = getSupabaseClient();
-  const nowIso = new Date().toISOString();
-  const expiresAtIso = new Date(
-    Date.now() + OFF_TOPIC_PAUSE_MINUTES * 60_000,
-  ).toISOString();
-
-  const { error } = await supabase
-    .from("kapso_conversations")
-    .update({
-      bot_paused: true,
-      bot_paused_at: nowIso,
-      bot_pause_expires_at: expiresAtIso,
-      bot_paused_reason: "off_topic_unrelated",
-      bot_pause_mode: "auto",
-      bot_pause_duration_minutes: OFF_TOPIC_PAUSE_MINUTES,
-      updated_at: nowIso,
-    })
-    .eq("kapso_conversation_id", conversationId);
-
-  if (error) {
-    console.error("auto pause for off topic message failed", error);
-
-    await logSystemEvent({
-      level: "error",
-      eventType: "bot_off_topic_auto_pause_failed",
-      conversationId,
-      errorMessage: error.message,
-      metadata: {
-        code: error.code,
-        details: error.details,
-      },
-    });
-  }
+  await applyBotPause({
+    conversationId,
+    reason: "off_topic_unrelated",
+    minutes: OFF_TOPIC_PAUSE_MINUTES,
+    failureEventType: "bot_off_topic_auto_pause_failed",
+  });
 }
 
 async function getRecentConversationHistory(
@@ -2852,6 +2964,7 @@ const AssistantTurnSchema = z.object({
       "undocumented_info",
       "out_of_catalog",
       "custom_quantity",
+      "prior_agreement",
       "refund_old_date",
       "course_topic_unconfirmed",
     ])
@@ -3996,6 +4109,22 @@ async function hasTelegramCustomQuantityBeenSent(
   return hasTelegramMarkerBeenSent(conversationId, CUSTOM_QUANTITY_MARKER);
 }
 
+// Mismo criterio para el cliente que dice tener un acuerdo previo: es el aviso más
+// urgente de todos (hay una persona del equipo que ya le prometió algo), así que no
+// puede quedarse sin enviar porque la conversación ya haya derivado por otra cosa.
+async function hasTelegramPriorAgreementBeenSent(
+  conversationId?: string,
+): Promise<boolean> {
+  return hasTelegramMarkerBeenSent(conversationId, PRIOR_AGREEMENT_MARKER);
+}
+
+// Marcador de dedup que le toca a cada motivo.
+function handoffMarkerFor(reason: AdvisorHandoffReason): string {
+  if (reason === "custom_quantity") return CUSTOM_QUANTITY_MARKER;
+  if (reason === "prior_agreement") return PRIOR_AGREEMENT_MARKER;
+  return HANDOFF_MARKER;
+}
+
 async function hasTelegramMarkerBeenSent(
   conversationId: string | undefined,
   marker: string,
@@ -4815,6 +4944,7 @@ export async function POST(request: Request) {
     telegramAppointmentSent,
     telegramHandoffSent,
     telegramCustomQuantitySent,
+    telegramPriorAgreementSent,
     telegramZoomSent,
     flowState,
     manualHumanMediaSent,
@@ -4832,6 +4962,7 @@ export async function POST(request: Request) {
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
     hasTelegramHandoffBeenSent(lastMessage.conversationId),
     hasTelegramCustomQuantityBeenSent(lastMessage.conversationId),
+    hasTelegramPriorAgreementBeenSent(lastMessage.conversationId),
     hasTelegramZoomBeenSent(lastMessage.conversationId),
     getConversationFlowState(lastMessage.conversationId),
     hasManualHumanMediaBeenSent(lastMessage.conversationId),
@@ -5714,6 +5845,57 @@ export async function POST(request: Request) {
     });
   }
 
+  // ACUERDO PREVIO — la red de seguridad más dura del sistema, y la última en aplicarse
+  // para que gane sobre cualquier otra respuesta ya fijada.
+  //
+  // Viene de un caso real: un cliente que había cerrado 80 Bs por video con un asesor
+  // escribió para coordinar, y el bot le contestó "nuestros paquetes son fijos: 6, 12 o
+  // 18 videos". Contradecir al propio equipo delante del cliente costó la venta y la
+  // recomendación. Cuando alguien afirma tener algo acordado, el bot no sabe qué se
+  // acordó, no puede verificarlo y negarlo es peor que callarse: se limita a devolver el
+  // chat a la persona que lo atendió.
+  //
+  // No aplica sobre un comprobante de pago (ese flujo tiene su propia respuesta y su
+  // propio aviso, y ahí el "quedamos en 250" del cliente es el monto que ya pagó).
+  const priorAgreementClaimed =
+    mentionsPriorAgreement(lastMessage.text) &&
+    !receiptDetected &&
+    !turn.payment_confirmation;
+
+  if (turn.should_reply && priorAgreementClaimed) {
+    const killedFlags =
+      turn.service_intake_requested ||
+      turn.intents.service_packages ||
+      turn.intents.service_packages_promo;
+
+    turn.reply = PRIOR_AGREEMENT_REPLY;
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+    turn.intents.course_flyer = false;
+    turn.intents.ai_agent_flyer = false;
+    turn.advisor_handoff = true;
+    turn.advisor_handoff_reason = "prior_agreement";
+
+    console.log("prior agreement claim: reply replaced and bot handed to human", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    await logSystemEvent({
+      level: "warning",
+      eventType: "prior_agreement_claim_handoff",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        lead_or_material_flags_cleared: killedFlags,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
   // Contexto comercial de la conversación: gate de las alertas de lead y de derivación a
   // asesor (los avisos de pago, cita y Zoom no pasan por aquí, tienen validación propia).
   const commercialMaterialSent =
@@ -6460,6 +6642,30 @@ export async function POST(request: Request) {
       }
     }
 
+    // ACUERDO PREVIO: el cliente afirma que ya cerró condiciones con alguien del equipo.
+    // Es el aviso más urgente que emite el bot — hay una promesa humana de por medio que
+    // el bot no conoce — y por eso lleva marcador propio y no compite con los demás.
+    if (
+      turn.advisor_handoff &&
+      turn.advisor_handoff_reason === "prior_agreement" &&
+      !telegramPriorAgreementSent
+    ) {
+      // Este aviso NO pasa por el gate de contexto comercial que usan los demás: decir
+      // "ya acordamos algo con ustedes" ES contexto comercial, aunque el chat todavía no
+      // tenga material enviado. Si no saliera, el cliente quedaría con el bot apagado y
+      // sin nadie avisado — justo el escenario que esto viene a evitar.
+      await notifyAdvisorHandoffToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: mediaConversationId,
+        reason: "prior_agreement",
+        lastMessageText: lastMessage.text,
+        summary: turn.conversation_summary,
+        note: `⚠️ El cliente dice que ya acordó algo con el equipo. El bot NO le respondió con el catálogo y quedó apagado ${HUMAN_HANDOFF_PAUSE_MINUTES / 60} h — retoma tú el chat`,
+      });
+    }
+
     // Posible reembolso: el cliente pagó para el curso con la fecha anterior (26 de julio) y
     // ya no puede asistir por el cambio de fecha. El bot ya respondió avisando que un asesor
     // revisará el reembolso; aquí solo se notifica al equipo por Telegram para que le den
@@ -6520,6 +6726,38 @@ export async function POST(request: Request) {
     });
   }
 
+  // APAGADO DEL BOT AL PASAR EL CASO A UN HUMANO. Va al final, después de enviar la
+  // respuesta y de avisar por Telegram: el cliente recibe el mensaje de cierre ("un asesor
+  // se comunicará contigo") y a partir de ahí el chat es del asesor. Los mensajes que
+  // lleguen durante la pausa se guardan igual, y el lead o el comprobante se siguen
+  // notificando — lo único que se apaga es la respuesta automática.
+  //
+  // El orden de los motivos va de más específico a más general: es solo la etiqueta que
+  // queda registrada, la pausa es la misma.
+  const humanHandoffPauseReason: HumanHandoffPauseReason | null =
+    turn.advisor_handoff_reason === "prior_agreement"
+      ? "prior_agreement"
+      : callRequested
+        ? "call_requested"
+        : turn.appointment_scheduled
+          ? "appointment_requested"
+          : turn.zoom_meeting_scheduled
+            ? "zoom_requested"
+            : turn.lead_data_submitted || turn.ai_agent_lead_submitted
+              ? "lead_closed"
+              : turn.advisor_handoff
+                ? "advisor_handoff"
+                : null;
+
+  if (humanHandoffPauseReason) {
+    await pauseBotForHumanHandoff({
+      conversationId: lastMessage.conversationId,
+      phone: lastMessage.from,
+      messageId: lastMessage.messageId,
+      reason: humanHandoffPauseReason,
+    });
+  }
+
   await logSystemEvent({
     level: "info",
     eventType: "webhook_processed",
@@ -6548,6 +6786,7 @@ export async function POST(request: Request) {
       relief_campaign_closed_notice: mentionsClosedRelief,
       advisor_handoff: turn.advisor_handoff,
       advisor_handoff_reason: turn.advisor_handoff_reason,
+      human_handoff_pause_reason: humanHandoffPauseReason,
       detected_intents: turn.intents,
       sent_intents: sentIntents,
     },

@@ -8,7 +8,11 @@
 // gasta un mensaje de Meta y molesta al cliente).
 
 import assert from "node:assert/strict";
-import { containsIncomingLink, mentionsExpiredEditPromo } from "./keywords.ts";
+import {
+  containsIncomingLink,
+  mentionsExpiredEditPromo,
+  mentionsPriorAgreement,
+} from "./keywords.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -21,6 +25,53 @@ function test(name: string, fn: () => void) {
     failures.push(`${name}\n    ${(error as Error).message.split("\n")[0]}`);
   }
 }
+
+// --- Acuerdo previo con el equipo -------------------------------------------
+//
+// Cada falso positivo aquí apaga el bot durante horas en un chat que quizá solo pedía
+// información, así que el detector tiene que ser estrecho: los "no" importan tanto
+// como los "sí".
+
+test("reconoce al cliente que dice tener algo ya acordado con el equipo", () => {
+  const frases = [
+    "Ayer quedamos en 80 bolivianos por video",
+    "quedamos en 2000 al mes",
+    "ya hablé con el asesor",
+    "hablé con su asesor la semana pasada",
+    "me dio el ok",
+    "me dieron el ok ayer",
+    "ya está acordado con ustedes",
+    "me dijeron que el precio era otro",
+    "me pasaron un precio de 1500",
+    "coordiné con el encargado",
+  ];
+
+  for (const frase of frases) {
+    assert.equal(mentionsPriorAgreement(frase), true, frase);
+  }
+});
+
+test("no confunde una conversación normal con un acuerdo previo", () => {
+  const frases = [
+    "quedamos en que me escribes mañana",
+    "quedamos el martes",
+    "hablé con mi socio y queremos el de 12",
+    "hola, quiero información de los paquetes",
+    "quiero 12 videos",
+    "cuánto cuesta el curso",
+    "me interesa el básico",
+    "necesito hablar con alguien",
+  ];
+
+  for (const frase of frases) {
+    assert.equal(mentionsPriorAgreement(frase), false, frase);
+  }
+});
+
+test("un acuerdo sin cifra no alcanza para apagar el bot", () => {
+  assert.equal(mentionsPriorAgreement("quedamos en eso entonces"), false);
+  assert.equal(mentionsPriorAgreement("quedamos en 80 bs por video"), true);
+});
 
 // --- Promo de edición por 50 Bs (vencida) -----------------------------------
 
