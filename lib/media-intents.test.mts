@@ -14,6 +14,12 @@ import {
   resolvePromoIntents,
   shouldResendMedia,
 } from "./media-intents.ts";
+import {
+  COURSE_KEYWORDS,
+  SERVICE_PACKAGES_KEYWORDS,
+  containsExactNumber,
+  normalizeForMatch,
+} from "./keywords.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -312,6 +318,60 @@ test("timestamp futuro (reloj corrido) se trata como envío reciente", () => {
     shouldResendMedia({ intent: PAQUETES, lastSentAt: horasAntes(-5), now: AHORA }).send,
     false,
   );
+});
+
+// --- Solapamiento de keywords entre cursos y paquetes -----------------------
+//
+// Origen del bug real: los dos cursos se llaman "creación de CONTENIDO" y "EDICIÓN en
+// CapCut", y esas tres palabras (CONTENIDO, EDICION, VIDEOS) están en
+// SERVICE_PACKAGES_KEYWORDS. Por eso "quiero el curso de creación de contenido" pasaba
+// por intención explícita de paquetes y le llegaba el formulario de datos de empresa.
+// hasExplicitPackageIntent (en el webhook) exige ahora una señal FUERTE de paquete
+// cuando el mensaje nombra un curso; estas pruebas fijan el solapamiento que lo motiva
+// y qué señales son las fuertes.
+
+test("las palabras de los nombres de los cursos SÍ están en las de paquetes", () => {
+  // Si esto deja de ser cierto, la guarda de cursos de hasExplicitPackageIntent podría
+  // ya no hacer falta — pero mientras siga siendo cierto, es imprescindible.
+  for (const palabra of ["contenido", "edicion", "videos"]) {
+    assert.equal(SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(palabra)), true, palabra);
+  }
+});
+
+test("los mensajes de cursos que disparaban el bug se reconocen como cursos", () => {
+  for (const mensaje of [
+    "quiero el curso de creación de contenido",
+    "me interesa el de edición en CapCut",
+    "info del taller de contenido",
+  ]) {
+    assert.equal(COURSE_KEYWORDS.test(normalizeForMatch(mensaje)), true, mensaje);
+    // Y son justo los que la regex de paquetes también atrapaba.
+    assert.equal(
+      SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(mensaje)),
+      true,
+      mensaje,
+    );
+  }
+});
+
+test("señal fuerte de paquete: 'paquete', 6/12/18 y 2500/3500/5500", () => {
+  const fuerte = (texto: string) => {
+    const normalizado = normalizeForMatch(texto);
+    return (
+      /\bPAQUETE(S)?\b/.test(normalizado) ||
+      containsExactNumber(normalizado, [6, 12, 18]) ||
+      containsExactNumber(normalizado, [2500, 3500, 5500])
+    );
+  };
+
+  // Un cliente de cursos no produce estas por accidente.
+  assert.equal(fuerte("hice el curso, ahora quiero un paquete"), true);
+  assert.equal(fuerte("quiero el paquete de 12"), true);
+  assert.equal(fuerte("el de 3500"), true);
+
+  // Estas son las que antes bastaban y ya no deben bastar.
+  assert.equal(fuerte("quiero el curso de creación de contenido"), false);
+  assert.equal(fuerte("me interesa el de edición en CapCut"), false);
 });
 
 console.log(`${passed} pruebas de guardas OK`);

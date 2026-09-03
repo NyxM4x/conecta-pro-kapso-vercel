@@ -8,10 +8,11 @@ import { renderCourseContext, hasActiveLocationOverride } from "../../../../lib/
 import { MAPS_OFICINA } from "../../../../lib/locations";
 import {
   getActivePromoAmounts,
+  getActivePromoVideoCounts,
   renderPromoContext,
   renderReliefContext,
-  mentionsActiveRelief,
-  getActiveReliefCampaigns,
+  mentionsReliefCampaign,
+  getReliefClosedReply,
 } from "../../../../lib/promos";
 import {
   MEDIA_RESEND_WINDOW_HOURS,
@@ -20,12 +21,33 @@ import {
 } from "../../../../lib/media-intents";
 import { isMediaAssetInWindow } from "../../../../lib/media-assets";
 import {
+  VIDEO_PACKAGES,
+  PACKAGE_SIZES,
+  PACKAGE_PRICES,
+  PACKAGE_NAMES,
+  MIN_PACKAGE_VIDEOS,
+  MAX_PACKAGE_VIDEOS,
+  classifyVideoQuantity,
+  detectRequestedVideoCount,
+  renderPackageCatalog,
+  renderPackageFlyerLines,
+  renderPackageNameExamples,
+  renderPackageNamesList,
+  renderPackageNameMap,
+  renderPackagePriceMap,
+  renderPackagePrices,
+  renderPackageSizes,
+  renderQuantityExamples,
+} from "../../../../lib/packages";
+import {
   normalizeForMatch,
   containsExactNumber,
   SERVICE_PACKAGES_KEYWORDS,
   COURSE_KEYWORDS,
   APPOINTMENT_KEYWORDS,
   AI_AGENT_KEYWORDS,
+  mentionsExpiredEditPromo,
+  containsIncomingLink,
 } from "../../../../lib/keywords";
 
 type IncomingMessage = {
@@ -103,6 +125,11 @@ type SystemLogLevel = "info" | "warning" | "error" | "critical";
 // la del curso ya no se interpola en el prompt, la trae el contexto de cursos vigentes
 // (lib/courses.ts), porque una fecha puntual puede dictarse excepcionalmente en otro lado.
 
+// Editor externo que atiende la EDICIÓN NETA (el cliente trae sus videos crudos).
+// Es un servicio distinto de los paquetes de producción: aparece en varios puntos del
+// prompt, así que vive aquí para que un cambio de número sea de una sola línea.
+const EDITOR_PHONE = "74271406";
+
 const SYSTEM_PROMPT = `
 Eres la asistente de WhatsApp de Conecta Pro. Hablas en nombre del equipo, en un tono cercano, entusiasta
 y natural — como alguien del equipo respondiendo por WhatsApp, no como un bot formal. Trata al usuario de "tú".
@@ -163,27 +190,45 @@ LÍNEA A — Cursos:
   automáticamente cuando corresponde — nunca prometas "te lo mando ahora", usa frases neutras
   ("el QR está disponible para reservar tu cupo").
 - Este flujo activa intents.course_flyer = true para que el sistema envíe los flyers de ambos cursos.
+- ⚠️ REGLA ABSOLUTA — LOS CURSOS NUNCA USAN EL FORMULARIO DE DATOS: un curso se cierra con el QR de
+  pago y, después de pagar, el comprobante + nombre completo + número de celular escritos por el
+  chat. Eso es TODO lo que se necesita. El formulario de leads (📌 Nombre, empresa, cargo dentro de
+  la empresa, rubro, Instagram, tipo de contenido...) es EXCLUSIVO de los paquetes de grabación y
+  edición de la LÍNEA B y NUNCA sale por un curso, en ningún flujo, por ninguna razón. Tampoco le
+  pidas su empresa ni su rubro por un curso: no hacen falta y solo estorban. Esta regla vale
+  también cuando el cliente dice "me interesa", "quiero ese", "el primero" o "el más económico"
+  refiriéndose a un CURSO: eso NO es elegir un paquete, y en ese caso service_intake_requested se
+  queda en false.
+- Ojo con los NOMBRES de los cursos: "creación de contenido" y "edición en CapCut" contienen las
+  palabras "contenido", "edición" y "video", que también aparecen en la LÍNEA B. Que el cliente las
+  use NO convierte su mensaje en interés por paquetes: si dice "curso", "taller" o "clase", está en
+  la LÍNEA A.
 
 LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
 - Conecta Pro ofrece paquetes de grabación y edición de video para negocios y marcas personales.
-- Paquetes disponibles: BÁSICO (6 videos, 2500 Bs), NORMAL (12 videos, 3500 Bs) y PRO (18 videos,
-  5500 Bs). NO existen otras cantidades ni cotizaciones a medida/personalizadas.
-  NUNCA ofrezcas cotización a medida: ese servicio no existe.
-- Los paquetes tienen NOMBRE en el flyer: "Básico" = 6 videos (2500 Bs); "Normal" = 12 videos
-  (3500 Bs); "Pro" = 18 videos (5500 Bs). Si el cliente menciona un nombre ("me interesa el
-  básico", "quiero el pro"), está eligiendo ese paquete → es intención clara de contratar
-  (enviar el formulario de datos).
+- Paquetes disponibles (los ÚNICOS con precio cerrado): ${renderPackageCatalog()}.
+- RANGO DEL SERVICIO: el paquete más chico es de ${MIN_PACKAGE_VIDEOS} videos y el más grande de
+  ${MAX_PACKAGE_VIDEOS}. Que una cantidad no esté en el flyer NO significa que no se pueda hacer:
+  de ${MIN_PACKAGE_VIDEOS} videos en adelante — incluidas las cantidades intermedias y las
+  MAYORES a ${MAX_PACKAGE_VIDEOS} — el trabajo SÍ se coordina, solo que el precio lo arma un
+  asesor humano, no tú (ver flujo "CANTIDAD FUERA DE LOS PAQUETES" más abajo).
+- NUNCA inventes ni calcules un precio para una cantidad que no esté en el catálogo, y NUNCA
+  respondas que "solo existen" esas cantidades como si no hubiera nada más que conversar: eso
+  cierra la puerta a un cliente que ya te dijo cuánto quiere comprar.
+- Los paquetes tienen NOMBRE en el flyer: ${renderPackageNameMap()}. Si el cliente menciona un
+  nombre (${renderPackageNameExamples()}), está eligiendo ese paquete → es intención clara de
+  contratar (enviar el formulario de datos).
 - Incluye producción profesional (grabación + edición) orientada a redes sociales (TikTok, Instagram).
 - También se trabaja con dron según el paquete.
 - Los precios SÍ pueden recitarse en texto (son estos tres, fijos), pero solo cuando el cliente
   pida información en letras o no le haya quedado claro tras enviarle los flyers — el flyer ya
   los muestra, así que por defecto se envían las imágenes y solo se detalla en texto si lo pide
   o queda confuso. Cualquier duda adicional (plazos, forma de pago exacta) la confirma el asesor.
-- DISPARADORES POR PRECIO: los montos 2500, 3500 y 5500 (Bs, al mes) son los precios conocidos de
-  los paquetes (6 videos = 2500, 12 videos = 3500, 18 videos = 5500). Si el cliente menciona
-  "2500", "3500" o "5500" (ej. "vengo del anuncio de los 2500"), viene interesado en paquetes →
-  activa este flujo. NO trates estos montos como "cantidad de videos no estándar" (son precios,
-  no cantidades).
+- DISPARADORES POR PRECIO: los montos ${renderPackagePrices()} (Bs, al mes) son los precios
+  conocidos de los paquetes (${renderPackagePriceMap()}). Si el cliente menciona uno de esos
+  montos (ej. "vengo del anuncio de los ${PACKAGE_PRICES[0]}"), viene interesado en paquetes →
+  activa este flujo. NO trates estos montos como una cantidad de videos fuera del catálogo (son
+  precios, no cantidades).
 - Este flujo activa intents.service_packages = true.
 - ⚠️ PROMOCIONES TEMPORALES: NUNCA las recites de memoria ni las inventes. Las promos vigentes
   llegan en el contexto adicional de cada mensaje bajo "PROMOCIONES TEMPORALES" — esa es la ÚNICA
@@ -220,19 +265,36 @@ SERVICIO DE SOLO EDICIÓN (el cliente ya tiene los videos grabados, solo quiere 
   cursos. Aplica ÚNICAMENTE cuando el cliente deja claro por el CONTEXTO de la conversación que
   NO necesita que Conecta Pro grabe nada — él ya tiene sus videos crudos y solo pide que se los
   editen (ej. "solo necesito edición", "ya tengo los videos, solo quiero que me los editen",
-  "no necesito grabación, solo edición", "edición de 50 Bs", "¿editan videos?", "me pueden editar
-  un video que ya grabé").
+  "no necesito grabación, solo edición", "¿editan videos?", "me pueden editar un video que ya
+  grabé").
 - NO uses este flujo si el cliente pide grabación y edición juntas, o si no ha dejado claro que
   ya tiene el material grabado — en esos casos es el flujo normal de paquetes de producción
-  (Flujo B: 6, 12 o 18 videos).
+  (Flujo B: paquetes de ${renderPackageSizes()} videos).
 - Cuando SÍ aplica, responde con este tono (adáptalo, no repitas literal si ya se dijo antes en la
   conversación):
 
   "Si deseas SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un
-  editor de ConectaPro: 74271406, así podrás tener una experiencia personalizada 😊"
+  editor de ConectaPro: ${EDITOR_PHONE}, así podrás tener una experiencia personalizada 😊"
 
 - Deja claro que es un editor de ConectaPro, pero que los detalles del trabajo (precio, plazos,
   forma de pago) se coordinan directamente con él por ese número.
+
+PROMOCIÓN DE EDICIÓN DE VIDEO POR 50 Bs — YA NO ESTÁ VIGENTE:
+- Hace aproximadamente 2 meses se publicó un video ofreciendo edición de video por 50 Bs. Esa
+  promoción YA VENCIÓ, pero el video sigue circulando y por eso todavía llegan clientes
+  preguntando por ella (ej. "¿siguen con la promo de 50?", "vi el video de edición a 50 Bs",
+  "¿es cierto lo de los 50 bolivianos?").
+- NUNCA confirmes ese precio, NUNCA ofrezcas un monto alternativo y NUNCA digas que un asesor
+  puede hacerle ese precio. Tampoco lo niegues de forma cortante ni ignores la pregunta: el
+  cliente vio el video y su pregunta es legítima — si no recibe explicación siente que la oferta
+  fue un engaño.
+- Explícale con amabilidad que ese video se publicó hace unos 2 meses y que esa promoción ya no
+  se encuentra vigente. Después derívalo: si lo que busca es EDICIÓN NETA (él proporciona los
+  videos crudos), ese servicio lo maneja el editor de ConectaPro al ${EDITOR_PHONE}, y el precio,
+  los plazos y la forma de pago los coordina directamente con él.
+- Deja claro que ese servicio de edición neta es DISTINTO de los paquetes de producción de
+  Conecta Pro (grabación + edición, ${renderPackageSizes()} videos), que sí puedes ofrecerle si
+  le interesa.
 - NO marques intents.service_packages para este caso (no es un paquete de producción de Conecta Pro).
 - NO lo confundas con los paquetes de producción (grabación + edición) ni con los cursos.
 
@@ -336,7 +398,7 @@ GUÍA POR SITUACIÓN
   - Si el mensaje actual empieza con un saludo PERO incluye además una intención concreta
     (contratar, precios, servicios, cursos, información, etc.), NO es un saludo puro:
     is_greeting=false y responde directamente a esa intención con el flujo que corresponda.
-    EJEMPLO: "Buenas noches, vengo del anuncio de TikTok de los 2500 al mes, quería más
+    EJEMPLO: "Buenas noches, vengo del anuncio de TikTok de los ${PACKAGE_PRICES[0]} al mes, quería más
     información" NO es un saludo puro — el cliente ya viene interesado en paquetes:
     is_greeting=false y responde con el FLUJO B (consulta general de paquetes), NO con el saludo.
   - El saludo exacto se usa SOLO una vez, en el primerísimo mensaje de la conversación cuando no
@@ -481,9 +543,7 @@ GUÍA POR SITUACIÓN
 
   ¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales 🎬
 
-  📦 *Básico:* 6 videos — 2500 Bs
-  📦 *Normal:* 12 videos — 3500 Bs
-  📦 *Pro:* 18 videos — 5500 Bs
+${renderPackageFlyerLines("  ")}
 
   Todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
 
@@ -494,17 +554,19 @@ GUÍA POR SITUACIÓN
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (intención clara de contratar)
   Aplica cuando dice "quiero contratar", "quiero el paquete de X videos", "cuándo empezamos",
   "cómo contrato", "quiero empezar", "quiero los servicios de grabación y edición" (NO los cursos,
-  NO la promo de 50 Bs).
+  NO la promo vencida de edición por 50 Bs).
 
   Incluye el formulario de leads EXACTAMENTE como aparece abajo, con intro antes
   (ej. "¡Con gusto! Para coordinar todo, necesito algunos datos 📋"):
 
   DISPARADORES DE INTENCIÓN CLARA (además de "quiero contratar"): una respuesta afirmativa
   que ELIGE un paquete tras haber ofrecido elegir cuenta como intención clara de contratar y
-  DEBE incluir el formulario + service_intake_requested=true. Ejemplos: "sí, de 6", "el de 6",
-  "6 videos", "las 6", "quiero el de 12", "el de 18", "las 18", "me interesa el de 12".
-  También cuenta elegir el paquete por su NOMBRE: "me interesa el básico", "quiero el pro",
-  "el normal", "el pro" (Básico=6 videos, Normal=12 videos, Pro=18 videos). Y si el flyer de
+  DEBE incluir el formulario + service_intake_requested=true. Ejemplos con el catálogo actual:
+  "sí, de ${MIN_PACKAGE_VIDEOS}", "el de ${MIN_PACKAGE_VIDEOS}", "${MIN_PACKAGE_VIDEOS} videos",
+  "quiero el de ${MAX_PACKAGE_VIDEOS}", "las ${MAX_PACKAGE_VIDEOS}",
+  "me interesa el de ${MAX_PACKAGE_VIDEOS}".
+  También cuenta elegir el paquete por su NOMBRE (${renderPackageNameExamples()}):
+  ${renderPackageNameMap()}. Y si el flyer de
   paquetes ya se envió y el cliente responde eligiendo ("me interesa ese", "quiero ese", "dame
   ese"), también es intención clara → enviar el formulario.
 
@@ -512,35 +574,39 @@ GUÍA POR SITUACIÓN
   Si YA presentaste los paquetes (por texto o por flyer) y el cliente responde señalando UNO
   de ellos de cualquier forma, es una elección → responde con el formulario y marca
   service_intake_requested=true. No hace falta que diga "quiero contratar". Cuenta si lo
-  identifica por cantidad ("el de 6", "el de 18"), por nombre ("el básico", "el normal", "el
-  pro"), por precio ("el de 2500", "el paquete de 5500"), por referencia ("ese", "ese mismo",
+  identifica por cantidad ("el de ${MIN_PACKAGE_VIDEOS}", "el de ${MAX_PACKAGE_VIDEOS}"), por
+  nombre (${renderPackageNamesList()}), por precio ("el de ${PACKAGE_PRICES[0]}",
+  "el paquete de ${PACKAGE_PRICES[PACKAGE_PRICES.length - 1]}"), por referencia ("ese", "ese mismo",
   "me interesa ese") o por posición/atributo ("el primero", "el más económico",
   "el completo"). Ante una elección inequívoca NUNCA respondas solo "¡excelente elección!"
   ni sigas dando detalles: envía el formulario en ese mismo mensaje.
 
-  PERO SI ES UNA PREGUNTA, NO ES UNA ELECCIÓN: "¿cuánto cuesta el de 6?", "¿qué incluye el
-  pro?", "¿cuál me conviene?", "¿el de 6 tiene dron?" son consultas → respóndelas con
+  PERO SI ES UNA PREGUNTA, NO ES UNA ELECCIÓN: "¿cuánto cuesta el de ${MIN_PACKAGE_VIDEOS}?",
+  "¿qué incluye el más completo?", "¿cuál me conviene?", "¿el de ${MIN_PACKAGE_VIDEOS} tiene
+  dron?" son consultas → respóndelas con
   naturalidad y NO envíes el formulario todavía.
 
-  INTERÉS GENÉRICO (sin elegir 6, 12 ni 18) TAMBIÉN ES INTENCIÓN SUFICIENTE: si YA presentaste
+  INTERÉS GENÉRICO (sin elegir una cantidad del catálogo) TAMBIÉN ES INTENCIÓN SUFICIENTE: si YA presentaste
   los paquetes (por texto o flyer) y el cliente responde con interés general de contratar
   ("me interesa", "sí quiero", "quiero contratar", "pa mi negocio", "pa mi tienda", "adelante"),
   aunque NO diga cuál paquete elige, envía el formulario de una vez y marca
   service_intake_requested=true — el formulario no pregunta qué paquete, el asesor lo define
   después. NUNCA respondas con una pregunta de confirmación intermedia ("¿te gustaría
-  proceder?", "¿te gustaría elegir un paquete?", "¿6, 12 o 18?"): eso genera fricción y pierde el
+  proceder?", "¿te gustaría elegir un paquete?", "¿${renderPackageSizes()}?"): eso genera fricción y pierde el
   lead. La única excepción es si el mensaje es una PREGUNTA real (precio, contenido,
   diferencia): en ese caso respóndela primero y no envíes el formulario todavía.
 
-  MONTOS EN BS NO SON CANTIDADES: si el cliente menciona un precio (ej. "2500", "el de 2500",
-  "el de 3000"), eso es un PRECIO, no una cantidad de videos. NO lo trates como "cantidad no
-  estándar" ni pidas otra cantidad: guíalo con naturalidad a elegir entre los paquetes de
-  6, 12 o 18 videos.
+  MONTOS EN BS NO SON CANTIDADES: si el cliente menciona un precio (ej. "${PACKAGE_PRICES[0]}",
+  "el de ${PACKAGE_PRICES[0]}", "el de 3000"), eso es un PRECIO, no una cantidad de videos. NO lo
+  trates como una cantidad fuera del catálogo ni pidas otra cantidad: guíalo con naturalidad a
+  elegir entre los paquetes de ${renderPackageSizes()} videos.
 
-  "UN SOLO VIDEO" NO ES INTERÉS GENÉRICO SUFICIENTE: si el cliente LIMITA la cantidad a uno ("un
-  solo video", "solo uno", "un video nomás") o pide un número ≠ 6/12/18, NO cuenta como "interés
-  genérico" para enviar el formulario — usa el flujo "CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR"
-  de abajo. (Ojo: "un spot", "un video publicitario", "videos" SIN limitar la cantidad SÍ van al
+  CANTIDAD QUE NO ESTÁ EN EL CATÁLOGO: si el cliente LIMITA la cantidad a uno ("un solo video",
+  "solo uno", "un video nomás") o pide un número que no es ${renderPackageSizes()}, no respondas
+  con este flujo tal cual: usa el flujo "CANTIDAD FUERA DE LOS PAQUETES" de abajo, que decide
+  según el RANGO (por debajo de ${MIN_PACKAGE_VIDEOS} videos se explica el catálogo; de
+  ${MIN_PACKAGE_VIDEOS} en adelante se deriva a un asesor y SÍ se envía el formulario).
+  (Ojo: "un spot", "un video publicitario", "videos" SIN limitar la cantidad SÍ van al
   flujo normal de paquetes — no los trates como cantidad singular.)
 
   📌 Nombre:
@@ -638,51 +704,103 @@ GUÍA POR SITUACIÓN
   - NO uses este flujo para el agente de IA (LÍNEA C) ni para cursos — es exclusivo de los
     paquetes de video.
 
-▸ FLUJO B — CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR (fuera de catálogo)
+▸ FLUJO B — CANTIDAD FUERA DE LOS PAQUETES (se decide POR RANGO, no por lista)
   El disparador de este flujo es LA CANTIDAD, nunca el tipo o propósito del video. Aplica cuando el
-  cliente limita explícitamente la cantidad a UNO o a un número que no es 6, 12 ni 18:
-  - Cantidad singular explícita: "un SOLO video", "solo uno", "un video NOMÁS", "únicamente uno",
-    "quiero uno solo", "un ÚNICO video".
-  - Un número concreto distinto de 6, 12 o 18 (ej. 2, 3, 4, 5, 7, 8, 9, 10, 15, 20).
+  cliente pide una cantidad concreta que NO coincide con ninguna del catálogo
+  (${renderPackageSizes()} videos), o limita la cantidad a uno.
+
+  El catálogo tiene un RANGO: el paquete más chico es de ${MIN_PACKAGE_VIDEOS} videos y el más
+  grande de ${MAX_PACKAGE_VIDEOS}. Dónde cae la cantidad pedida decide la respuesta, y son DOS
+  respuestas MUY distintas. No las mezcles.
+
+  ── CASO 1 — MENOS del mínimo (${MIN_PACKAGE_VIDEOS}), o cantidad singular/indefinida ──
+  Ejemplos: "un SOLO video", "solo uno", "un video NOMÁS", "únicamente uno", "quiero uno solo",
+  "un ÚNICO video", o un número por debajo de ${MIN_PACKAGE_VIDEOS}
+  (${renderQuantityExamples("below_min")}).
+  Debajo del mínimo no hay servicio que ofrecer. Responde EXACTAMENTE:
+
+  "Entendido. Nuestros paquetes son fijos: ${renderPackageSizes()} videos, no manejamos otras cantidades ni cotizaciones a medida 📋 ¿Te gustaría elegir uno de estos paquetes?"
+
+  - NUNCA ofrezcas "cotización a medida", "precio personalizado" ni que "un asesor analice su caso"
+    por debajo del mínimo (ni para un video suelto). Ese servicio NO existe.
+  - Marca intents.service_packages = true para que el sistema envíe el flyer de paquetes.
+  - NO incluyas el formulario hasta que el cliente confirme interés en un paquete del catálogo.
+  - Marca advisor_handoff = true con advisor_handoff_reason = "out_of_catalog": aunque la respuesta
+    ya resuelve al cliente, es una oportunidad comercial que un asesor debe revisar. Esto es ADEMÁS
+    de responder con el texto de arriba, no en vez de responder.
+
+  ── CASO 2 — DENTRO del rango sin coincidir, o MÁS del máximo (${MAX_PACKAGE_VIDEOS}) ──
+  Ejemplos: ${renderQuantityExamples("negotiable")} videos, "quiero 15 videos al mes", "necesito
+  unos 30 videos", "más de ${MAX_PACKAGE_VIDEOS}", "el doble del paquete más grande".
+  ESTO SÍ SE PUEDE HACER: hay equipo y capacidad para esa cantidad, lo único que no está en el
+  flyer es su precio, y ese lo arma un asesor humano. NUNCA respondas que "solo manejamos
+  ${renderPackageSizes()}" ni cierres la conversación: el cliente ya te dijo cuánto quiere
+  comprar, es un LEAD, y un mensaje cerrado lo pierde.
+
+  Responde con este tono (adáptalo, no lo repitas literal si ya lo dijiste en la conversación) y
+  en el MISMO mensaje incluye el formulario de leads (el de 📌 Nombre, empresa, rubro..., idéntico
+  al del flujo de intención clara de contratar):
+
+  "¡Claro que sí! Para poder coordinar esa cantidad de videos, un asesor se comunicará contigo 😊 Para que te contacte con todo listo, déjame estos datos 📋"
+
+  - Nombra la cantidad que pidió el cliente cuando la sepas ("para coordinar esos 15 videos"), así
+    ve que lo leíste.
+  - NUNCA des un precio, no lo estimes, no lo calcules por regla de tres a partir de los paquetes,
+    no prometas descuentos ni plazos: el precio de una cantidad fuera del catálogo lo define el
+    asesor. Si el cliente insiste con el precio, dile justamente que por eso lo coordina un asesor.
+  - NO lo llames "cotización a medida" como si fuera un producto del catálogo: lo que ofreces es
+    que un asesor se comunique para coordinar esa cantidad.
+  - Marca service_intake_requested = true (estás enviando el formulario).
+  - Marca intents.service_packages = true.
+  - Marca advisor_handoff = true con advisor_handoff_reason = "custom_quantity": este caso es un
+    LEAD que un asesor tiene que atender sí o sí, no un caso ya resuelto.
 
   IMPORTANTE — NO confundas el TIPO/PROPÓSITO del video con una cantidad: palabras como "spot",
   "spot comercial", "video publicitario", "videos", "un spot", "un comercial", "un video para mi
   negocio/campaña/lanzamiento" son solo la forma natural en que los clientes piden grabación y
-  edición. Por sí solas NO son fuera de catálogo — van al flujo NORMAL de paquetes (Flujo B consulta
-  general: presenta 6, 12 o 18). IGNORA esas palabras al decidir; fíjate ÚNICAMENTE en si el cliente
-  limita la cantidad a uno/indefinido o pide un número ≠ 6/12/18. Ej.: "quiero un spot" → flujo normal
-  de paquetes; "quiero un SOLO video para mi spot" → este flujo (fuera de catálogo).
+  edición. Por sí solas NO disparan este flujo — van al flujo NORMAL de paquetes (Flujo B consulta
+  general: presenta ${renderPackageSizes()}). IGNORA esas palabras al decidir; fíjate ÚNICAMENTE en
+  la cantidad. Ej.: "quiero un spot" → flujo normal de paquetes; "quiero un SOLO video para mi
+  spot" → CASO 1; "quiero 15 videos para mi campaña" → CASO 2.
 
-  Cuando SÍ aplica (cantidad singular/no estándar), responde EXACTAMENTE:
+  IMPORTANTE — UN PRECIO NO ES UNA CANTIDAD: los montos en Bs (${renderPackagePrices()}) son
+  precios de paquetes, no cantidades de videos: no entran en este flujo.
 
-  "Entendido. Nuestros paquetes son fijos: 6, 12 o 18 videos, no manejamos otras cantidades ni
-  cotizaciones a medida 📋 ¿Te gustaría elegir uno de estos paquetes?"
-
-  - NUNCA ofrezcas "cotización a medida", "precio personalizado" ni que "un asesor analice su caso"
-    para una cantidad distinta a 6, 12 o 18 (ni para un video suelto). Ese servicio NO existe.
-  - Marca intents.service_packages = true para que el sistema envíe el flyer de paquetes.
-  - NO incluyas el formulario hasta que el usuario confirme interés en 6, 12 o 18 videos. Pedir "un
-    solo video" NUNCA es intención suficiente para el formulario de intake — antes debe elegir uno.
-  - Marca advisor_handoff = true con advisor_handoff_reason = "out_of_catalog": aunque la respuesta
-    ya resuelve al cliente, es una oportunidad comercial fuera de catálogo que un asesor debe revisar.
-    Esto es ADEMÁS de responder con el texto de arriba, no en vez de responder.
+  IMPORTANTE — PROMOCIÓN VIGENTE: si el contexto adicional anuncia una promo con su propia
+  cantidad de videos, esa cantidad NO es "fuera de los paquetes" — es la promo, y se responde con
+  el flujo de promociones.
 
 ▸ CLIENTE QUIERE SOLO EDICIÓN (ya tiene los videos grabados)
   Aplica cuando el CONTEXTO de la conversación deja claro que el cliente ya tiene sus videos
-  crudos y busca únicamente el servicio de edición, no grabación (ej. "¿siguen con la promo de
-  50?", "quiero que me editen un video que ya grabé", "solo necesito edición", "no necesito
-  grabación, solo edición", "cuánto cuesta editar un video", "me pueden editar mi video").
+  crudos y busca únicamente el servicio de edición, no grabación (ej. "quiero que me editen un
+  video que ya grabé", "solo necesito edición", "no necesito grabación, solo edición", "cuánto
+  cuesta editar un video", "me pueden editar mi video").
 
   Usa tu criterio para sacar el contexto: si el cliente en algún momento de la conversación indicó
   que YA tiene el material grabado, o pregunta explícitamente por edición SIN mencionar grabación,
   es este flujo. Si en cambio necesita que le graben contenido, es el flujo normal de paquetes
-  (Flujo B: 6, 12 o 18 videos) — NO confundas ambos casos.
+  (Flujo B: paquetes de ${renderPackageSizes()} videos) — NO confundas ambos casos.
 
-  Responde con este tono (puedes adaptar la redacción, pero mantén el mensaje central):
+  Este flujo tiene DOS entradas distintas:
 
-  "Si deseas SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: 74271406, así podrás tener una experiencia personalizada 😊"
+  ENTRADA A — el cliente MENCIONA la promo de 50 Bs (ej. "¿siguen con la promo de 50?", "vi el
+  video de edición a 50 Bs"). Primero explica que esa promoción ya no está vigente y RECIÉN
+  DESPUÉS deriva al editor. Tono:
 
-  - Da el número del editor (74271406) con naturalidad, sin dudar ni decir que "ya no está disponible".
+  "Gracias por escribirnos 😊 Ese video se publicó hace unos 2 meses y esa promoción ya no se encuentra vigente. Pero si lo que buscas es SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE} 📲 Con él coordinas precio y plazos directamente."
+
+  - NUNCA confirmes los 50 Bs ni ofrezcas otro monto en su lugar.
+  - Nunca respondas de forma cortante ni des a entender que el cliente se equivocó: la publicación
+    existió y su pregunta es legítima.
+
+  ENTRADA B — el cliente pregunta por edición SIN mencionar la promo ni los 50 Bs. Deriva directo
+  al editor, SIN hablar de promociones vencidas (no tiene sentido explicar una promo que el
+  cliente nunca nombró):
+
+  "Si deseas SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE}, así podrás tener una experiencia personalizada 😊"
+
+  - Da el número del editor (${EDITOR_PHONE}) con naturalidad, sin dudar. Lo que ya no está vigente
+    es la promoción de 50 Bs, NO el servicio de edición: el editor sigue trabajando.
   - Es un editor de ConectaPro, pero los detalles del trabajo (precio, plazos, forma de pago) se
     coordinan directamente con él por ese número.
   - Si el cliente además muestra interés en los paquetes de producción (grabación + edición),
@@ -772,6 +890,23 @@ GUÍA POR SITUACIÓN
   - Si el cliente pasa OTRO número distinto al del WhatsApp actual para que lo llamen, repítelo en
     tu respuesta ("Un asesor te llamará al [número] 📞") y marca call_request = true igual.
   - No lo marques en turnos posteriores de la misma conversación.
+
+▸ EL CLIENTE ENVÍA UN ENLACE / LINK
+  Aplica cuando el mensaje del cliente trae una URL y nada en la conversación explica para qué la
+  manda (su TikTok, su catálogo, una publicación, un video).
+
+  NO puedes abrir ese enlace. NUNCA describas, resumas ni supongas qué contiene, y NUNCA inventes
+  nada sobre él (ni el negocio del cliente, ni el producto, ni de qué habla el video). Agradece el
+  envío y pide contexto ofreciéndole las líneas de Conecta Pro para orientarlo:
+
+  "¡Gracias por compartirlo 😊 Cuéntame en qué te puedo ayudar con ese enlace! ¿Te interesa alguno de nuestros cursos, los paquetes de producción de contenido o el agente de IA para tu negocio?"
+
+  - Pedir contexto NO activa ningún intent: no marques course_flyer, service_packages ni
+    ai_agent_flyer en este turno. Espera a que el cliente diga qué necesita.
+  - Si el enlace llega junto con una pregunta clara ("¿me pueden editar esto?", "¿cuánto por videos
+    así?"), IGNORA este caso y atiende la pregunta con el flujo que corresponda.
+  - Si el cliente ya está en un flujo y manda el link como parte de él (ej. su cuenta para el
+    agente de IA), continúa ese flujo con naturalidad — no vuelvas a pedir contexto.
 
 ▸ FLUJO C — AGENTE DE IA PARA NEGOCIOS
   Aplica cuando el cliente pregunta por el agente de IA / chatbot para su propio negocio
@@ -904,7 +1039,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   el pago primero. La única frase válida ahí es que el equipo lo verifica y luego confirma (ver
   la plantilla de agradecimiento del comprobante, más abajo).
 - intents.service_packages: true cuando pregunta por servicios, paquetes de producción, grabación,
-  edición para su negocio, dron, o cantidad no estándar de videos.
+  edición para su negocio, dron, o una cantidad de videos fuera del catálogo.
   FALSE si el flujo es exclusivamente de cursos.
   FALSE si el cliente pregunta por el agente de IA / chatbot (eso es intents.ai_agent_flyer).
   FALSE en el turno donde marques intents.service_packages_promo (son excluyentes, ver abajo).
@@ -916,7 +1051,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   FALSE siempre que el contexto adicional NO liste ninguna promo vigente — sin promo vigente no
   hay imagen que enviar y no debes mencionar ninguna promoción.
   FALSE en el saludo inicial.
-  FALSE cuando el cliente pregunta por los paquetes normales (6/12/18 videos) sin nombrar promoción:
+  FALSE cuando el cliente pregunta por los paquetes normales (${renderPackageSizes()} videos) sin nombrar promoción:
   ese caso sigue siendo intents.service_packages.
   NUNCA marques service_packages y service_packages_promo en el mismo turno: el material de ambos
   se contradice (oferta temporal vs. paquetes mensuales) y el cliente recibiría dos promociones
@@ -972,25 +1107,28 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   sucursales son deseables, no bloqueantes). Ver FLUJO C arriba. Es el equivalente de
   lead_data_submitted pero para la LÍNEA C — NO marques lead_data_submitted por leads del agente
   de IA. Márcalo SOLO UNA VEZ por conversación.
-- fair_relief_claimed: true cuando el cliente afirma cumplir los requisitos de una campaña de apoyo
-  vigente (ver el bloque "CAMPAÑAS DE APOYO" del contexto), por ejemplo que es comerciante de la
-  feria Barrio Lindo o que perdió mercadería en el incendio. Marca que HAY QUE VERIFICARLO, no que
-  el descuento esté aprobado. NO lo marques si solo pregunta si existe algún descuento sin decir
-  que es de la feria, ni si no hay ninguna campaña vigente en el contexto.
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
-  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Cuatro motivos
+  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Cinco motivos
   posibles, mutuamente excluyentes:
 
-  (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide un
-      número que no es 6, 12 ni 18 — ver flujo "CANTIDAD SINGULAR / INDEFINIDA / NO ESTÁNDAR" arriba
-      ("un solo video", "solo uno", "nomás", "único", o un número ≠ 6/12/18). NO lo marques por
-      palabras de tipo/propósito por sí solas (spot, comercial, video publicitario, videos): esas
-      van al flujo normal de paquetes. En este caso SÍ respondes con normalidad (el texto de paquetes
-      fijos) y ADEMÁS marcas advisor_handoff=true: es una oportunidad comercial que un asesor debe
-      revisar, no un caso sin respuesta.
+  (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide MENOS
+      videos que el paquete más chico (${MIN_PACKAGE_VIDEOS}) — ver CASO 1 del flujo "CANTIDAD
+      FUERA DE LOS PAQUETES" arriba ("un solo video", "solo uno", "nomás", "único", o un número por
+      debajo de ${MIN_PACKAGE_VIDEOS}). NO lo marques por palabras de tipo/propósito por sí solas
+      (spot, comercial, video publicitario, videos): esas van al flujo normal de paquetes. En este
+      caso SÍ respondes con normalidad (el texto de paquetes fijos) y ADEMÁS marcas
+      advisor_handoff=true: es una oportunidad comercial que un asesor debe revisar, no un caso sin
+      respuesta.
 
-  (2) advisor_handoff_reason = "undocumented_info": el cliente hace una pregunta CONCRETA sobre
+  (2) advisor_handoff_reason = "custom_quantity": el cliente pide una cantidad de videos que está
+      DENTRO del rango del catálogo sin coincidir con ningún paquete, o POR ENCIMA del máximo
+      (${MAX_PACKAGE_VIDEOS}) — ver CASO 2 del mismo flujo. Es el motivo del LEAD que hay que
+      atender: respondes que un asesor se comunicará, envías el formulario y marcas
+      advisor_handoff=true con este motivo. NO uses "out_of_catalog" para este caso: son cosas
+      distintas y el asesor las trata distinto.
+
+  (3) advisor_handoff_reason = "undocumented_info": el cliente hace una pregunta CONCRETA sobre
       servicios, políticas, condiciones o datos de Conecta Pro que NO están en esta guía (todo lo
       cubierto arriba — precios, fechas, ubicación, paquetes, facturación, promo descontinuada,
       TikTok, etc. — NO cuenta como "no documentado"). Si tuvieras que inventar un dato para
@@ -1001,19 +1139,19 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       NO uses este motivo para preguntas por TEMAS DEL CURSO: ese caso usa "course_topic_unconfirmed"
       abajo, que SÍ responde (este motivo deja "reply" vacío y silencia al cliente, que sería peor).
 
-  (3) advisor_handoff_reason = "refund_old_date": el cliente pagó para el curso de Creación de
+  (4) advisor_handoff_reason = "refund_old_date": el cliente pagó para el curso de Creación de
       Contenido con su fecha anterior (domingo 26 de julio) y ya no puede asistir por el cambio a
       la nueva fecha (2 de agosto) — ver detalle y ejemplos en FLUJO A. En este caso SÍ respondes
       con empatía confirmando que un asesor revisará el reembolso (no dejas "reply" vacío).
 
-  (4) advisor_handoff_reason = "course_topic_unconfirmed": el cliente pregunta si el curso de
+  (5) advisor_handoff_reason = "course_topic_unconfirmed": el cliente pregunta si el curso de
       Creación de Contenido incluye un tema que NO está en la lista de CONTENIDO confirmado de la
       LÍNEA A (ej. monetización, fotografía, Instagram Reels) — ver regla y ejemplo de tono en
       LÍNEA A. En este caso SÍ respondes en positivo, sin negar el tema y sin comprometerte a
       nada concreto (no dejas "reply" vacío); el asesor confirma el detalle real después.
 
-  Si ninguno de los cuatro casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
-  Los cuatro motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
+  Si ninguno de los cinco casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
+  Los cinco motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
   negocio, eso NO es un handoff: es off_topic=true (ver arriba) y no genera aviso al asesor.
   NUNCA marques advisor_handoff por leads, llamadas, citas, pagos ni por el agente de IA (Zoom o
   cotización personalizada) — esos flujos ya tienen su propio aviso al asesor y son independientes
@@ -1023,7 +1161,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   asesor humano entienda de un vistazo lo que está pasando en el chat cuando se le derive por
   Telegram. Resume lo que el cliente pidió y/o lo que tú respondiste o hiciste en este turno
   (ej. "Confirmó que hacen envíos a provincias y pidió el costo", "Pidió un solo video para un
-  spot; se le explicó que solo hay paquetes de 6, 12 o 18", "Envió su comprobante de pago para el
+  spot; se le explicó el catálogo", "Pidió 15 videos al mes; se le dijo que un asesor lo contacta y se le pidieron sus datos", "Envió su comprobante de pago para el
   curso"). Escríbelo SIEMPRE, breve y concreto (máx. ~140 caracteres), sin emojis ni saludos.
   Este texto NUNCA se le envía al cliente — es solo para el asesor.
 
@@ -1039,10 +1177,12 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   "CURSOS Y PAQUETES EN EL MISMO MENSAJE" descrito abajo.
   NO CONFUNDIR "SOLO EDICIÓN" (editor de ConectaPro, ver flujo arriba) CON PAQUETES DE PRODUCCIÓN:
   si el cliente ya tiene sus videos grabados y solo pide edición, es el flujo del editor de
-  ConectaPro (74271406), NUNCA el de paquetes (6/12/18 videos) ni el del agente de IA.
+  ConectaPro (${EDITOR_PHONE}), NUNCA el de paquetes (${renderPackageSizes()} videos) ni el del agente de IA.
+  Lo mismo si pregunta por la promo vencida de edición por 50 Bs: se le explica que no está
+  vigente y se lo deriva al editor, sin marcar intents.service_packages.
 
   NO CONFUNDIR PAQUETES DE VIDEO CON AGENTE DE IA: son dos servicios distintos para negocios.
-  Paquetes = grabación y edición de videos (6, 12 o 18). Agente de IA = asistente que atiende el
+  Paquetes = grabación y edición de videos (${renderPackageSizes()}). Agente de IA = asistente que atiende el
   WhatsApp del negocio. El FLUJO C (intents.ai_agent_flyer) se activa SOLO cuando el cliente
   pide el agente PARA SU PROPIO NEGOCIO / WhatsApp, pregunta qué es ese servicio, o dice que
   vio el video promocional del agente. NUNCA lo actives por la sola aparición de la palabra
@@ -1135,29 +1275,32 @@ function replyConfirmsAppointment(reply: string): boolean {
 // interpreta) pero deja clarísimo quién confirma.
 const APPOINTMENT_REQUEST_PENDING_REPLY = `¡Gracias! Ya pasé tu solicitud a un asesor 📋 Él te confirma por aquí el día y la hora en cuanto revise la agenda 😊`;
 
-// Campaña de apoyo (feria Barrio Lindo): el bot anuncia el 50% pero NUNCA el monto final
-// ni el descuento como aprobado — no puede verificar que el cliente sea un comerciante
-// afectado. Los montos son la mitad exacta del catálogo (2500/3500/5500): no aparecen en
-// ningún otro texto legítimo, así que detectarlos es señal inequívoca de que hizo la resta.
-const RELIEF_DISCOUNTED_AMOUNT_REGEX = /\b1[.,]?250\b|\b1[.,]?750\b|\b2[.,]?750\b/;
+// Campaña de apoyo CERRADA (feria Barrio Lindo): el bot ya no puede tramitar nada. Estas
+// señales delatan que igual siguió el guion viejo — ofrecer el 50%, pedir datos o pasar el
+// caso a un asesor — y obligan a reemplazar la respuesta por el cierre.
+const RELIEF_STILL_OFFERING_REGEX =
+  /\b50\s*%|\bCINCUENTA\s+POR\s+CIENTO\b|\bMITAD\s+DE\s+PRECIO\b|\bUN\s+ASESOR\b(?:\s+\S+){0,4}?\s+(VALIDA|VALIDARA|VERIFICA|VERIFICARA|CONFIRMA|CONFIRMARA|CONTACTARA|SE\s+COMUNICARA)\b|\bDESCUENTO\b(?:\s+\S+){0,4}?\s+(APLICADO|CONFIRMADO|APROBADO|REGISTRADO|VIGENTE|DISPONIBLE)\b/;
 
-// El bot da el descuento por concedido en vez de dejarlo en manos del asesor.
-const RELIEF_GRANTED_REGEX =
-  /\b(DESCUENTO|50%|CINCUENTA\s+POR\s+CIENTO)\b(?:\s+\S+){0,4}?\s+(APLICADO|CONFIRMADO|APROBADO|REGISTRADO)\b|\bYA\s+TE\s+(APLIQUE|APLICAMOS|HICE|HICIMOS)\b(?:\s+\S+){0,3}?\s+DESCUENTO\b|\bTE\s+QUEDA\s+EN\b/;
-
-function replyOverstatesRelief(reply: string): boolean {
+// ¿La respuesta sigue tratando la campaña cerrada como si estuviera abierta?
+function replyStillOffersRelief(reply: string): boolean {
   if (!reply) return false;
-  const normalized = normalizeForMatch(reply);
-  return (
-    RELIEF_DISCOUNTED_AMOUNT_REGEX.test(normalized) ||
-    RELIEF_GRANTED_REGEX.test(normalized)
-  );
+  return RELIEF_STILL_OFFERING_REGEX.test(normalizeForMatch(reply));
 }
 
-// Reemplazo cuando el bot se adelanta con el monto o da el descuento por aprobado.
-const RELIEF_PENDING_REPLY = `Lamento mucho lo que pasó en la feria 🙏 El apoyo es un 50% de descuento sobre cualquiera de nuestros paquetes de producción, para comerciantes de la feria Barrio Lindo que hayan perdido mercadería.
+// Promo de edición de video por 50 Bs: VENCIDA (el video se publicó ~2 meses atrás y
+// sigue circulando). No se puede confirmar el precio, pero negarlo a secas hace que el
+// cliente sienta que la publicación fue un engaño: se explica el vencimiento y se lo
+// deriva al editor externo, que sí sigue trabajando.
+const EDIT_PROMO_50_EXPIRED_REPLY = `Gracias por escribirnos 😊 Ese video se publicó hace unos 2 meses y esa promoción de edición por 50 Bs ya no se encuentra vigente.
 
-Un asesor valida tu caso y te confirma el monto exacto con el descuento. ¿Me confirmas si eres comerciante de la feria y si perdiste mercadería? 😊`;
+Pero si lo que buscas es SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE} 📲 Con él coordinas precio y plazos directamente.
+
+Y si en algún momento necesitas que grabemos el contenido por ti, tenemos paquetes de producción de ${renderPackageSizes()} videos — dime y te cuento 🎬`;
+
+// ¿La respuesta reconoce que la promo venció? Sin esto el turno le estaría confirmando
+// al cliente un precio inexistente, así que se reemplaza por la plantilla.
+const EDIT_PROMO_EXPIRY_ACK_REGEX =
+  /\bYA\s+NO\b|\bNO\s+(SE\s+ENCUENTRA|ESTA|ESTABA)\b(?:\s+\S+){0,3}?\s*\bVIGENTE\b|\bVENCI(O|DA|DO)\b|\bFINALIZ(O|ADA|ADO)\b|\bTERMIN(O|ADA|ADO)\b|\bEXPIR(O|ADA|ADO)\b|\bHACE\b(?:\s+\S+){0,3}?\s*\bMESES\b/;
 
 // Respuesta de reemplazo cuando la red de seguridad bloquea el formulario de leads de
 // paquetes en una conversación que era de cursos (ver detectCourseContext). El cliente
@@ -1215,9 +1358,7 @@ Con eso el equipo valida el pago y te confirmamos tu cupo 😊`;
 // cuando el LLM devuelve el saludo genérico pese a haber intención de paquetes.
 const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales 🎬
 
-📦 *Básico:* 6 videos — 2500 Bs
-📦 *Normal:* 12 videos — 3500 Bs
-📦 *Pro:* 18 videos — 5500 Bs
+${renderPackageFlyerLines()}
 
 Todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
 
@@ -1917,31 +2058,25 @@ async function advanceConversationFlowState(params: {
 }
 
 // Etiqueta best-effort del paquete elegido a partir del texto del cliente.
-// Solo para reporting/contexto; no condiciona el envío del formulario.
+// Solo para reporting/contexto; no condiciona el envío del formulario. Recorre el
+// catálogo del paquete MAYOR al menor: si el cliente nombra dos ("¿el de 6 o el de 18?"), se
+// queda con el de arriba, igual que antes. Se deriva de lib/packages.ts para que un
+// cambio de oferta no deje esta etiqueta vieja.
 function detectSelectedPackageName(text: string): string | null {
   if (!text) return null;
   const normalized = normalizeForMatch(text);
-  if (
-    /\bPRO\b/.test(normalized) ||
-    containsExactNumber(normalized, [18]) ||
-    containsExactNumber(normalized, [5500])
-  ) {
-    return "pro";
+
+  for (const pkg of [...VIDEO_PACKAGES].reverse()) {
+    const name = normalizeForMatch(pkg.name);
+    if (
+      new RegExp(`\\b${name}\\b`).test(normalized) ||
+      containsExactNumber(normalized, [pkg.videos]) ||
+      containsExactNumber(normalized, [pkg.price])
+    ) {
+      return name.toLowerCase();
+    }
   }
-  if (
-    /\bNORMAL\b/.test(normalized) ||
-    containsExactNumber(normalized, [12]) ||
-    containsExactNumber(normalized, [3500])
-  ) {
-    return "normal";
-  }
-  if (
-    /\bBASICO\b/.test(normalized) ||
-    containsExactNumber(normalized, [6]) ||
-    containsExactNumber(normalized, [2500])
-  ) {
-    return "basico";
-  }
+
   return null;
 }
 
@@ -2163,9 +2298,6 @@ async function notifyLeadToTelegram(params: {
   kind?: "intake" | "call_request" | "ai_agent";
   trigger?: LeadTrigger;
   hasAppointment?: boolean;
-  // El cliente dice calificar para una campaña de apoyo vigente. El bot no verifica
-  // nada: la nota le pide al asesor que valide antes de aplicar el descuento.
-  fairRelief?: boolean;
 }): Promise<boolean> {
   const lastClientMessage =
     params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
@@ -2179,9 +2311,6 @@ async function notifyLeadToTelegram(params: {
         : "🟢 <b>Nuevo lead — Conecta Pro</b>";
 
   const notes = [
-    params.fairRelief
-      ? "🔥 FERIA BARRIO LINDO — el cliente dice ser comerciante afectado por el incendio. VERIFICAR que sea de la feria y que haya perdido mercadería antes de aplicar el 50%. El bot no le dio ningún monto con descuento."
-      : null,
     params.hasAppointment
       ? "📅 El cliente tiene una solicitud de cita en oficina pendiente de confirmar"
       : null,
@@ -2257,11 +2386,18 @@ async function notifyPaymentToTelegram(params: {
 type AdvisorHandoffReason =
   | "undocumented_info"
   | "out_of_catalog"
+  | "custom_quantity"
   | "refund_old_date"
   | "course_topic_unconfirmed";
 
+// Marcadores de dedup de los avisos a Telegram. El genérico cubre todos los motivos
+// menos el lead por cantidad, que tiene el suyo (ver hasTelegramCustomQuantityBeenSent).
+const HANDOFF_MARKER = "[TELEGRAM_HANDOFF_SENT]";
+const CUSTOM_QUANTITY_MARKER = "[TELEGRAM_CUSTOM_QUANTITY_SENT]";
+
 const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
   out_of_catalog: "Servicio fuera del catálogo estándar",
+  custom_quantity: "LEAD — pidió una cantidad de videos fuera de los paquetes",
   undocumented_info: "Información no documentada",
   refund_old_date: "Posible reembolso — pagó fecha anterior del curso (26 de julio)",
   course_topic_unconfirmed: "Preguntó por un tema del curso fuera del temario confirmado",
@@ -2269,8 +2405,9 @@ const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
 
 // Aviso genérico "blanco" al asesor: cualquier situación (fuera de leads, llamadas, citas o
 // pagos, que ya tienen su propio aviso) donde el bot necesita intervención humana. Se envía UNA
-// sola vez por conversación, protegido por el marcador [TELEGRAM_HANDOFF_SENT], sin importar el
-// motivo — ver hasTelegramHandoffBeenSent.
+// sola vez por conversación por marcador: todos los motivos comparten [TELEGRAM_HANDOFF_SENT]
+// menos el lead por cantidad, que usa [TELEGRAM_CUSTOM_QUANTITY_SENT] para no quedarse sin
+// aviso — ver hasTelegramHandoffBeenSent y hasTelegramCustomQuantityBeenSent.
 async function notifyAdvisorHandoffToTelegram(params: {
   history: HistoryMessage[];
   phone: string;
@@ -2279,6 +2416,8 @@ async function notifyAdvisorHandoffToTelegram(params: {
   reason: AdvisorHandoffReason;
   lastMessageText: string;
   summary?: string;
+  // Dato extra para el asesor (ej. cuántos videos pidió el cliente).
+  note?: string;
 }): Promise<boolean> {
   const notified = await sendTelegramNotification(
     buildTelegramBody({
@@ -2286,6 +2425,7 @@ async function notifyAdvisorHandoffToTelegram(params: {
       phone: params.phone,
       clientMessage: params.lastMessageText,
       summary: params.summary,
+      note: params.note,
     }),
   );
 
@@ -2293,7 +2433,9 @@ async function notifyAdvisorHandoffToTelegram(params: {
     await saveOutboundMessage({
       conversationId: params.conversationId,
       phone: params.phone,
-      content: "[TELEGRAM_HANDOFF_SENT] aviso de derivación a asesor enviado a Telegram",
+      content: `${
+        params.reason === "custom_quantity" ? CUSTOM_QUANTITY_MARKER : HANDOFF_MARKER
+      } aviso de derivación a asesor enviado a Telegram`,
       rawPayload: {
         type: "telegram_notification",
         event: "advisor_handoff",
@@ -2703,15 +2845,13 @@ const AssistantTurnSchema = z.object({
   zoom_meeting_scheduled: z.boolean(),
   zoom_slot: z.string().nullable(),
   ai_agent_lead_submitted: z.boolean(),
-  // El cliente afirma calificar para una campaña de apoyo vigente (ver lib/promos.ts).
-  // No aplica ningún descuento: solo marca la alerta para que el asesor lo verifique.
-  fair_relief_claimed: z.boolean(),
   off_topic: z.boolean(),
   advisor_handoff: z.boolean(),
   advisor_handoff_reason: z
     .enum([
       "undocumented_info",
       "out_of_catalog",
+      "custom_quantity",
       "refund_old_date",
       "course_topic_unconfirmed",
     ])
@@ -2744,7 +2884,6 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   zoom_meeting_scheduled: false,
   zoom_slot: null,
   ai_agent_lead_submitted: false,
-  fair_relief_claimed: false,
   // Si OpenAI falla no se puede juzgar la relevancia del mensaje: se asume que sí
   // viene al caso para no apagar el bot por un error de infraestructura.
   off_topic: false,
@@ -3159,9 +3298,9 @@ function detectPromoAmount(text: string): number | null {
 }
 
 // --- Red de seguridad: elección de paquete -------------------------------
-// Cantidades de video válidas de los paquetes (hoy 6, 12 y 18). Pueden cambiar en el
-// futuro: editar esta lista cuando cambie la oferta.
-const VALID_PACKAGE_SIZES = [6, 12, 18];
+// Las cantidades, los precios y los nombres de los paquetes viven en lib/packages.ts
+// (fuente única de verdad): al cambiar la oferta se edita solo ese archivo y tanto el
+// prompt como estos detectores se actualizan solos.
 
 // Palabras afirmativas / de selección que, junto a un tamaño de paquete válido,
 // indican que el cliente ESTÁ eligiendo un paquete (intención clara de contratar).
@@ -3208,7 +3347,7 @@ const GENERIC_INTEREST_REGEX =
   /\b(ME INTERESA|ME INTERESAN|QUIERO|LO QUIERO|LOS QUIERO|DAME|DALE|ADELANTE|PROCEDAMOS|EMPECEMOS)\b/;
 
 // Red de seguridad: interés genérico de contratar paquetes, sin elegir un
-// paquete específico (6/12/18, nombre, precio o referencia). Complementa a
+// paquete específico (cantidad, nombre, precio o referencia). Complementa a
 // detectPackageSelection para no perder leads que dicen "me interesa" o
 // "quiero contratar" sin especificar cantidad. A diferencia de
 // detectPackageSelection, NO se suprime por GENERIC_INFO_REGEX: los paquetes ya
@@ -3238,11 +3377,10 @@ function detectGeneralPurchaseIntent(
   return GENERIC_INTEREST_REGEX.test(normalized);
 }
 
-// Nombres propios de los paquetes tal como salen en el flyer (Básico=6, Normal=12, Pro=18).
-// Como el cliente solo puede conocer estos nombres DESPUÉS de ver el flyer, mencionar
-// uno equivale a elegir un paquete → intención clara de contratar. Normalizados sin
-// tilde/mayúsculas (normalizeForMatch). Editar si cambian los nombres.
-const PACKAGE_NAMES = ["BASICO", "NORMAL", "PRO"];
+// Nombres propios de los paquetes tal como salen en el flyer. Como el cliente solo puede
+// conocerlos DESPUÉS de ver el flyer, mencionar uno equivale a elegir un paquete →
+// intención clara de contratar. Llegan ya normalizados (sin tilde, en mayúsculas) desde
+// lib/packages.ts.
 const PACKAGE_NAME_REGEX = new RegExp(`\\b(${PACKAGE_NAMES.join("|")})\\b`);
 
 // Detecta si el mensaje del cliente es una elección afirmativa de un paquete
@@ -3256,7 +3394,7 @@ function detectPackageChoice(text: string): boolean {
   if (PRICE_QUESTION_REGEX.test(normalized)) return false;
   if (!AFFIRMATIVE_CHOICE_REGEX.test(normalized)) return false;
 
-  return containsExactNumber(normalized, VALID_PACKAGE_SIZES);
+  return containsExactNumber(normalized, PACKAGE_SIZES);
 }
 
 // Detecta si el cliente menciona el NOMBRE de un paquete (Básico/Normal/Pro). Basta
@@ -3306,7 +3444,7 @@ function detectPackagesPresented(
 
       const talksAboutPackages = SERVICE_PACKAGES_KEYWORDS.test(normalized);
       const showsTheOffer =
-        containsExactNumber(normalized, VALID_PACKAGE_SIZES) ||
+        containsExactNumber(normalized, PACKAGE_SIZES) ||
         containsExactNumber(normalized, PACKAGE_PRICES) ||
         PACKAGE_NAME_REGEX.test(normalized);
 
@@ -3357,15 +3495,6 @@ const APPOINTMENT_PROMPT_MARKERS = [
   "TE ESPERE EL",
   "EN LA OFICINA",
 ];
-
-// ¿En algún momento de la conversación el cliente dijo algo que lo pondría dentro de una
-// campaña de apoyo vigente? Red de seguridad determinista sobre el flag del LLM: la marca
-// solo sirve para que el asesor verifique, así que es preferible marcarla de más.
-function detectFairReliefInHistory(history: HistoryMessage[], now: Date): boolean {
-  return history
-    .filter((message) => message.role === "user")
-    .some((message) => mentionsActiveRelief(message.content, now));
-}
 
 function detectAppointmentPending(history: HistoryMessage[]): boolean {
   return history
@@ -3476,12 +3605,39 @@ function hasExplicitPackageIntent(text: string): boolean {
     return false;
   }
 
+  // Mismo criterio para los CURSOS, y por un motivo concreto: los dos cursos del catálogo
+  // se llaman "creación de CONTENIDO" y "EDICIÓN en CapCut", y esas palabras están dentro
+  // de SERVICE_PACKAGES_KEYWORDS. Sin esta guarda, "quiero el curso de creación de
+  // contenido" contaba como intención explícita de paquetes, desactivaba el bloqueo de
+  // cursos y le mandaba el formulario de datos de empresa a alguien que solo quiere un
+  // curso. Solo una señal FUERTE de paquete gana: la palabra "paquete", una cantidad del
+  // catálogo (6/12/18), un precio del catálogo (2500/3500/5500) o el nombre propio del
+  // paquete. "Contenido", "edición" y "videos" a secas NO alcanzan.
+  if (COURSE_KEYWORDS.test(normalized) && !hasStrongPackageSignal(text)) {
+    return false;
+  }
+
   return (
     SERVICE_PACKAGES_KEYWORDS.test(normalized) ||
     CONTRACT_INTENT_REGEX.test(normalized) ||
     detectPackagePriceMention(text) ||
     detectPackageChoice(text) ||
     detectPackageNameChoice(text)
+  );
+}
+
+// Señales que un cliente solo puede producir si está hablando de los paquetes de la
+// LÍNEA B, incluso si en el mismo mensaje nombra un curso ("hice el curso, ahora quiero
+// un paquete de 12"). Deliberadamente NO incluye CONTENIDO, EDICION ni VIDEOS.
+function hasStrongPackageSignal(text: string): boolean {
+  if (!text) return false;
+  const normalized = normalizeForMatch(text);
+
+  return (
+    /\bPAQUETE(S)?\b/.test(normalized) ||
+    PACKAGE_NAME_REGEX.test(normalized) ||
+    containsExactNumber(normalized, PACKAGE_SIZES) ||
+    containsExactNumber(normalized, PACKAGE_PRICES)
   );
 }
 
@@ -3548,11 +3704,6 @@ function shouldForceIntakeForm(
     detectGeneralPurchaseIntent(text, presented)
   );
 }
-
-// Precios conocidos de los paquetes (6 videos=2500, 12 videos=3500, 18 videos=5500). Se usan
-// SOLO como disparadores de intención: si el cliente menciona uno de estos montos, viene
-// interesado en paquetes.
-const PACKAGE_PRICES = [2500, 3500, 5500];
 
 // Detecta la mención de un precio de paquete (2500, 3500 o 5500) como monto exacto.
 // Excluye números mayores que lo contengan ("25000", "35000", "55000") por tokenización.
@@ -3832,6 +3983,23 @@ async function hasTelegramZoomBeenSent(conversationId?: string): Promise<boolean
 }
 
 async function hasTelegramHandoffBeenSent(conversationId?: string): Promise<boolean> {
+  return hasTelegramMarkerBeenSent(conversationId, HANDOFF_MARKER);
+}
+
+// El LEAD por cantidad fuera de los paquetes lleva marcador PROPIO: si compartiera el
+// del handoff genérico, una conversación que ya derivó por otro motivo (una pregunta no
+// documentada, por ejemplo) dejaría al asesor sin aviso justo cuando el cliente dice
+// cuántos videos quiere comprar — que es el aviso que más importa.
+async function hasTelegramCustomQuantityBeenSent(
+  conversationId?: string,
+): Promise<boolean> {
+  return hasTelegramMarkerBeenSent(conversationId, CUSTOM_QUANTITY_MARKER);
+}
+
+async function hasTelegramMarkerBeenSent(
+  conversationId: string | undefined,
+  marker: string,
+): Promise<boolean> {
   if (!conversationId) return false;
 
   const supabase = getSupabaseClient();
@@ -3841,11 +4009,11 @@ async function hasTelegramHandoffBeenSent(conversationId?: string): Promise<bool
     .select("id")
     .eq("kapso_conversation_id", conversationId)
     .eq("direction", "outbound")
-    .ilike("content", "[TELEGRAM_HANDOFF_SENT]%")
+    .ilike("content", `${marker}%`)
     .limit(1);
 
   if (error) {
-    console.error("supabase check telegram handoff sent failed", error);
+    console.error("supabase check telegram marker sent failed", { marker, error });
     return false;
   }
 
@@ -4435,7 +4603,6 @@ export async function POST(request: Request) {
             fallbackText: lastMessage.text,
             kind: callRequestPaused ? "call_request" : "intake",
             trigger,
-            fairRelief: detectFairReliefInHistory(pausedHistory, new Date()),
           });
 
           if (leadNotifiedWhilePaused) {
@@ -4647,6 +4814,7 @@ export async function POST(request: Request) {
     telegramPaymentSent,
     telegramAppointmentSent,
     telegramHandoffSent,
+    telegramCustomQuantitySent,
     telegramZoomSent,
     flowState,
     manualHumanMediaSent,
@@ -4663,6 +4831,7 @@ export async function POST(request: Request) {
     }),
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
     hasTelegramHandoffBeenSent(lastMessage.conversationId),
+    hasTelegramCustomQuantityBeenSent(lastMessage.conversationId),
     hasTelegramZoomBeenSent(lastMessage.conversationId),
     getConversationFlowState(lastMessage.conversationId),
     hasManualHumanMediaBeenSent(lastMessage.conversationId),
@@ -4717,6 +4886,20 @@ export async function POST(request: Request) {
     VAGUE_SEND_PHRASES.test(normalizedLastMessageText) &&
     !lastMessage.isImage &&
     !lastMessage.isDocument &&
+    !hasExplicitPaymentPhrase;
+
+  // Cliente que viene por el video de la promo de edición a 50 Bs (ya vencida).
+  const mentionsEditPromo50 = mentionsExpiredEditPromo(lastMessage.text);
+
+  // Enlace suelto: solo importa cuando NO hay nada más que explique el mensaje. Con
+  // adjunto gana el flujo del comprobante; con la promo del live el link es la
+  // acreditación de la transmisión; con la promo de 50 Bs gana esa explicación.
+  const hasBareIncomingLink =
+    containsIncomingLink(lastMessage.text) &&
+    !lastMessage.isImage &&
+    !lastMessage.isDocument &&
+    !promoDetected &&
+    !mentionsEditPromo50 &&
     !hasExplicitPaymentPhrase;
 
   // Línea abierta de la conversación. Se calcula ANTES de generar el turno porque lo
@@ -4925,6 +5108,18 @@ export async function POST(request: Request) {
     contextParts.push(
       'El último mensaje del usuario dice algo como "ya mandé"/"ya mande"/"ya pasé"/"ya pase"/"ya envié"/"ya envie" pero SIN adjuntar imagen/PDF/documento y SIN una frase explícita de pago ("comprobante", "ya pagué", "realicé el pago", "hice el pago"). Esto NO es un comprobante. NO marques payment_confirmation y NO digas "gracias por el comprobante" ni nada que suene a que ya recibiste o verificaste un archivo. Responde pidiendo con amabilidad que envíe la imagen o el PDF del comprobante, por ejemplo: "Para confirmar tu pago necesito que me envíes la imagen o el PDF de tu comprobante 😊."',
     );
+  } else if (hasBareIncomingLink) {
+    contextParts.push(
+      "El último mensaje del usuario contiene un ENLACE/URL y no hay contexto previo que explique para qué lo envía. NO puedes abrirlo: NO describas, NO resumas ni asumas su contenido, y NO inventes nada sobre él (ni el negocio del cliente, ni el producto, ni de qué habla el video). Agradécele el envío y pídele con amabilidad que te cuente en qué te gustaría que le ayudes con ese enlace, ofreciéndole las líneas de Conecta Pro para orientarlo (cursos, paquetes de producción de contenido o agente de IA). No marques ningún intent de envío de material en este turno. Si el enlace viene junto con una pregunta clara, atiende la pregunta con el flujo que corresponda en vez de pedir contexto.",
+    );
+  }
+
+  if (mentionsEditPromo50) {
+    contextParts.push(
+      "El cliente pregunta por la PROMOCIÓN DE EDICIÓN DE VIDEO POR 50 Bs. Esa promoción YA NO ESTÁ VIGENTE: el video donde se anunció se publicó hace aproximadamente 2 meses. Explícaselo con amabilidad y sin sonar cortante — el cliente vio el video y su pregunta es legítima. NUNCA le confirmes ese precio, no le des un monto alternativo y no le digas que un asesor puede hacerle ese precio. Después de explicarlo, derívalo: si lo que quiere es EDICIÓN NETA (él proporciona los videos crudos), ese servicio lo maneja un editor de ConectaPro al " +
+        EDITOR_PHONE +
+        `, y el precio, los plazos y la forma de pago los coordina directamente con él. Deja claro que ese servicio es DISTINTO de los paquetes de producción de Conecta Pro (grabación + edición, ${renderPackageSizes()} videos), que sí puedes ofrecerle si le interesa. NO marques intents.service_packages ni envíes el formulario de datos en este turno.`,
+    );
   }
 
   if (paymentAcknowledged) {
@@ -4954,7 +5149,7 @@ export async function POST(request: Request) {
   if (!hasAssistantHistory && detectedIntent) {
     const intentDirective: Record<DetectedIntent, string> = {
       service_packages:
-        "El cliente YA expresó intención de paquetes de producción en su mensaje (menciona precio 2500/3500/5500, cantidad 6/12/18, o palabras como paquetes/grabación/edición/videos). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (párrafo de paquetes) y marca intents.service_packages=true.",
+        `El cliente YA expresó intención de paquetes de producción en su mensaje (menciona un precio del catálogo (${renderPackagePrices()}), una cantidad de paquete (${renderPackageSizes()}), o palabras como paquetes/grabación/edición/videos). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (párrafo de paquetes) y marca intents.service_packages=true.`,
       course:
         "El cliente YA preguntó por cursos en su mensaje. NO es un saludo puro: marca is_greeting=false, responde con el FLUJO A (cursos) y marca intents.course_flyer=true.",
       appointment:
@@ -5068,10 +5263,12 @@ export async function POST(request: Request) {
   const callRequestHeuristic = detectCallRequestHeuristic(lastMessage.text);
   const callRequested = turn.call_request || callRequestHeuristic;
 
-  // Campaña de apoyo (feria Barrio Lindo): basta con que el LLM o las palabras del cliente
-  // lo sugieran para marcar la alerta. No aplica ningún descuento: lo verifica el asesor.
-  const fairReliefClaimed =
-    turn.fair_relief_claimed || detectFairReliefInHistory(history, turnNow);
+  // Campaña de apoyo cerrada (feria Barrio Lindo): si el cliente escribe por ese motivo,
+  // el turno se resuelve entero con el bot — no hay descuento que tramitar ni asesor al
+  // que pasarle el caso. `reliefClosedReply` es el texto exacto del cierre, o null si el
+  // mensaje no habla de ninguna campaña cerrada.
+  const reliefClosedReply = getReliefClosedReply(lastMessage.text, turnNow);
+  const mentionsClosedRelief = reliefClosedReply !== null;
 
   // Flujo de cita en curso: ya solicitada al asesor (marcador de Telegram) o propuesta y
   // esperando el "confirmar" del cliente. Mientras dure, los afirmativos genéricos
@@ -5125,6 +5322,47 @@ export async function POST(request: Request) {
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
       metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
+  // Red de seguridad determinista: CANTIDAD FUERA DE LOS PAQUETES, dentro del rango
+  // negociable. El cliente pidió una cantidad concreta que no está en el catálogo pero que
+  // SÍ se puede coordinar (entre el mínimo y el máximo, o por encima del máximo): es un lead
+  // y el asesor tiene que enterarse. El aviso a Telegram cuelga de advisor_handoff, así que
+  // si el LLM no lo marcó — o lo marcó como "out_of_catalog", que es el caso contrario, el de
+  // las cantidades por debajo del mínimo — se corrige aquí. No toca la respuesta al cliente:
+  // esa la redacta el LLM siguiendo el CASO 2 del flujo. Marcar service_packages es seguro
+  // aunque haya promo vigente: resolvePromoIntents desempata después y envía uno solo.
+  const requestedVideoCount = detectRequestedVideoCount(lastMessage.text);
+  const requestedQuantityIsNegotiable =
+    requestedVideoCount !== null &&
+    classifyVideoQuantity(requestedVideoCount) === "negotiable" &&
+    // La cantidad de una promo vigente no es una cantidad fuera de catálogo: es la promo.
+    !getActivePromoVideoCounts(turnNow).includes(requestedVideoCount);
+
+  if (
+    turn.should_reply &&
+    requestedQuantityIsNegotiable &&
+    (turn.intents.service_packages || explicitPackageIntent) &&
+    (turn.advisor_handoff_reason === null ||
+      turn.advisor_handoff_reason === "out_of_catalog")
+  ) {
+    turn.advisor_handoff = true;
+    turn.advisor_handoff_reason = "custom_quantity";
+    turn.intents.service_packages = true;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "custom_quantity_handoff_forced",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        requested_videos: requestedVideoCount,
+        min_package_videos: MIN_PACKAGE_VIDEOS,
+        max_package_videos: MAX_PACKAGE_VIDEOS,
         client_message: lastMessage.text.slice(0, 200),
       },
     });
@@ -5330,32 +5568,86 @@ export async function POST(request: Request) {
     });
   }
 
-  // Campaña de apoyo: el bot informa el 50% pero no hace la resta ni concede el descuento
-  // — no puede verificar que quien escribe sea un comerciante afectado de la feria. Si se
-  // adelantó con un monto rebajado o lo dio por aprobado, se reemplaza por el texto que
-  // devuelve la decisión al asesor. Solo mientras haya una campaña vigente.
-  if (
-    turn.should_reply &&
-    getActiveReliefCampaigns(turnNow).length > 0 &&
-    replyOverstatesRelief(turn.reply)
-  ) {
-    console.log("relief discount overstatement blocked", {
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-    });
+  // Campaña de apoyo CERRADA (feria Barrio Lindo): quien escribe por el incendio recibe el
+  // cierre y nada más. Este turno no genera lead ni alerta — no hay nada que un asesor
+  // pueda tramitar, y pedirle sus datos a alguien que acaba de perder su mercadería para
+  // después no darle nada sería peor que no responderle. Red determinista sobre el prompt:
+  // si el LLM igual mandó el formulario o siguió ofreciendo el 50%, se reemplaza el texto.
+  if (turn.should_reply && mentionsClosedRelief) {
+    const replacedReply =
+      replyContainsIntakeForm(turn.reply) || replyStillOffersRelief(turn.reply);
 
-    turn.reply = RELIEF_PENDING_REPLY;
+    const killedLeadFlags =
+      turn.service_intake_requested || turn.lead_data_submitted || turn.call_request;
 
-    await logSystemEvent({
-      level: "info",
-      eventType: "relief_discount_overstatement_blocked",
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-      contactPhone: lastMessage.from,
-      metadata: {
-        client_message: lastMessage.text.slice(0, 200),
-      },
-    });
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.call_request = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+
+    if (replacedReply) turn.reply = reliefClosedReply;
+
+    if (replacedReply || killedLeadFlags) {
+      console.log("relief campaign closed notice enforced", {
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+      });
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "relief_campaign_closed_notice",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          reply_replaced: replacedReply,
+          lead_flags_cleared: killedLeadFlags,
+          client_message: lastMessage.text.slice(0, 200),
+        },
+      });
+    }
+  }
+
+  // Promo de edición por 50 Bs: el cliente llega por un video que sigue circulando y
+  // esperando un precio que ya no existe. Lo que no puede pasar es que se le confirme
+  // ese precio o que el turno derive al formulario de paquetes: si el LLM no explicó el
+  // vencimiento, se reemplaza el texto por la plantilla.
+  if (turn.should_reply && mentionsEditPromo50) {
+    const acknowledgedExpiry = EDIT_PROMO_EXPIRY_ACK_REGEX.test(normalizeForMatch(turn.reply));
+    const gaveEditorPhone = turn.reply.includes(EDITOR_PHONE);
+    const replacedReply = !acknowledgedExpiry || !gaveEditorPhone;
+
+    const killedLeadFlags = turn.service_intake_requested || turn.lead_data_submitted;
+
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+
+    if (replacedReply) turn.reply = EDIT_PROMO_50_EXPIRED_REPLY;
+
+    if (replacedReply || killedLeadFlags) {
+      console.log("expired edit promo notice enforced", {
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+      });
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "edit_promo_50_expired_notice",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          reply_replaced: replacedReply,
+          acknowledged_expiry: acknowledgedExpiry,
+          gave_editor_phone: gaveEditorPhone,
+          lead_flags_cleared: killedLeadFlags,
+          client_message: lastMessage.text.slice(0, 200),
+        },
+      });
+    }
   }
 
   // Red de seguridad anti-saludo: si pese a la directiva el LLM devolvió el saludo
@@ -5577,6 +5869,7 @@ export async function POST(request: Request) {
     if (
       (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
       !telegramLeadSent &&
+      !mentionsClosedRelief &&
       conversationIsCommercial
     ) {
       const isAiAgentLead =
@@ -5595,7 +5888,6 @@ export async function POST(request: Request) {
             ? "call_request"
             : "intake",
         hasAppointment: hasScheduledAppointment,
-        fairRelief: fairReliefClaimed,
         trigger: turn.call_request
           ? "call_request_assistant"
           : callRequestHeuristic
@@ -5983,9 +6275,12 @@ export async function POST(request: Request) {
     // contacto nunca genera dos leads.
     // Solo se avisa si la conversación tiene contexto comercial real: un nombre y un
     // teléfono sueltos en un chat ajeno al negocio no son un lead.
+    // Tampoco se avisa si el cliente escribe por una campaña de apoyo ya cerrada: ese
+    // turno lo resuelve el bot entero, no hay nada que el asesor pueda gestionar.
     if (
       (turn.lead_data_submitted || callRequested || turn.ai_agent_lead_submitted) &&
       !telegramLeadSent &&
+      !mentionsClosedRelief &&
       conversationIsCommercial
     ) {
       // El lead del agente de IA (LÍNEA C) solo se etiqueta como tal si no hubo además
@@ -6015,7 +6310,6 @@ export async function POST(request: Request) {
             ? "call_request"
             : "intake",
         hasAppointment: hasScheduledAppointment,
-        fairRelief: fairReliefClaimed,
         trigger,
       });
 
@@ -6115,7 +6409,7 @@ export async function POST(request: Request) {
     }
 
     // Oportunidad comercial fuera de catálogo (ej. "un solo video"/spot/comercial): el bot
-    // ya respondió con normalidad (paquetes fijos 6/12/18), pero se avisa también al asesor
+    // ya respondió con normalidad (el catálogo de paquetes), pero se avisa también al asesor
     // por si vale la pena revisar el caso. Comparte el marcador [TELEGRAM_HANDOFF_SENT] con
     // el caso de silencio por información no documentada — un solo aviso por conversación.
     if (
@@ -6135,6 +6429,34 @@ export async function POST(request: Request) {
         });
       } else {
         await logTelegramSkippedNoContext("advisor_handoff:out_of_catalog");
+      }
+    }
+
+    // LEAD por cantidad fuera de los paquetes (ej. "quiero 15 videos", "necesito 30 al mes"):
+    // el bot ya respondió que un asesor se comunicará y pidió los datos, pero el cierre lo hace
+    // una persona — sin este aviso el lead se quedaría esperando. Marcador PROPIO
+    // [TELEGRAM_CUSTOM_QUANTITY_SENT]: un aviso por conversación, y sin que se lo coma el
+    // handoff genérico si la conversación ya derivó antes por otro motivo.
+    if (
+      turn.advisor_handoff &&
+      turn.advisor_handoff_reason === "custom_quantity" &&
+      !telegramCustomQuantitySent
+    ) {
+      if (conversationIsCommercial) {
+        await notifyAdvisorHandoffToTelegram({
+          history,
+          phone: lastMessage.from,
+          contactName: lastMessage.contactName,
+          conversationId: mediaConversationId,
+          reason: "custom_quantity",
+          lastMessageText: lastMessage.text,
+          summary: turn.conversation_summary,
+          note: requestedVideoCount
+            ? `🎬 Pidió ${requestedVideoCount} videos (los paquetes son de ${renderPackageSizes()}) — el precio lo defines tú`
+            : `⚠️ Cantidad fuera de los paquetes (${renderPackageSizes()}) — revisar el chat`,
+        });
+      } else {
+        await logTelegramSkippedNoContext("advisor_handoff:custom_quantity");
       }
     }
 
@@ -6223,7 +6545,7 @@ export async function POST(request: Request) {
       appointment_scheduled: turn.appointment_scheduled,
       zoom_meeting_scheduled: turn.zoom_meeting_scheduled,
       ai_agent_lead_submitted: turn.ai_agent_lead_submitted,
-      fair_relief_claimed: fairReliefClaimed,
+      relief_campaign_closed_notice: mentionsClosedRelief,
       advisor_handoff: turn.advisor_handoff,
       advisor_handoff_reason: turn.advisor_handoff_reason,
       detected_intents: turn.intents,

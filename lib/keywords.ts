@@ -47,6 +47,54 @@ const PROMO_REQUEST_KEYWORDS =
 // confundirla con cualquier otro 4 suelto del mensaje ("a las 4", "4 sucursales").
 const VIDEO_WORD_KEYWORDS = /\bVIDEOS?\b/;
 
+// PROMO DE EDICIÓN POR 50 Bs — VENCIDA.
+//
+// Se publicó un video ofreciendo edición de video a 50 Bs y siguen llegando clientes
+// por esa publicación aunque la promoción ya no está vigente. No se puede confirmar
+// ese precio, pero tampoco se puede ignorar la pregunta: sin explicación el cliente
+// siente que la oferta fue un engaño. Este detector solo identifica que el cliente
+// viene por ahí; el guion de respuesta (explicar el vencimiento + derivar al editor)
+// vive en el prompt y en el contexto del turno.
+//
+// El 50 tiene que venir acompañado de contexto de promo/edición: un "50" suelto en
+// "a las 50 cuadras" o un "50%" de descuento no son esta promo.
+const EDIT_PROMO_50_MONEY = /\b50\s*(BS|BOB|BOLIVIANOS?)\b/;
+const EDIT_PROMO_50_CONTEXT =
+  /\b(PROMO|PROMOS|PROMOCION|PROMOCIONES|OFERTA|OFERTAS|DESCUENTO|VIDEO|VIDEOS|PUBLICACION|ANUNCIO|REEL|REELS|TIKTOK|EDICION|EDITAR|EDITEN|EDITAN)\b/;
+// "50%" es descuento, no precio. "50 videos" es una cantidad, no un monto.
+const EDIT_PROMO_50_EXCLUSIONS = /\b50\s*%|\b50\s*(VIDEOS?|CLIENTES?|PERSONAS?)\b/;
+
+// True si el cliente pregunta por la promoción de edición de video por 50 Bs.
+function mentionsExpiredEditPromo(text: string): boolean {
+  if (!text) return false;
+
+  const normalized = normalizeForMatch(text);
+
+  if (EDIT_PROMO_50_EXCLUSIONS.test(normalized)) return false;
+  // El 50 debe ser un número propio: descarta 2500/3500/5500 (precios de paquetes).
+  if (!containsExactNumber(normalized, [50])) return false;
+
+  // "50 bs" es inequívoco por sí solo; un "50" pelado necesita contexto de promo.
+  return EDIT_PROMO_50_MONEY.test(normalized) || EDIT_PROMO_50_CONTEXT.test(normalized);
+}
+
+// ENLACES ENTRANTES.
+//
+// Un link que manda el cliente no dice nada por sí solo: puede ser su TikTok, su
+// catálogo, la publicación de una promo o algo sin relación. El bot no puede abrirlo
+// ni debe inventar qué contiene, así que se pide contexto en vez de adivinar el flujo.
+//
+// Se exige protocolo, "www." o una barra después del dominio para no confundir un
+// punto final de oración ("listo. ok") con un dominio.
+const INCOMING_LINK_REGEX =
+  /(?:https?:\/\/\S+)|(?:\bwww\.[a-z0-9-]+\.[a-z]{2,}\S*)|(?:\b[a-z0-9-]+\.(?:com|bo|net|org|app|link|me|tv|io|co)\/\S*)/i;
+
+// True si el mensaje del cliente contiene un enlace.
+function containsIncomingLink(text: string): boolean {
+  if (!text) return false;
+  return INCOMING_LINK_REGEX.test(text);
+}
+
 export {
   normalizeForMatch,
   containsExactNumber,
@@ -56,4 +104,6 @@ export {
   AI_AGENT_KEYWORDS,
   PROMO_REQUEST_KEYWORDS,
   VIDEO_WORD_KEYWORDS,
+  mentionsExpiredEditPromo,
+  containsIncomingLink,
 };
