@@ -136,6 +136,30 @@ Eres la asistente de WhatsApp de Conecta Pro. Hablas en nombre del equipo, en un
 y natural — como alguien del equipo respondiendo por WhatsApp, no como un bot formal. Trata al usuario de "tú".
 
 ═══════════════════════════════════════
+PARA QUÉ EXISTES (tu objetivo)
+═══════════════════════════════════════
+
+Existes para CONCRETAR clientes de grabación y edición de video: llevar a quien escribe desde el
+primer "hola" hasta que deja sus datos para que un asesor cierre la venta. Todo lo demás (cursos,
+agente de IA, ubicación, horarios) lo atiendes bien, pero el embudo que justifica tu existencia es
+este, y tiene cuatro pasos:
+
+  1. INFORMAR: precios, paquetes, qué incluye, cómo se trabaja, dron, zona de cobertura.
+  2. GUIAR: resolver sus dudas y llevarlo a elegir — sin fricción y sin preguntas de relleno.
+  3. PEDIR LOS DATOS: enviar el formulario de leads en cuanto haya intención suficiente (una
+     elección de paquete, un "me interesa", un "quiero contratar", una cantidad a coordinar).
+  4. CERRAR: cuando el cliente manda sus datos, confirmarle que un asesor ya los tiene y se
+     comunicará con él lo antes posible. Ese es el LEAD CERRADO: tu trabajo bien hecho.
+
+Hasta el paso 4 NO abandonas la conversación. Aunque un aviso interno ya haya salido al asesor,
+aunque el cliente pida algo fuera del catálogo, aunque haya que explicarle lo mismo otra vez: sigues
+acompañándolo hasta que deja sus datos o hasta que él mismo pide hablar con una persona. Un chat
+que se enfría sin llegar al paso 3 es un lead perdido, y perder leads es exactamente lo que no
+puede pasar.
+
+Cuando SÍ te detienes (y solo entonces) está explicado en "CUANDO EL CASO PASA A UNA PERSONA".
+
+═══════════════════════════════════════
 INFORMACIÓN CONOCIDA
 ═══════════════════════════════════════
 
@@ -650,9 +674,16 @@ ${renderPackageFlyerLines("  ")}
   registrado", etc.): está prohibido, genera ruido y gasto innecesario.
 
   Usa should_reply=true (sí responder) cuando ocurra CUALQUIERA de estas condiciones:
-  1. Ya se reunieron los 3 campos obligatorios (en uno o varios mensajes). En ese caso cierra con
-     un mensaje breve de cortesía (ej. "¡Gracias! Un asesor se comunicará contigo pronto 😊") y
-     marca lead_data_submitted=true para que se notifique al asesor con los datos recopilados.
+  1. Ya se reunieron los 3 campos obligatorios (en uno o varios mensajes). Ese es el LEAD
+     CERRADO: cierra con este mensaje (o uno equivalente, pero SIEMPRE confirmando que un asesor
+     ya tiene los datos):
+
+     "¡Gracias! 🙌 Un asesor ya tiene tus datos y se comunicará contigo lo más pronto posible 😊"
+
+     Y marca lead_data_submitted=true para que se notifique al asesor con los datos recopilados.
+     Después de este mensaje el sistema te apaga: es el final correcto de tu trabajo, pero por eso
+     mismo el acuse no puede faltar — un cliente que manda sus datos y no recibe nada siente que
+     escribió al vacío.
   2. El cliente hace una PREGUNTA o expresa una DUDA / confusión (ej. "¿qué pongo en cargo?",
      "no entiendo", "¿para qué necesitan mi Instagram?"). No está enviando datos: respóndele para
      ayudarlo con naturalidad, pero NO marques lead_data_submitted ni cierres (el lead sigue
@@ -705,13 +736,25 @@ ${renderPackageFlyerLines("  ")}
   - NO uses este flujo para el agente de IA (LÍNEA C) ni para cursos — es exclusivo de los
     paquetes de video.
 
-▸ CUANDO EL CASO PASA A UNA PERSONA, TÚ TE CALLAS (regla general)
-  En cuanto el caso queda en manos de un asesor humano — el cliente pidió que lo llamen,
-  pidió una cita o una reunión por Zoom, terminó de dar sus datos (lead cerrado), o el turno
-  se derivó al asesor — el sistema te APAGA en esa conversación durante las siguientes horas.
-  Los mensajes del cliente se siguen guardando y el asesor los ve, pero tú ya no respondes.
+▸ CUANDO EL CASO PASA A UNA PERSONA, TÚ TE CALLAS
+  Hay cuatro situaciones, y SOLO cuatro, en las que el caso deja de ser tuyo. Cuando ocurre
+  alguna, el sistema te apaga en esa conversación durante las horas siguientes: los mensajes
+  del cliente se siguen guardando y el asesor los ve, pero tú ya no respondes.
 
-  Qué significa esto para tu respuesta en ESE turno:
+  1. LEAD CERRADO: el cliente terminó de darte sus datos. Le confirmas que un asesor ya los
+     tiene y que se comunicará con él lo antes posible — ese acuse SIEMPRE sale antes del
+     silencio, nunca lo dejes sin respuesta después de que se tomó el trabajo de escribirlos.
+  2. PIDIÓ QUE LO LLAMEN por teléfono.
+  3. PIDIÓ UNA CITA en oficina o una reunión por Zoom.
+  4. YA ACORDÓ ALGO con una persona del equipo (ver el flujo de máxima prioridad), o el caso
+     se derivó porque tú no lo podías resolver (información no documentada, reembolso).
+
+  FUERA DE ESAS CUATRO, SIGUES TRABAJANDO. Que un aviso interno haya salido al asesor no te
+  saca de la conversación: si el cliente pidió una cantidad fuera de los paquetes, si pidió un
+  solo video, si preguntó por un tema del curso — tú sigues atendiéndolo, sigues respondiendo
+  y sigues llevándolo a dejar sus datos. Callarte ahí sería abandonar el lead a medio camino.
+
+  Cuando SÍ te toca cerrar, en ESE turno:
   - Cierra con UNA frase clara de que una persona lo va a contactar, y nada más.
   - NUNCA prometas que TÚ vas a seguir ayudándolo, ni le pidas que te siga escribiendo
     mientras tanto, ni le ofrezcas más material "por si acaso".
@@ -768,6 +811,9 @@ ${renderPackageFlyerLines("  ")}
   - Marca intents.service_packages = true.
   - Marca advisor_handoff = true con advisor_handoff_reason = "custom_quantity": este caso es un
     LEAD que un asesor tiene que atender sí o sí, no un caso ya resuelto.
+  - Ese aviso al asesor NO te saca de la conversación: sigues atendiendo al cliente con
+    normalidad hasta que te mande sus datos (ahí recién cierras el lead) o hasta que pida hablar
+    con una persona. Si te pregunta otra cosa mientras tanto, respóndele.
 
   IMPORTANTE — NO confundas el TIPO/PROPÓSITO del video con una cantidad: palabras como "spot",
   "spot comercial", "video publicitario", "videos", "un spot", "un comercial", "un video para mi
@@ -1399,6 +1445,18 @@ Cuando completes la transferencia, envíame por este chat:
 📌 Tu número de celular
 
 Con eso el equipo valida el pago y te confirmamos tu cupo 😊`;
+
+// CIERRE DEL LEAD. Es el último mensaje que el cliente recibe del bot: a partir de aquí
+// la conversación queda en manos del asesor y el bot se apaga (ver
+// pauseBotForHumanHandoff). Por eso el acuse es obligatorio y va SIEMPRE antes del
+// silencio: quedarse callado justo después de que alguien escribió sus datos es la peor
+// forma de terminar un embudo que costó toda la conversación construir.
+const LEAD_CLOSED_REPLY = `¡Gracias! 🙌 Un asesor ya tiene tus datos y se comunicará contigo lo más pronto posible 😊`;
+
+// ¿La respuesta le confirma al cliente que una persona lo va a contactar? Se mira el
+// sentido, no el texto exacto, para no pisar una redacción del LLM que ya cumple.
+const LEAD_CLOSING_ACK_REGEX =
+  /\bASESOR\b|\bSE\s+(COMUNICARA|CONTACTARA|PONDRA\s+EN\s+CONTACTO)\b|\bTE\s+(CONTACTA|CONTACTARA|CONTACTAMOS|ESCRIBE|ESCRIBIRA|LLAMA|LLAMARA)\b/;
 
 // Cliente que dice tener algo YA acordado con una persona del equipo ("ayer quedamos en
 // 80 Bs", "ya hablé con el asesor y me dio el ok"). El bot no puede confirmar ni negar
@@ -2786,6 +2844,20 @@ async function applyBotPause(params: {
 // lo atienda recién a la mañana siguiente. Al vencer, el bot se reactiva solo; un humano
 // puede reactivarlo antes con /resume.
 const HUMAN_HANDOFF_PAUSE_MINUTES = 12 * 60;
+
+// Motivos de derivación que SÍ apagan el bot. Los que faltan quedan deliberadamente
+// fuera, porque en esos casos el bot todavía tiene trabajo que hacer y apagarlo mata el
+// embudo antes de cerrarlo:
+//   - "out_of_catalog": le acaba de ofrecer elegir un paquete; si responde "el de 6",
+//     alguien tiene que mandarle el formulario.
+//   - "custom_quantity": le acaba de pedir los datos; el silencio llega cuando los mande
+//     (lead_closed), no antes.
+//   - "course_topic_unconfirmed": sigue vendiendo el curso y puede terminar pagando.
+const PAUSE_ON_HANDOFF_REASONS: AdvisorHandoffReason[] = [
+  "prior_agreement",
+  "undocumented_info",
+  "refund_old_date",
+];
 
 type HumanHandoffPauseReason =
   | "call_requested"
@@ -5845,6 +5917,38 @@ export async function POST(request: Request) {
     });
   }
 
+  // CIERRE DEL LEAD: el acuse SIEMPRE sale antes del silencio.
+  //
+  // Cuando el cliente termina de dar sus datos, el bot se apaga a continuación (el caso
+  // pasa al asesor). Ese apagado solo es aceptable si el cliente recibe primero la
+  // confirmación de que sus datos llegaron: si el LLM devolvió silencio, o una respuesta
+  // que no confirma nada, se fuerza el acuse aquí.
+  if (turn.lead_data_submitted) {
+    const acknowledged =
+      turn.should_reply && LEAD_CLOSING_ACK_REGEX.test(normalizeForMatch(turn.reply));
+
+    if (!acknowledged) {
+      turn.should_reply = true;
+      turn.reply = LEAD_CLOSED_REPLY;
+
+      console.log("lead closing acknowledgement forced before pause", {
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+      });
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "lead_closing_ack_forced",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          client_message: lastMessage.text.slice(0, 200),
+        },
+      });
+    }
+  }
+
   // ACUERDO PREVIO — la red de seguridad más dura del sistema, y la última en aplicarse
   // para que gane sobre cualquier otra respuesta ya fijada.
   //
@@ -6734,6 +6838,21 @@ export async function POST(request: Request) {
   //
   // El orden de los motivos va de más específico a más general: es solo la etiqueta que
   // queda registrada, la pausa es la misma.
+  // El apagado por lead cerrado exige señal REAL de que hubo datos: el formulario ya pedido
+  // en esta conversación, o datos de contacto en el propio mensaje. Si el modelo marca el
+  // cierre por error en un turno temprano, el aviso al asesor sale igual (como siempre) pero
+  // el bot NO se apaga sobre un chat que recién empieza.
+  const leadActuallyClosed =
+    (turn.lead_data_submitted || turn.ai_agent_lead_submitted) &&
+    (intakeFormSent ||
+      turn.service_intake_requested ||
+      detectLeadDataHeuristic(lastMessage.text));
+
+  const handoffReasonPauses =
+    turn.advisor_handoff &&
+    turn.advisor_handoff_reason !== null &&
+    PAUSE_ON_HANDOFF_REASONS.includes(turn.advisor_handoff_reason);
+
   const humanHandoffPauseReason: HumanHandoffPauseReason | null =
     turn.advisor_handoff_reason === "prior_agreement"
       ? "prior_agreement"
@@ -6743,9 +6862,9 @@ export async function POST(request: Request) {
           ? "appointment_requested"
           : turn.zoom_meeting_scheduled
             ? "zoom_requested"
-            : turn.lead_data_submitted || turn.ai_agent_lead_submitted
+            : leadActuallyClosed
               ? "lead_closed"
-              : turn.advisor_handoff
+              : handoffReasonPauses
                 ? "advisor_handoff"
                 : null;
 
