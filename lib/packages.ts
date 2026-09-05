@@ -10,7 +10,7 @@
 // rangos mínimo/máximo se derivan de ella. No vuelvas a escribir un número de videos ni
 // un precio a mano fuera de este archivo.
 
-import { normalizeForMatch } from "./keywords.ts";
+import { containsExactNumber, normalizeForMatch } from "./keywords.ts";
 
 type VideoPackage = {
   // Nombre tal como aparece en el flyer.
@@ -18,13 +18,19 @@ type VideoPackage = {
   videos: number;
   // Precio mensual en Bs.
   price: number;
+  // ¿Este paquete incluye grabación con dron? Hoy solo el más grande. Antes esto no
+  // estaba escrito en ningún lado y el prompt decía "según el paquete que elijas" sin
+  // decir cuál: el modelo llenaba el hueco solo y llegó a prometerle a un cliente que el
+  // dron venía gratis en el paquete más chico. Un dato afirmativo aquí es lo que evita
+  // que se lo vuelva a inventar.
+  drone: boolean;
 };
 
 // ⚠️ EDITAR AQUÍ (y solo aquí) cuando cambie la oferta. Ordenado de menor a mayor.
 const VIDEO_PACKAGES: VideoPackage[] = [
-  { name: "Básico", videos: 6, price: 2500 },
-  { name: "Normal", videos: 12, price: 3500 },
-  { name: "Pro", videos: 18, price: 5500 },
+  { name: "Básico", videos: 6, price: 2500, drone: false },
+  { name: "Normal", videos: 12, price: 3500, drone: false },
+  { name: "Pro", videos: 18, price: 5500, drone: true },
 ];
 
 // Cantidades exactas del catálogo (hoy 6, 12 y 18).
@@ -101,6 +107,113 @@ function renderPackagePriceMap(): string {
   return VIDEO_PACKAGES.map((pkg) => `${pkg.videos} videos = ${pkg.price}`).join(", ");
 }
 
+// ── DRON Y OTROS EXTRAS ──────────────────────────────────────────────────────
+//
+// El dron es el ÚNICO extra con una regla cerrada (viene o no viene según el paquete).
+// Todo lo demás que un cliente pueda pedir encima de su paquete —locución, actores,
+// fotos, locaciones extra, más revisiones— no tiene regla ni precio publicado: lo cotiza
+// un asesor. Ver la política de extras en el SYSTEM_PROMPT.
+
+const PACKAGES_WITH_DRONE = VIDEO_PACKAGES.filter((pkg) => pkg.drone);
+const PACKAGES_WITHOUT_DRONE = VIDEO_PACKAGES.filter((pkg) => !pkg.drone);
+
+// "el Pro (18 videos)" / "el Básico (6 videos) y el Normal (12 videos)"
+function renderPackagesWithVideos(
+  packages: VideoPackage[],
+  conjunction: "o" | "y",
+): string {
+  return joinList(
+    packages.map((pkg) => `el ${pkg.name} (${pkg.videos} videos)`),
+    conjunction,
+  );
+}
+
+// Línea de cara al CLIENTE: la que va en el flyer de texto de los paquetes. Reemplaza al
+// viejo "trabajamos con dron según el paquete que elijas", que afirmaba que existía una
+// regla sin decirla.
+function renderDroneClientLine(): string {
+  if (PACKAGES_WITH_DRONE.length === 0) {
+    return "Las tomas con dron se cotizan aparte: un asesor te pasa el precio exacto.";
+  }
+  return `El dron viene incluido en ${renderPackagesWithVideos(PACKAGES_WITH_DRONE, "y")}. En los demás paquetes se puede sumar, y un asesor te pasa la cotización exacta.`;
+}
+
+// Regla completa para el SYSTEM_PROMPT: dato afirmativo, sin ambigüedad, en los dos
+// sentidos (qué paquete lo trae y cuáles no).
+function renderDroneRule(): string {
+  if (PACKAGES_WITH_DRONE.length === 0) {
+    return "DRON: ningún paquete lo incluye. Siempre se cotiza aparte.";
+  }
+  if (PACKAGES_WITHOUT_DRONE.length === 0) {
+    return "DRON: incluido en todos los paquetes.";
+  }
+  return [
+    `DRON: lo incluye ÚNICAMENTE ${renderPackagesWithVideos(PACKAGES_WITH_DRONE, "y")}.`,
+    `${renderPackagesWithVideos(PACKAGES_WITHOUT_DRONE, "y").replace(/^el /, "El ")} NO lo incluyen.`,
+  ].join(" ");
+}
+
+// "el Pro (18 videos)": los paquetes que traen dron, para nombrarlos en el prompt.
+function renderPackagesWithDrone(): string {
+  return renderPackagesWithVideos(PACKAGES_WITH_DRONE, "y");
+}
+
+// Vocabulario del dron, incluidas las formas indirectas con las que un cliente pide lo
+// mismo sin nombrarlo ("tomas aéreas", "desde arriba").
+const DRONE_WORDS = "DRON|DRONE|DRONES|TOMAS? AEREAS?|VISTAS? AEREAS?|PLANOS? AEREOS?|IMAGENES AEREAS|DESDE EL AIRE|DESDE ARRIBA";
+
+const DRONE_REGEX = new RegExp(`\\b(${DRONE_WORDS})\\b`);
+
+// Negaciones EXPLÍCITAS del dron. Deliberadamente estrechas: solo formas de rechazo
+// inequívocas. Una regla amplia del tipo "NO … a menos de N caracteres de DRON" también
+// se tragaba preguntas legítimas ("no sé si el básico incluye dron"), que son justo las
+// que hay que atrapar.
+const DRONE_NEGATION_REGEX = new RegExp(
+  `\\b(SIN|NADA DE|NINGUN|NINGUNA|TAMPOCO)\\s+(EL\\s+|UN\\s+|UNA\\s+|LA\\s+|DE\\s+)?(${DRONE_WORDS})\\b` +
+    `|\\bNO\\s+(LO\\s+|LA\\s+|ME\\s+|NOS\\s+)?(QUIERO|QUEREMOS|NECESITO|NECESITAMOS|INTERESA|INTERESAN|HACE FALTA|USEN|USAR|VA|VAN|ES CON)\\s+` +
+    `(EL\\s+|UN\\s+|UNA\\s+|DE\\s+|CON\\s+|LO\\s+DEL\\s+)?(${DRONE_WORDS})\\b`,
+);
+
+// ¿El cliente está PIDIENDO dron? Es la mitad determinista de la red de seguridad: el
+// LLM también marca su propio flag, y basta con que uno de los dos dispare. Se descartan
+// los rechazos explícitos ("sin dron", "no quiero dron") para no alertar al asesor por
+// un cliente que justamente dijo que no lo quiere.
+function detectDroneRequest(text: string): boolean {
+  if (!text) return false;
+
+  const normalized = normalizeForMatch(text);
+
+  if (!DRONE_REGEX.test(normalized)) return false;
+  if (DRONE_NEGATION_REGEX.test(normalized)) return false;
+
+  return true;
+}
+
+// Nombres de paquete como palabra completa: "PRO" no debe saltar dentro de "CONECTAPRO".
+const PACKAGE_NAME_MATCH_REGEX = new RegExp(`\\b(${PACKAGE_NAMES.join("|")})\\b`);
+
+// ¿El mensaje identifica un paquete del catálogo por su NOMBRE o por su PRECIO exacto?
+function mentionsCatalogPackage(text: string): boolean {
+  if (!text) return false;
+  const normalized = normalizeForMatch(text);
+  return (
+    PACKAGE_NAME_MATCH_REGEX.test(normalized) ||
+    containsExactNumber(normalized, PACKAGE_PRICES)
+  );
+}
+
+// ¿Un paquete concreto del catálogo, elegido por nombre? Lo usa el flujo de extras para
+// saber si lo que el cliente eligió ya trae dron o hay que cotizarlo.
+function findPackageByName(text: string): VideoPackage | null {
+  if (!text) return null;
+  const normalized = normalizeForMatch(text);
+  return (
+    VIDEO_PACKAGES.find((pkg) =>
+      new RegExp(`\\b${normalizeForMatch(pkg.name)}\\b`).test(normalized),
+    ) ?? null
+  );
+}
+
 // Ejemplos de cantidades para el prompt, derivados del catálogo real:
 // - "below_min": cantidades por debajo del mínimo (2, 3, 4, 5 si el mínimo es 6).
 // - "negotiable": cantidades dentro del rango que no son paquete, más una por encima
@@ -161,17 +274,32 @@ function detectRequestedVideoCount(text: string): number | null {
 
   const normalized = normalizeForMatch(text).replace(/(\d)[.,](\d)/g, "$1$2");
 
+  let count: number | null = null;
+
   const digits = normalized.match(NUMBER_DIGIT_REGEX);
   if (digits) {
-    const count = Number(digits[1]);
+    const parsed = Number(digits[1]);
     // "2500 videos" no es una cantidad: es el precio mal tipeado por el cliente.
-    if (!PACKAGE_PRICES.includes(count)) return count;
+    if (!PACKAGE_PRICES.includes(parsed)) count = parsed;
   }
 
-  const words = normalized.match(NUMBER_WORD_REGEX);
-  if (words) return NUMBER_WORDS[words[1]];
+  if (count === null) {
+    const words = normalized.match(NUMBER_WORD_REGEX);
+    if (words) count = NUMBER_WORDS[words[1]];
+  }
 
-  return null;
+  if (count === null) return null;
+
+  // "El paquete básico, que 1 video sea con dron": el cliente YA eligió un paquete y ese
+  // número es un detalle DENTRO de su pedido, no la cantidad que quiere contratar. Sin
+  // esta guarda se leía como "1 video" → por debajo del mínimo → y el bot le respondía
+  // "nuestros paquetes son fijos, no manejamos otras cantidades" a alguien que acababa de
+  // elegir uno. Se limita a las cantidades por debajo del mínimo, que son las que
+  // disparan esa respuesta de rechazo: una cantidad mayor ("20 videos, más que el Pro")
+  // sigue siendo un lead real y debe detectarse aunque nombre un paquete.
+  if (count < MIN_PACKAGE_VIDEOS && mentionsCatalogPackage(text)) return null;
+
+  return count;
 }
 
 export {
@@ -179,9 +307,17 @@ export {
   PACKAGE_SIZES,
   PACKAGE_PRICES,
   PACKAGE_NAMES,
+  PACKAGES_WITH_DRONE,
+  PACKAGES_WITHOUT_DRONE,
   MIN_PACKAGE_VIDEOS,
   MAX_PACKAGE_VIDEOS,
   joinList,
+  renderDroneClientLine,
+  renderDroneRule,
+  renderPackagesWithDrone,
+  detectDroneRequest,
+  mentionsCatalogPackage,
+  findPackageByName,
   renderPackageSizes,
   renderPackagePrices,
   renderPackageFlyerLines,

@@ -18,9 +18,16 @@ import {
   PACKAGE_NAMES,
   PACKAGE_PRICES,
   PACKAGE_SIZES,
+  PACKAGES_WITH_DRONE,
+  PACKAGES_WITHOUT_DRONE,
   VIDEO_PACKAGES,
   classifyVideoQuantity,
+  detectDroneRequest,
   detectRequestedVideoCount,
+  findPackageByName,
+  mentionsCatalogPackage,
+  renderDroneClientLine,
+  renderDroneRule,
   renderPackageCatalog,
   renderPackageFlyerLines,
   renderPackageSizes,
@@ -179,6 +186,125 @@ test("una elección normal de paquete no dispara el caso negociable", () => {
     assert.equal(detectado, size, String(size));
     assert.equal(classifyVideoQuantity(detectado as number), "in_catalog", String(size));
   }
+});
+
+// --- Dron --------------------------------------------------------------------
+//
+// Estas pruebas nacen de un caso real: el bot le dijo a un cliente que el dron venía
+// incluido sin costo en el paquete más chico. No lo estaba. El prompt decía "según el
+// paquete que elijas" sin decir cuál, y el modelo llenó el hueco con la versión que
+// cerraba la venta. Igual que el resto del archivo, se escriben contra el catálogo y no
+// contra "el Pro": si mañana el dron pasa al paquete mediano, deben seguir pasando.
+
+test("cada paquete declara si trae dron y los dos grupos suman el catálogo", () => {
+  for (const pkg of VIDEO_PACKAGES) {
+    assert.equal(typeof pkg.drone, "boolean", pkg.name);
+  }
+  assert.equal(
+    PACKAGES_WITH_DRONE.length + PACKAGES_WITHOUT_DRONE.length,
+    VIDEO_PACKAGES.length,
+  );
+});
+
+test("la regla del dron nombra los paquetes que lo traen y los que no", () => {
+  const regla = renderDroneRule();
+  for (const pkg of PACKAGES_WITH_DRONE) {
+    assert.ok(regla.includes(pkg.name), pkg.name);
+  }
+  for (const pkg of PACKAGES_WITHOUT_DRONE) {
+    assert.ok(regla.includes(pkg.name), pkg.name);
+  }
+});
+
+test("el texto al cliente NUNCA vuelve a decir 'según el paquete que elijas'", () => {
+  const linea = renderDroneClientLine();
+  assert.ok(!/SEGUN EL PAQUETE/i.test(linea.normalize("NFD").replace(/[̀-ͯ]/g, "")));
+  // Y sí nombra el paquete concreto: es el dato que faltaba.
+  for (const pkg of PACKAGES_WITH_DRONE) {
+    assert.ok(linea.includes(pkg.name), pkg.name);
+  }
+});
+
+test("detecta el pedido de dron, incluso sin nombrarlo", () => {
+  const frases = [
+    "el paquete básico me gustaría que 1 video sea con dron",
+    "quiero DRONE",
+    "se puede con tomas aéreas?",
+    "me gustaría una vista desde arriba del local",
+    "incluye planos aereos?",
+  ];
+  for (const frase of frases) {
+    assert.equal(detectDroneRequest(frase), true, frase);
+  }
+});
+
+test("un rechazo explícito del dron NO cuenta como pedido", () => {
+  const frases = [
+    "sin dron está bien",
+    "no quiero dron",
+    "no necesitamos dron por ahora",
+    "nada de drones",
+    "el básico sin tomas aéreas",
+  ];
+  for (const frase of frases) {
+    assert.equal(detectDroneRequest(frase), false, frase);
+  }
+});
+
+test("una pregunta con 'no' adentro sigue siendo un pedido de dron", () => {
+  // La trampa de las negaciones anchas: estas frases contienen "no" cerca de "dron"
+  // pero son justo las que hay que atrapar.
+  assert.equal(detectDroneRequest("no sé si el básico incluye dron"), true);
+  assert.equal(detectDroneRequest("no me quedó claro lo del dron"), true);
+});
+
+test("un mensaje sin dron no dispara nada", () => {
+  for (const frase of ["quiero el básico", "cuánto cuesta?", "hola"]) {
+    assert.equal(detectDroneRequest(frase), false, frase);
+  }
+});
+
+// --- Elección de paquete vs. cantidad suelta ---------------------------------
+
+test("reconoce el paquete nombrado por nombre y por precio", () => {
+  for (const pkg of VIDEO_PACKAGES) {
+    assert.equal(mentionsCatalogPackage(`quiero el ${pkg.name}`), true, pkg.name);
+    assert.equal(mentionsCatalogPackage(`el de ${pkg.price}`), true, String(pkg.price));
+    assert.equal(findPackageByName(`me interesa el ${pkg.name}`)?.videos, pkg.videos, pkg.name);
+  }
+  assert.equal(mentionsCatalogPackage("quiero grabar videos"), false);
+  assert.equal(findPackageByName("quiero grabar videos"), null);
+});
+
+test("'PRO' dentro de ConectaPro no se lee como el paquete Pro", () => {
+  assert.equal(mentionsCatalogPackage("hola conectapro"), false);
+  assert.equal(findPackageByName("hola conectapro"), null);
+});
+
+test("un número suelto DENTRO de un pedido de paquete no es la cantidad contratada", () => {
+  // El bug real: "1 video" se leía como cantidad por debajo del mínimo y el bot
+  // respondía "nuestros paquetes son fijos" a alguien que acababa de elegir uno.
+  for (const pkg of VIDEO_PACKAGES) {
+    assert.equal(
+      detectRequestedVideoCount(`el paquete ${pkg.name} pero que 1 video sea con dron`),
+      null,
+      pkg.name,
+    );
+  }
+});
+
+test("una cantidad MAYOR sigue detectándose aunque se nombre un paquete", () => {
+  // Este sí es un lead: no hay que silenciarlo por mencionar el catálogo.
+  const grande = MAX_PACKAGE_VIDEOS + 2;
+  assert.equal(
+    detectRequestedVideoCount(`quiero ${grande} videos, más que el Pro`),
+    grande,
+  );
+});
+
+test("sin paquete nombrado, una cantidad chica se sigue detectando", () => {
+  assert.equal(detectRequestedVideoCount("solo quiero 1 video"), 1);
+  assert.equal(classifyVideoQuantity(1), "below_min");
 });
 
 // --- Resultado ---------------------------------------------------------------

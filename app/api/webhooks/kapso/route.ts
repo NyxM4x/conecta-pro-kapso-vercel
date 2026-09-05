@@ -28,7 +28,12 @@ import {
   MIN_PACKAGE_VIDEOS,
   MAX_PACKAGE_VIDEOS,
   classifyVideoQuantity,
+  detectDroneRequest,
   detectRequestedVideoCount,
+  findPackageByName,
+  renderDroneClientLine,
+  renderDroneRule,
+  renderPackagesWithDrone,
   renderPackageCatalog,
   renderPackageFlyerLines,
   renderPackageNameExamples,
@@ -244,7 +249,23 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   nombre (${renderPackageNameExamples()}), está eligiendo ese paquete → es intención clara de
   contratar (enviar el formulario de datos).
 - Incluye producción profesional (grabación + edición) orientada a redes sociales (TikTok, Instagram).
-- También se trabaja con dron según el paquete.
+- ⚠️ QUÉ INCLUYE CADA PAQUETE — DATO CERRADO, NO SE DEDUCE:
+  ${renderDroneRule()}
+  Esta línea es la ÚNICA fuente de verdad sobre el dron. NUNCA digas que un paquete lo
+  incluye si aquí no figura, NUNCA digas que "se incluye sin costo adicional" y NUNCA
+  afirmes que el precio del paquete se mantiene igual con dron: el precio con dron en un
+  paquete que no lo trae NO existe todavía, lo arma un asesor.
+- ⚠️ POLÍTICA DE EXTRAS (dron, locución, actores/modelos, fotos, locaciones adicionales,
+  más revisiones, cualquier otra cosa que no esté escrita arriba):
+  • Si el cliente hace una PREGUNTA GENERAL sobre el equipo o las capacidades de Conecta
+    Pro ("¿graban en interiores?", "¿trabajan con marcas?"), respóndele con naturalidad.
+  • PERO si el cliente PIDE o CONDICIONA agregar un elemento, servicio o atributo que no
+    está explícitamente listado en su paquete, NUNCA confirmes que está incluido ni
+    apruebes el costo. Usa el flujo "EL CLIENTE PIDE AGREGAR ALGO AL PAQUETE" de abajo y
+    marca advisor_handoff con advisor_handoff_reason = "package_addon" para que se cotice
+    esa modificación.
+  Inventar aquí no es un detalle: el cliente se queda con una promesa que el asesor
+  después tiene que romper delante de él.
 - Los precios SÍ pueden recitarse en texto (son estos tres, fijos), pero solo cuando el cliente
   pida información en letras o no le haya quedado claro tras enviarle los flyers — el flyer ya
   los muestra, así que por defecto se envían las imágenes y solo se detalla en texto si lo pide
@@ -570,7 +591,7 @@ GUÍA POR SITUACIÓN
 
 ${renderPackageFlyerLines("  ")}
 
-  Todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
+  Todos con producción profesional orientada a redes sociales como TikTok e Instagram. ${renderDroneClientLine()}
 
   Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.
 
@@ -607,9 +628,18 @@ ${renderPackageFlyerLines("  ")}
   ni sigas dando detalles: envía el formulario en ese mismo mensaje.
 
   PERO SI ES UNA PREGUNTA, NO ES UNA ELECCIÓN: "¿cuánto cuesta el de ${MIN_PACKAGE_VIDEOS}?",
-  "¿qué incluye el más completo?", "¿cuál me conviene?", "¿el de ${MIN_PACKAGE_VIDEOS} tiene
-  dron?" son consultas → respóndelas con
+  "¿qué incluye el más completo?", "¿cuál me conviene?" son consultas → respóndelas con
   naturalidad y NO envíes el formulario todavía.
+  "¿el de ${MIN_PACKAGE_VIDEOS} tiene dron?" también es una consulta, pero su respuesta NO
+  la eliges tú: está en la línea "QUÉ INCLUYE CADA PAQUETE" de arriba y se contesta con
+  ese dato, nunca con una suposición.
+
+  ELECCIÓN + CONDICIÓN ESPECIAL: si el cliente elige un paquete Y en el mismo mensaje pide
+  algo encima ("el ${VIDEO_PACKAGES[0].name}, pero que un video sea con dron"), NO ignores
+  la segunda parte para quedarte solo con la elección. Atender la mitad del mensaje y
+  mandarle el formulario como si no hubiera pedido nada es un error grave: el cliente
+  vuelve a preguntar lo mismo y pierde la confianza. Ese caso va al flujo "EL CLIENTE PIDE
+  AGREGAR ALGO AL PAQUETE".
 
   INTERÉS GENÉRICO (sin elegir una cantidad del catálogo) TAMBIÉN ES INTENCIÓN SUFICIENTE: si YA presentaste
   los paquetes (por texto o flyer) y el cliente responde con interés general de contratar
@@ -829,6 +859,62 @@ ${renderPackageFlyerLines("  ")}
   IMPORTANTE — PROMOCIÓN VIGENTE: si el contexto adicional anuncia una promo con su propia
   cantidad de videos, esa cantidad NO es "fuera de los paquetes" — es la promo, y se responde con
   el flujo de promociones.
+
+▸ FLUJO B — EL CLIENTE PIDE AGREGAR ALGO AL PAQUETE (dron y demás extras)
+  Aplica cuando el cliente quiere sumar a un paquete algo que ese paquete NO incluye según
+  la línea "QUÉ INCLUYE CADA PAQUETE": dron en un paquete que no lo trae, locución,
+  actores o modelos, fotos, locaciones adicionales, más revisiones. El disparador es que
+  PIDA o CONDICIONE el extra ("que un video sea con dron", "¿me lo pueden hacer con
+  dron?", "lo quiero pero con tomas aéreas"), no que pregunte en general por el equipo.
+
+  ── SI EL PAQUETE QUE ELIGIÓ YA LO INCLUYE ──
+  (hoy el dron en ${renderPackagesWithDrone()}): confírmalo con naturalidad y sigue el
+  flujo normal de elección de paquete — es una buena noticia y una elección clara.
+  NO marques advisor_handoff: no hay nada que cotizar.
+
+  ── SI EL PAQUETE QUE ELIGIÓ NO LO INCLUYE ──
+  Responde con este tono (adáptalo al paquete y al extra que pidió, no lo repitas literal
+  si ya lo dijiste antes en la conversación):
+
+  "¡Qué buena idea sumar tomas con dron! 🚁 Te cuento que el dron viene incluido en nuestro paquete ${VIDEO_PACKAGES[VIDEO_PACKAGES.length - 1].name} (${MAX_PACKAGE_VIDEOS} videos).
+
+  Si prefieres mantener el ${VIDEO_PACKAGES[0].name}, ¡no hay problema! Un asesor te arma una cotización exacta con el dron incluido en ese paquete.
+
+  ¿Te paso unos datitos rápidos para que te contacte con el precio final? 😊"
+
+  Las tres partes de ese mensaje son obligatorias, en ese orden:
+  1. Reconocer el pedido con entusiasmo (nunca arrancar con la negativa).
+  2. Decir en qué paquete SÍ viene incluido — es el dato real y de paso deja ver el valor
+     del paquete grande, sin presionar para que lo compre.
+  3. Ofrecer la cotización del asesor para el paquete que él eligió, y pedirle permiso
+     para tomar sus datos.
+
+  - ⚠️ EL FORMULARIO NO SALE EN ESTE MENSAJE. Aquí solo PIDES PERMISO ("¿te paso unos
+    datitos?"). El formulario completo va en el turno SIGUIENTE, cuando el cliente
+    responda que sí ("dale", "ok", "sí", "listo", "ya"). Mandar el formulario pegado a la
+    noticia de que su extra no está incluido se lee como un atropello automatizado.
+    Por eso service_intake_requested se queda en FALSE en este turno.
+  - Cuando el cliente ACEPTE, envía el formulario tal cual (el de 📌 Nombre, empresa,
+    rubro...) y ahí sí marca service_intake_requested = true.
+  - NUNCA des un precio del extra, no lo estimes y no lo calcules. NUNCA digas que "se
+    incluye sin costo adicional" ni que "el precio se mantiene igual": no lo sabes.
+  - NUNCA lo niegues de forma cortante ("no, el básico no tiene dron"). El cliente no
+    pierde nada: sigue teniendo su paquete y además una cotización en camino.
+  - NO empujes el paquete grande más allá de mencionar que lo incluye. Un cliente que
+    eligió el más chico y recibe un empujón al más caro se va.
+  - Marca intents.service_packages = true.
+  - Marca advisor_handoff = true con advisor_handoff_reason = "package_addon".
+  - Marca package_addon_requested = true y package_addon_detail con lo que pidió, en texto
+    literal ("un video con dron").
+  - Ese aviso al asesor NO te saca de la conversación: sigues atendiendo con normalidad
+    hasta que te mande sus datos o pida hablar con una persona.
+
+  SI INSISTE CON EL PRECIO: si vuelve a preguntar cuánto costaría con el extra ("pero
+  más o menos cuánto", "dame un rango", "¿el mismo precio?"), NUNCA inventes una cifra ni
+  un rango, y NUNCA te quedes callado: repítelo con naturalidad y sin sonar a robot, que
+  justamente por eso lo cotiza un asesor y que por eso le pides los datos. Puedes decirlo
+  de otra forma cada vez, pero la respuesta de fondo no cambia y la conversación no se
+  corta nunca.
 
 ▸ EL CLIENTE YA ACORDÓ ALGO CON ALGUIEN DEL EQUIPO (máxima prioridad — gana sobre todo)
   Aplica cuando el cliente da por hecho que YA habló, cotizó o cerró condiciones con una
@@ -1194,9 +1280,19 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   sucursales son deseables, no bloqueantes). Ver FLUJO C arriba. Es el equivalente de
   lead_data_submitted pero para la LÍNEA C — NO marques lead_data_submitted por leads del agente
   de IA. Márcalo SOLO UNA VEZ por conversación.
+- package_addon_requested: true cuando el cliente PIDE o CONDICIONA agregar a un paquete algo
+  que ese paquete no incluye (dron donde no viene, locución, actores/modelos, fotos, locaciones
+  extra, más revisiones). Es un PEDIDO, no una pregunta general: "¿graban en interiores?" es
+  false; "quiero el ${VIDEO_PACKAGES[0].name} pero que un video sea con dron" es true.
+  FALSE si el paquete que eligió YA incluye eso (ver "QUÉ INCLUYE CADA PAQUETE").
+  FALSE si el cliente dice que NO lo quiere ("sin dron", "no necesito dron").
+  Va siempre junto con advisor_handoff_reason = "package_addon".
+- package_addon_detail: qué pidió agregar, en texto literal y corto ("un video con dron",
+  "locución en off"). Solo en el turno donde marcas package_addon_requested = true; null en el
+  resto. Es lo que lee el asesor en la alerta para poder cotizar sin abrir el chat.
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
-  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Seis motivos
+  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Siete motivos
   posibles, mutuamente excluyentes:
 
   (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide MENOS
@@ -1223,8 +1319,14 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 
   (4) advisor_handoff_reason = "undocumented_info": el cliente hace una pregunta CONCRETA sobre
       servicios, políticas, condiciones o datos de Conecta Pro que NO están en esta guía (todo lo
-      cubierto arriba — precios, fechas, ubicación, paquetes, facturación, promo descontinuada,
-      TikTok, etc. — NO cuenta como "no documentado"). Si tuvieras que inventar un dato para
+      cubierto arriba — precios y cantidades de los paquetes, fechas, ubicación, facturación,
+      promo descontinuada, TikTok, etc. — NO cuenta como "no documentado").
+      ⚠️ OJO: que los PAQUETES estén documentados significa sus cantidades y sus precios, NO
+      todo lo que un cliente pueda preguntar sobre ellos. Lo que un paquete incluye está en
+      la línea "QUÉ INCLUYE CADA PAQUETE": si te preguntan por algo que NO figura ahí, eso
+      SÍ es información no documentada y NO puedes deducirla. Si el cliente además PIDE
+      agregarlo, el motivo correcto es "package_addon" (abajo), que sí responde.
+      Si tuvieras que inventar un dato para
       responder, en vez de eso marca advisor_handoff=true con este motivo y deja "reply" vacío o
       un string neutro corto (no se enviará al cliente: el sistema guarda silencio y deriva al
       asesor). NUNCA inventes, NUNCA adivines. Ante la duda de si algo ya está cubierto, revisa de
@@ -1243,8 +1345,17 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       LÍNEA A. En este caso SÍ respondes en positivo, sin negar el tema y sin comprometerte a
       nada concreto (no dejas "reply" vacío); el asesor confirma el detalle real después.
 
-  Si ninguno de los seis casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
-  Los seis motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
+  (7) advisor_handoff_reason = "package_addon": el cliente PIDE sumar a su paquete algo que ese
+      paquete no incluye (dron en un paquete que no lo trae, locución, actores, fotos,
+      locaciones extra) — ver el flujo "EL CLIENTE PIDE AGREGAR ALGO AL PAQUETE" arriba. Es un
+      LEAD con una cotización pendiente, no un caso resuelto. En este caso SÍ respondes (nunca
+      dejas "reply" vacío): reconoces el pedido, dices en qué paquete viene incluido si
+      corresponde, ofreces la cotización del asesor y pides permiso para tomarle los datos.
+      NO lo uses cuando el paquete que eligió YA incluye eso (ahí no hay nada que cotizar), ni
+      para preguntas generales sobre el equipo o las capacidades de Conecta Pro.
+
+  Si ninguno de los siete casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
+  Los siete motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
   negocio, eso NO es un handoff: es off_topic=true (ver arriba) y no genera aviso al asesor.
   NUNCA marques advisor_handoff por leads, llamadas, citas, pagos ni por el agente de IA (Zoom o
   cotización personalizada) — esos flujos ya tienen su propio aviso al asesor y son independientes
@@ -1335,6 +1446,15 @@ const LEAD_INTAKE_FORM = `¡Con gusto! Para coordinar todo, necesito algunos dat
 📌 Instagram o redes sociales:
 📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
 📌 ¿Tienes alguna referencia de contenido que te guste? (Opcional)`;
+
+// Aviso fijo del DRON, para cuando el cliente lo pide sobre un paquete que no lo trae y
+// el modelo lo ignora (fue exactamente el fallo original: el cliente pidió "que 1 video
+// sea con dron" y recibió el formulario, sin una palabra sobre el dron). Se antepone a lo
+// que el modelo haya respondido — nunca lo reemplaza — y sale del catálogo, así que si
+// mañana el dron pasa a otro paquete este texto cambia solo.
+const DRONE_ADDON_NOTICE = `¡Qué buena idea sumar tomas con dron! 🚁 Te cuento que el dron viene incluido en ${renderPackagesWithDrone()}.
+
+En los demás paquetes se puede sumar igual: un asesor te arma la cotización exacta con el dron incluido.`;
 
 // Respuesta de superposición cita + interés en contratar. La usa la red de seguridad
 // determinista cuando el LLM intenta mandar el formulario con una cita ya en curso.
@@ -1474,7 +1594,7 @@ const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de gra
 
 ${renderPackageFlyerLines()}
 
-Todos con producción profesional orientada a redes sociales como TikTok e Instagram. También trabajamos con dron según el paquete que elijas.
+Todos con producción profesional orientada a redes sociales como TikTok e Instagram. ${renderDroneClientLine()}
 
 Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.`;
 
@@ -2503,13 +2623,15 @@ type AdvisorHandoffReason =
   | "custom_quantity"
   | "prior_agreement"
   | "refund_old_date"
-  | "course_topic_unconfirmed";
+  | "course_topic_unconfirmed"
+  | "package_addon";
 
 // Marcadores de dedup de los avisos a Telegram. El genérico cubre todos los motivos
 // menos el lead por cantidad, que tiene el suyo (ver hasTelegramCustomQuantityBeenSent).
 const HANDOFF_MARKER = "[TELEGRAM_HANDOFF_SENT]";
 const CUSTOM_QUANTITY_MARKER = "[TELEGRAM_CUSTOM_QUANTITY_SENT]";
 const PRIOR_AGREEMENT_MARKER = "[TELEGRAM_PRIOR_AGREEMENT_SENT]";
+const PACKAGE_ADDON_MARKER = "[TELEGRAM_PACKAGE_ADDON_SENT]";
 
 const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
   out_of_catalog: "Servicio fuera del catálogo estándar",
@@ -2519,6 +2641,7 @@ const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
   undocumented_info: "Información no documentada",
   refund_old_date: "Posible reembolso — pagó fecha anterior del curso (26 de julio)",
   course_topic_unconfirmed: "Preguntó por un tema del curso fuera del temario confirmado",
+  package_addon: "LEAD — quiere sumar un extra a su paquete (hay que cotizarlo)",
 };
 
 // Aviso genérico "blanco" al asesor: cualquier situación (fuera de leads, llamadas, citas o
@@ -2853,6 +2976,8 @@ const HUMAN_HANDOFF_PAUSE_MINUTES = 12 * 60;
 //   - "custom_quantity": le acaba de pedir los datos; el silencio llega cuando los mande
 //     (lead_closed), no antes.
 //   - "course_topic_unconfirmed": sigue vendiendo el curso y puede terminar pagando.
+//   - "package_addon": le acaba de pedir permiso para tomarle los datos; si el bot se apaga,
+//     el "dale" del cliente se queda sin respuesta y el lead muere ahí.
 const PAUSE_ON_HANDOFF_REASONS: AdvisorHandoffReason[] = [
   "prior_agreement",
   "undocumented_info",
@@ -3039,8 +3164,16 @@ const AssistantTurnSchema = z.object({
       "prior_agreement",
       "refund_old_date",
       "course_topic_unconfirmed",
+      "package_addon",
     ])
     .nullable(),
+  // El cliente pide sumar algo a su paquete que ese paquete no incluye (dron, locución,
+  // actores...). Es la mitad "inteligente" de la red de seguridad del dron: el código
+  // detecta además por texto, y basta con que uno de los dos dispare.
+  package_addon_requested: z.boolean(),
+  // Qué pidió, en texto literal ("un video con dron"). Es lo que lee el asesor en la
+  // alerta de Telegram para poder cotizar sin abrir el chat.
+  package_addon_detail: z.string().nullable(),
   conversation_summary: z.string(),
   intents: z.object({
     course_flyer: z.boolean(),
@@ -3074,6 +3207,8 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   off_topic: false,
   advisor_handoff: false,
   advisor_handoff_reason: null,
+  package_addon_requested: false,
+  package_addon_detail: null,
   conversation_summary: "",
   intents: {
     course_flyer: false,
@@ -4181,6 +4316,15 @@ async function hasTelegramCustomQuantityBeenSent(
   return hasTelegramMarkerBeenSent(conversationId, CUSTOM_QUANTITY_MARKER);
 }
 
+// Mismo criterio para el extra pedido sobre un paquete (dron y compañía): es un LEAD con
+// una cotización pendiente, y perderlo porque la conversación ya derivó antes por otro
+// motivo dejaría al cliente esperando un precio que nadie le va a mandar.
+async function hasTelegramPackageAddonBeenSent(
+  conversationId?: string,
+): Promise<boolean> {
+  return hasTelegramMarkerBeenSent(conversationId, PACKAGE_ADDON_MARKER);
+}
+
 // Mismo criterio para el cliente que dice tener un acuerdo previo: es el aviso más
 // urgente de todos (hay una persona del equipo que ya le prometió algo), así que no
 // puede quedarse sin enviar porque la conversación ya haya derivado por otra cosa.
@@ -4194,6 +4338,7 @@ async function hasTelegramPriorAgreementBeenSent(
 function handoffMarkerFor(reason: AdvisorHandoffReason): string {
   if (reason === "custom_quantity") return CUSTOM_QUANTITY_MARKER;
   if (reason === "prior_agreement") return PRIOR_AGREEMENT_MARKER;
+  if (reason === "package_addon") return PACKAGE_ADDON_MARKER;
   return HANDOFF_MARKER;
 }
 
@@ -5016,6 +5161,7 @@ export async function POST(request: Request) {
     telegramAppointmentSent,
     telegramHandoffSent,
     telegramCustomQuantitySent,
+    telegramPackageAddonSent,
     telegramPriorAgreementSent,
     telegramZoomSent,
     flowState,
@@ -5034,6 +5180,7 @@ export async function POST(request: Request) {
     hasTelegramAppointmentBeenSent(lastMessage.conversationId),
     hasTelegramHandoffBeenSent(lastMessage.conversationId),
     hasTelegramCustomQuantityBeenSent(lastMessage.conversationId),
+    hasTelegramPackageAddonBeenSent(lastMessage.conversationId),
     hasTelegramPriorAgreementBeenSent(lastMessage.conversationId),
     hasTelegramZoomBeenSent(lastMessage.conversationId),
     getConversationFlowState(lastMessage.conversationId),
@@ -5488,6 +5635,77 @@ export async function POST(request: Request) {
 
   const explicitPackageIntent = hasExplicitPackageIntent(lastMessage.text);
 
+  // ── EXTRA PEDIDO SOBRE UN PAQUETE (dron y compañía) ─────────────────────────
+  //
+  // Caso real que originó esto: "El paquete básico me gustaría que 1 video sea con dron".
+  // El bot respondió SOLO el formulario (la red de seguridad de abajo detectó "básico" y
+  // pisó la respuesta), y al repreguntar el cliente si costaba lo mismo, el modelo se
+  // inventó que el dron venía incluido sin costo en ese paquete.
+  //
+  // La detección es doble a propósito: el flag del modelo MÁS un detector de texto. Un
+  // flag solo no es una red de seguridad — el modelo es justamente la capa que falló.
+  // Un falso positivo cuesta una alerta de más al asesor; un falso negativo es un precio
+  // inventado delante del cliente.
+  const packagesAlreadyPresented = detectPackagesPresented(
+    history,
+    mediaStatus.service_packages,
+  );
+  const droneRequested = detectDroneRequest(lastMessage.text);
+  const chosenPackage = findPackageByName(lastMessage.text);
+
+  // Si el paquete que nombró YA trae dron no hay nada que cotizar: es una buena noticia y
+  // el flujo sigue siendo el normal de elección de paquete.
+  const addonAlreadyIncluded = chosenPackage?.drone === true;
+
+  // Sin contexto de paquetes abierto, "¿trabajan con dron?" es una consulta general y se
+  // responde con el dato del catálogo, sin molestar a nadie. Lo que se atrapa aquí es el
+  // dron pedido SOBRE un paquete: el mensaje lo nombra, o los paquetes ya se presentaron
+  // y el cliente está eligiendo dentro de esa conversación.
+  const packageAddonPending =
+    (turn.package_addon_requested || droneRequested) &&
+    !addonAlreadyIncluded &&
+    (chosenPackage !== null || packagesAlreadyPresented);
+
+  // ¿Es la PRIMERA vez en esta conversación? El aviso del extra se explica una sola vez.
+  // Si el cliente acepta repitiendo el pedido ("sí, con dron"), volver a explicárselo y
+  // volver a pedirle permiso lo dejaría dando vueltas sin llegar nunca al formulario.
+  const packageAddonIsNew = packageAddonPending && !telegramPackageAddonSent;
+
+  if (turn.should_reply && packageAddonPending) {
+    turn.advisor_handoff = true;
+    turn.advisor_handoff_reason = "package_addon";
+    turn.intents.service_packages = true;
+
+    if (droneRequested && !turn.package_addon_detail) {
+      turn.package_addon_detail = "dron";
+    }
+
+    // Si el modelo ignoró el pedido del extra —el fallo original—, se le antepone el dato
+    // correcto a su respuesta. Se ANTEPONE, no se reemplaza: lo que el modelo haya
+    // contestado sobre lo demás sigue siendo válido y pisarlo fue justamente el bug.
+    const replyMentionsDrone = /\b(DRON|DRONE|DRONES)\b/.test(
+      normalizeForMatch(turn.reply),
+    );
+
+    if (droneRequested && !replyMentionsDrone && packageAddonIsNew) {
+      turn.reply = turn.reply.trim()
+        ? `${DRONE_ADDON_NOTICE}\n\n${turn.reply.trim()}`
+        : `${DRONE_ADDON_NOTICE}\n\n¿Te paso unos datitos rápidos para que un asesor te contacte con el precio final? 😊`;
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "drone_notice_prepended_by_safety_net",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          client_message: lastMessage.text.slice(0, 200),
+          chosen_package: chosenPackage?.name ?? null,
+        },
+      });
+    }
+  }
+
   // Red de seguridad determinista: si el cliente eligió un paquete pero el LLM NO
   // marcó service_intake_requested, forzamos el envío del formulario. Cubre elección
   // por cantidad ("Si de 6 videos", "el de 18"), por nombre ("me interesa el básico",
@@ -5498,10 +5716,17 @@ export async function POST(request: Request) {
   // La guarda mira el TEXTO que se va a enviar, no el flag del LLM: el modelo chico
   // a veces marca service_intake_requested=true pero responde otra cosa ("¡excelente
   // elección!"), y en ese caso el cliente se quedaba sin formulario.
+  //
+  // Y NO se fuerza cuando hay un extra pendiente de cotizar: ahí el bot primero explica
+  // lo del extra y pide permiso ("¿te paso unos datitos?"). El formulario sale en el
+  // turno siguiente, cuando el cliente acepta. Mandarlo pegado a la noticia de que su
+  // extra no está incluido —o peor, EN LUGAR de esa noticia, como pasó— se lee como un
+  // atropello y deja la pregunta del cliente sin responder.
   if (
     turn.should_reply &&
     !replyContainsIntakeForm(turn.reply) &&
     !intakeFormSent &&
+    !packageAddonIsNew &&
     shouldForceIntakeForm(
       lastMessage.text,
       history,
@@ -6743,6 +6968,42 @@ export async function POST(request: Request) {
         });
       } else {
         await logTelegramSkippedNoContext("advisor_handoff:custom_quantity");
+      }
+    }
+
+    // LEAD por un EXTRA sobre el paquete (dron en un paquete que no lo trae, locución,
+    // actores...): el bot ya le dijo al cliente que un asesor le arma la cotización, así
+    // que ese asesor tiene que enterarse sí o sí. Marcador propio por el mismo motivo que
+    // el lead por cantidad: es una cotización pendiente y no puede perderse porque la
+    // conversación haya derivado antes por otra cosa.
+    if (
+      turn.advisor_handoff &&
+      turn.advisor_handoff_reason === "package_addon" &&
+      !telegramPackageAddonSent
+    ) {
+      if (conversationIsCommercial) {
+        const addonDetail = turn.package_addon_detail?.trim();
+
+        await notifyAdvisorHandoffToTelegram({
+          history,
+          phone: lastMessage.from,
+          contactName: lastMessage.contactName,
+          conversationId: mediaConversationId,
+          reason: "package_addon",
+          lastMessageText: lastMessage.text,
+          summary: turn.conversation_summary,
+          note: [
+            `🚁 Pidió sumar un extra${addonDetail ? `: ${addonDetail}` : ""}`,
+            chosenPackage
+              ? `📦 Sobre el paquete ${chosenPackage.name} (${chosenPackage.videos} videos — ${chosenPackage.price} Bs)`
+              : null,
+            "💰 El precio con el extra lo defines tú — el bot NO dio ninguna cifra",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        });
+      } else {
+        await logTelegramSkippedNoContext("advisor_handoff:package_addon");
       }
     }
 
