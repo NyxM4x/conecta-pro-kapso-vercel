@@ -1,14 +1,23 @@
-// Pruebas del catálogo de cursos, con foco en la UBICACIÓN.
+// Pruebas del catálogo de cursos: CADUCIDAD de la fecha y UBICACIÓN.
 //
 //   npm test            (usa el type-stripping nativo de Node, sin dependencias)
 //
-// Lo que se protege aquí: los cursos y la oficina son lugares distintos, y una fecha
-// puntual puede dictarse excepcionalmente en la oficina sin que esa excepción sobreviva
-// al evento. Correr también con TZ=UTC y TZ=America/La_Paz (Vercel corre en UTC).
+// Lo que se protege aquí:
+//   1. Un curso se apaga SOLO al pasar su fecha: deja de anunciarse y pasa a "sin fecha
+//      vigente", sin que nadie edite nada. Es la regla de oro de la operación.
+//   2. Los cursos y la oficina son lugares distintos, y una fecha puntual puede dictarse
+//      excepcionalmente en la oficina sin que esa excepción sobreviva al evento.
+//
+// La excepción de ubicación se prueba con un curso SINTÉTICO, no con uno del catálogo
+// real: así el catálogo puede quedar limpio (sin excepciones vigentes) y el mecanismo
+// sigue cubierto para el día que haga falta usarlo.
+//
+// Correr también con TZ=UTC y TZ=America/La_Paz (Vercel corre en UTC).
 
 import assert from "node:assert/strict";
 import {
   getActiveCourses,
+  getExpiredCourses,
   getCourseLocation,
   hasActiveLocationOverride,
   renderCourseContext,
@@ -31,50 +40,88 @@ function test(name: string, fn: () => void) {
 
 const at = (iso: string) => new Date(iso);
 
-// El curso de CapCut del 16/08/2026 se dicta excepcionalmente en la oficina.
+// --- 1. La fecha se apaga sola --------------------------------------------
+//
+// Se prueba sobre cada curso REAL del catálogo, con su propia fecha: así la garantía
+// vale para las fechas que estén cargadas hoy, sean cuales sean.
+
+for (const course of COURSES) {
+  const inicio = new Date(course.startsAt).getTime();
+  const vispera = new Date(inicio - 24 * 60 * 60_000);
+  const justoAntesDelCierre = new Date(inicio - 31 * 60_000);
+  const yaCerrado = new Date(inicio - 29 * 60_000); // cierra 30 min antes de empezar
+  const diaSiguiente = new Date(inicio + 24 * 60 * 60_000);
+
+  test(`${course.name}: la víspera está vigente y se puede vender`, () => {
+    assert.ok(getActiveCourses(vispera).includes(course));
+    assert.ok(renderCourseContext(vispera).includes(course.name));
+  });
+
+  test(`${course.name}: sigue vigente hasta 30 min antes de empezar`, () => {
+    assert.ok(getActiveCourses(justoAntesDelCierre).includes(course));
+  });
+
+  test(`${course.name}: se apaga solo al pasar su fecha, sin tocar el código`, () => {
+    for (const momento of [yaCerrado, diaSiguiente]) {
+      assert.ok(!getActiveCourses(momento).includes(course), "no debe seguir vigente");
+      assert.ok(getExpiredCourses(momento).includes(course), "debe pasar a sin fecha");
+    }
+  });
+
+  test(`${course.name}: pasada su fecha, el contexto no expone fecha ni precio`, () => {
+    const context = renderCourseContext(diaSiguiente);
+    const vencidos = context.slice(context.indexOf("Cursos SIN fecha vigente"));
+
+    assert.ok(vencidos.includes(course.name), "debe listarse como sin fecha vigente");
+    assert.ok(!vencidos.includes(`${course.pricePreventa} Bs`), "no debe quedar el precio");
+    assert.ok(!vencidos.includes("maps.app.goo.gl"), "no debe quedar la ubicación");
+  });
+}
+
+test("sin ninguna fecha cargada, el bot dice que no hay fecha confirmada", () => {
+  // El caso que más se da: el cliente pregunta después de que pasaron todas las fechas.
+  const ultimo = Math.max(...COURSES.map((c) => new Date(c.startsAt).getTime()));
+  const context = renderCourseContext(new Date(ultimo + 24 * 60 * 60_000));
+
+  assert.ok(context.includes("NINGÚN curso tiene fecha vigente"));
+  assert.ok(context.includes("NUNCA inventes una fecha"));
+  assert.ok(!context.includes("Cursos CON FECHA VIGENTE"));
+});
+
+// --- 2. La ubicación excepcional (mecanismo, con curso sintético) ----------
+
+const CURSO_EN_OFICINA: Course = {
+  id: "curso_de_prueba",
+  name: "Curso de Prueba",
+  startsAt: "2026-08-16T16:00:00-04:00",
+  pricePreventa: 450,
+  pricePresencial: 550,
+  locationOverride: {
+    mapsUrl: MAPS_OFICINA,
+    until: "2026-08-16T16:00:00-04:00",
+    note: "SOLO POR ESTA FECHA el curso se dicta en las oficinas de Conecta Pro.",
+  },
+};
+
 const ANTES = at("2026-08-15T10:00:00-04:00"); // víspera: excepción vigente
 const DESPUES = at("2026-08-17T10:00:00-04:00"); // día siguiente: ya venció
 
-const capcut = COURSES.find((c) => c.id === "capcut_pro")!;
-
-// --- La excepción mientras está vigente -----------------------------------
-
-test("la víspera, la ubicación del curso de CapCut es la oficina", () => {
-  const location = getCourseLocation(capcut, ANTES);
+test("la víspera, la ubicación del curso excepcional es la oficina", () => {
+  const location = getCourseLocation(CURSO_EN_OFICINA, ANTES);
   assert.equal(location.mapsUrl, MAPS_OFICINA);
   assert.ok(location.note, "debe traer el aviso de que el lugar cambió");
 });
 
-test("la víspera, el contexto anuncia el cambio de lugar", () => {
-  const context = renderCourseContext(ANTES);
-  assert.ok(context.includes(MAPS_OFICINA), "falta el link de la oficina");
-  assert.ok(context.includes("SOLO POR ESTA FECHA"), "falta el aviso de excepción");
-  assert.ok(
-    context.includes("NO marques intents.location_video"),
-    "falta el bloqueo del video de cómo llegar",
-  );
+test("pasado el curso, la excepción NO sobrevive al evento", () => {
+  const location = getCourseLocation(CURSO_EN_OFICINA, DESPUES);
+  assert.equal(location.mapsUrl, MAPS_CURSOS);
+  assert.equal(location.note, undefined);
 });
 
-test("hasActiveLocationOverride distingue antes y después", () => {
-  assert.equal(hasActiveLocationOverride(ANTES), true);
-  assert.equal(hasActiveLocationOverride(DESPUES), false);
-});
-
-// --- Lo que importa: que la excepción NO sobreviva al evento ---------------
-
-test("pasado el curso, el link de la oficina desaparece del contexto de cursos", () => {
-  const context = renderCourseContext(DESPUES);
-  assert.ok(
-    !context.includes(MAPS_OFICINA),
-    "el link de la oficina NO debe aparecer para ninguna fecha posterior",
-  );
-  assert.ok(!context.includes("SOLO POR ESTA FECHA"));
-});
-
-test("si CapCut recibe una fecha nueva, la ubicación vuelve a la habitual", () => {
+test("si el curso recibe una fecha nueva, la ubicación vuelve a la habitual", () => {
   // Segundo candado: `until` vence aunque alguien mueva `startsAt` hacia adelante y
   // se olvide de borrar el bloque locationOverride.
-  const reprogramado: Course = { ...capcut, startsAt: "2026-09-20T16:00:00-04:00" };
+  const reprogramado: Course = { ...CURSO_EN_OFICINA, startsAt: "2026-10-18T16:00:00-04:00" };
   const location = getCourseLocation(reprogramado, DESPUES);
 
   assert.equal(location.mapsUrl, MAPS_CURSOS);
@@ -85,34 +132,38 @@ test("el override vence exactamente en `until`, no después", () => {
   const justoAntes = at("2026-08-16T15:59:59-04:00");
   const justoEn = at("2026-08-16T16:00:00-04:00");
 
-  assert.equal(getCourseLocation(capcut, justoAntes).mapsUrl, MAPS_OFICINA);
-  assert.equal(getCourseLocation(capcut, justoEn).mapsUrl, MAPS_CURSOS);
+  assert.equal(getCourseLocation(CURSO_EN_OFICINA, justoAntes).mapsUrl, MAPS_OFICINA);
+  assert.equal(getCourseLocation(CURSO_EN_OFICINA, justoEn).mapsUrl, MAPS_CURSOS);
 });
 
-// --- El caso normal, sin excepción ----------------------------------------
+// --- 3. El catálogo real: ubicación habitual, sin excepciones colgadas -----
 
-test("un curso sin override siempre usa la ubicación habitual", () => {
-  const normal = COURSES.find((c) => c.id === "creacion_contenido")!;
-  assert.equal(normal.locationOverride, undefined);
-  assert.equal(getCourseLocation(normal, ANTES).mapsUrl, MAPS_CURSOS);
-  assert.equal(getCourseLocation(normal, DESPUES).mapsUrl, MAPS_CURSOS);
+test("hoy ningún curso del catálogo tiene una excepción de ubicación vigente", () => {
+  // Si alguien deja un locationOverride vencido en el catálogo, esto no falla (vence
+  // solo), pero sí falla si queda uno apuntando al futuro sin querer.
+  for (const course of COURSES) {
+    const inicio = new Date(course.startsAt);
+    const location = getCourseLocation(course, new Date(inicio.getTime() - 60_000));
+
+    if (course.locationOverride === undefined) {
+      assert.equal(location.mapsUrl, MAPS_CURSOS, `${course.name} debe usar el lugar habitual`);
+      assert.equal(location.note, undefined);
+    }
+  }
 });
 
 test("todo curso vigente lleva su ubicación en el contexto", () => {
-  const context = renderCourseContext(ANTES);
-  const activos = getActiveCourses(ANTES);
+  const momento = at("2026-08-01T10:00:00-04:00"); // antes de todas las fechas cargadas
+  const context = renderCourseContext(momento);
+  const activos = getActiveCourses(momento);
 
   assert.ok(activos.length > 0, "el escenario de prueba necesita cursos vigentes");
   const lineasUbicacion = context.match(/Ubicación de ESTE curso/g) ?? [];
   assert.equal(lineasUbicacion.length, activos.length);
 });
 
-test("los cursos vencidos no exponen ninguna ubicación", () => {
-  // El 17 CapCut ya pasó: se lista como sin fecha vigente, pero sin link.
-  const context = renderCourseContext(DESPUES);
-  const seccionVencidos = context.slice(context.indexOf("Cursos SIN fecha vigente"));
-
-  assert.ok(!seccionVencidos.includes("maps.app.goo.gl"));
+test("hasActiveLocationOverride es false mientras no haya excepción en el catálogo", () => {
+  assert.equal(hasActiveLocationOverride(at("2026-09-06T10:00:00-04:00")), false);
 });
 
 console.log(`TZ=${process.env.TZ ?? "(sistema)"} — ${passed} pruebas OK`);

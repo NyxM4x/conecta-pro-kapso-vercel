@@ -12,7 +12,7 @@
 // Por defecto todos los cursos son en MAPS_CURSOS; una fecha puntual puede dictarse en
 // otro lado vía `locationOverride`, que se vence solo (ver getCourseLocation).
 
-import { MAPS_CURSOS, MAPS_OFICINA } from "./locations.ts";
+import { MAPS_CURSOS } from "./locations.ts";
 
 const BOLIVIA_TZ = "America/La_Paz";
 
@@ -32,6 +32,17 @@ type CourseLocationOverride = {
   note: string;
 };
 
+// PLANTILLA (no hay ninguna excepción vigente ahora mismo). Si una fecha puntual se
+// dicta en la oficina, pega este bloque DENTRO de ese curso y pon en `until` la misma
+// fecha/hora de inicio del curso; así la excepción muere sola con el evento y la
+// próxima fecha vuelve a la ubicación habitual aunque nadie borre el bloque:
+//
+//   locationOverride: {
+//     mapsUrl: MAPS_OFICINA,                 // importar MAPS_OFICINA de ./locations.ts
+//     until: "2026-09-13T16:00:00-04:00",    // = startsAt de ESA fecha
+//     note: "SOLO POR ESTA FECHA el curso se dicta en las oficinas de Conecta Pro (es una excepción, no es lo habitual). Avísale al cliente que para esta fecha el lugar cambió, para que no vaya al lugar de siempre.",
+//   },
+
 type Course = {
   id: string;
   name: string;
@@ -47,7 +58,7 @@ const COURSES: Course[] = [
   {
     id: "creacion_contenido",
     name: "Curso de Creación de Contenido",
-    startsAt: "2026-08-02T16:00:00-04:00",
+    startsAt: "2026-09-13T16:00:00-04:00",
     pricePreventa: 350,
     pricePresencial: 450,
   },
@@ -57,15 +68,6 @@ const COURSES: Course[] = [
     startsAt: "2026-08-16T16:00:00-04:00",
     pricePreventa: 450,
     pricePresencial: 550,
-    // ⚠️ EXCEPCIÓN SOLO PARA LA FECHA DEL 16/08/2026: esta vez el curso se dicta en la
-    // oficina. NO es lo habitual y NO hay que copiar este bloque a la próxima fecha de
-    // CapCut. Se desactiva solo al llegar `until`, así que olvidarse de borrarlo no
-    // rompe nada.
-    locationOverride: {
-      mapsUrl: MAPS_OFICINA,
-      until: "2026-08-16T16:00:00-04:00",
-      note: "SOLO POR ESTA FECHA el curso se dicta en las oficinas de Conecta Pro (es una excepción, no es lo habitual). Avísale al cliente que para esta fecha el lugar cambió, para que no vaya al lugar de siempre.",
-    },
   },
 ];
 
