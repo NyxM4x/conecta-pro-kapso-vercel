@@ -59,7 +59,10 @@ const COURSES: Course[] = [
     id: "creacion_contenido",
     name: "Curso de Creación de Contenido",
     startsAt: "2026-09-13T16:00:00-04:00",
-    pricePreventa: 350,
+    // Preventa en oferta por septiembre 2026: 300 Bs en vez de los 350 habituales.
+    // La oferta vence con esta fecha (el curso deja de anunciarse solo), así que la
+    // próxima fecha que se cargue debe volver a 350 salvo que se decida lo contrario.
+    pricePreventa: 300,
     pricePresencial: 450,
   },
   {
