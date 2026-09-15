@@ -1,18 +1,15 @@
-// Lista de pagos para el grupo de Telegram (botón "💰 Pagos").
+// Detección de pagos a partir de la base de datos (la usa el botón "🎓 Inscritos del curso").
 //
 // Por qué existe: la alerta 💰 depende de que el bot etiquete bien cada comprobante, y en
 // un mes real se perdieron varios — el cliente mandaba la foto junto con un "Listo" o un
 // "Gracias" y solo se revisaba el último mensaje; otros llegaron con el bot apagado o sin
-// QR previo. Esta lista NO depende de ese etiquetado: toma de la base de datos TODA
-// imagen o PDF que mandó un cliente y todo texto que afirma un pago, y los ordena por
-// qué tan seguro es que sean un comprobante. Así ningún pago se pierde aunque el agente
-// falle, y un humano decide lo que el sistema no pudo.
+// QR previo. Esta detección NO depende de ese etiquetado: toma TODA imagen o PDF que mandó
+// un cliente y todo texto que afirma un pago, y los clasifica por qué tan seguro es que
+// sean un comprobante. Así ningún pago se pierde aunque el agente falle, y un humano decide
+// lo que el sistema no pudo.
 //
 // Funciones puras: el route handler de Telegram consulta Supabase y les pasa las filas.
 
-const BOLIVIA_TZ = "America/La_Paz";
-const MAX_REPORT_DAYS = 30;
-const TELEGRAM_CHUNK_LIMIT = 3800;
 // Varias imágenes del mismo cliente en este lapso son un solo envío (ej. dos comprobantes
 // de dos inscritos, o la foto + el PDF).
 const SAME_SUBMISSION_MINUTES = 10;
@@ -47,6 +44,7 @@ type PaymentEntry = {
   category: PaymentCategory;
   phone: string;
   firstAt: string;
+  lastAt: string;
   kinds: { images: number; documents: number; texts: number };
   context: string;
   alerted: boolean;
@@ -72,11 +70,6 @@ function isMediaCandidate(row: InboundCandidate): "image" | "document" | null {
   if (row.type === "image" || row.content.startsWith("📷")) return "image";
   if (row.type === "document" || row.content.startsWith("📄")) return "document";
   return null;
-}
-
-function clampReportDays(days: number): number {
-  if (!Number.isFinite(days)) return 7;
-  return Math.min(MAX_REPORT_DAYS, Math.max(1, Math.round(days)));
 }
 
 // Contexto comercial del cliente al momento de mandar el archivo, según el material que
@@ -210,6 +203,7 @@ function buildPaymentsReport(params: {
       category,
       phone: first.phone,
       firstAt: first.createdAt,
+      lastAt: group[group.length - 1].createdAt,
       kinds,
       context,
       alerted,
@@ -218,96 +212,5 @@ function buildPaymentsReport(params: {
   });
 }
 
-const escapeHtml = (text: string) =>
-  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-function formatBoliviaShort(iso: string): string {
-  const parts = new Intl.DateTimeFormat("es-BO", {
-    timeZone: BOLIVIA_TZ,
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(iso));
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  return `${get("day")}/${get("month")} ${get("hour")}:${get("minute")}`;
-}
-
-function describeKinds(kinds: PaymentEntry["kinds"]): string {
-  const out: string[] = [];
-  if (kinds.images) out.push(kinds.images > 1 ? `📷×${kinds.images}` : "📷");
-  if (kinds.documents) out.push(kinds.documents > 1 ? `📄×${kinds.documents}` : "📄");
-  if (kinds.texts) out.push("💬");
-  return out.join(" ");
-}
-
-function renderEntry(entry: PaymentEntry, compact: boolean): string {
-  const digits = entry.phone.replace(/\D/g, "");
-  const head = `• ${formatBoliviaShort(entry.firstAt)} · ${describeKinds(entry.kinds)} · <a href="https://wa.me/${digits}">${digits}</a>`;
-
-  if (compact) return `${head}${entry.detail ? ` — ${escapeHtml(entry.detail)}` : ""}`;
-
-  const lines = [head, `   ${escapeHtml(entry.context)}${entry.alerted ? " · 🔔 alerta enviada" : ""}`];
-  if (entry.detail) lines.push(`   ${escapeHtml(entry.detail)}`);
-  return lines.join("\n");
-}
-
-// Arma los mensajes de Telegram (HTML), partidos para no pasar el límite de 4096
-// caracteres y sin cortar nunca una entrada por la mitad.
-function renderPaymentsReport(params: {
-  entries: PaymentEntry[];
-  days: number;
-  now: Date;
-}): string[] {
-  const newestFirst = (a: PaymentEntry, b: PaymentEntry) => b.firstAt.localeCompare(a.firstAt);
-  const confirmed = params.entries.filter((e) => e.category === "confirmed").sort(newestFirst);
-  const review = params.entries.filter((e) => e.category === "review").sort(newestFirst);
-  const discarded = params.entries.filter((e) => e.category === "discarded").sort(newestFirst);
-  const unrelated = params.entries.filter((e) => e.category === "unrelated").sort(newestFirst);
-
-  const since = new Date(params.now.getTime() - params.days * 24 * 60 * 60_000);
-  const header = [
-    `💰 <b>Pagos — últimos ${params.days} días</b> (desde ${formatBoliviaShort(since.toISOString())})`,
-    `✅ ${confirmed.length} comprobantes · ❓ ${review.length} por revisar · 🚫 ${discarded.length} descartados · 📎 ${unrelated.length} otros archivos`,
-  ].join("\n");
-
-  const blocks: string[] = [header];
-
-  const section = (title: string, list: PaymentEntry[], compact: boolean) => {
-    if (list.length === 0) return;
-    blocks.push(title);
-    for (const entry of list) blocks.push(renderEntry(entry, compact));
-  };
-
-  section("\n✅ <b>Comprobantes (verificados o con alerta)</b>", confirmed, false);
-  section("\n❓ <b>Por revisar</b> — el bot no pudo confirmarlos; pueden ser pagos reales", review, false);
-  section("\n🚫 <b>Descartados por la verificación</b> — no parecían comprobantes, revisa si hay dudas", discarded, true);
-  section("\n📎 <b>Otros archivos</b> — de chats sin QR, curso ni formulario; no se verificaron", unrelated, true);
-
-  if (params.entries.length === 0) blocks.push("\nNo llegó ninguna imagen, PDF ni mensaje de pago en este rango.");
-
-  const chunks: string[] = [];
-  let current = "";
-  for (const block of blocks) {
-    const next = current ? `${current}\n${block}` : block;
-    if (next.length > TELEGRAM_CHUNK_LIMIT && current) {
-      chunks.push(current);
-      current = block;
-    } else {
-      current = next;
-    }
-  }
-  if (current) chunks.push(current);
-
-  return chunks;
-}
-
-export {
-  MAX_REPORT_DAYS,
-  clampReportDays,
-  isPaymentClaim,
-  buildPaymentsReport,
-  renderPaymentsReport,
-};
+export { isPaymentClaim, buildPaymentsReport };
 export type { InboundCandidate, OutboundMarker, VisionVerdict, PaymentEntry, PaymentCategory };

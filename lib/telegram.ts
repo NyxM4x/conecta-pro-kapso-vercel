@@ -148,6 +148,59 @@ async function notifyUnattendedLeadToTelegram(params: {
   );
 }
 
+// SEGUNDA Y ÚLTIMA alerta de un lead que sigue sin respuesta humana horas después. Se manda
+// antes de que se cierre la ventana de 24 h de WhatsApp (contada desde el último mensaje
+// del cliente): pasada esa ventana ya no se le puede escribir un mensaje libre.
+async function notifyUnattendedLeadFinalToTelegram(params: {
+  phone: string;
+  hoursWaiting: number;
+  // Horas que le quedan a la ventana de 24 h de WhatsApp; <= 0 si ya se cerró.
+  windowHoursLeft: number | null;
+}): Promise<boolean> {
+  const windowNote =
+    params.windowHoursLeft === null
+      ? null
+      : params.windowHoursLeft > 0
+        ? `⏳ Quedan ~${Math.max(1, Math.floor(params.windowHoursLeft))} h para escribirle por WhatsApp (ventana de 24 h)`
+        : "⛔ La ventana de 24 h de WhatsApp ya se cerró: hay que llamarlo o usar una plantilla";
+
+  return sendTelegramNotification(
+    buildTelegramBody({
+      headline: "⏰ <b>ÚLTIMO AVISO — Lead sin atender</b>",
+      phone: params.phone,
+      note: [
+        `⏱️ Nadie del equipo le escribió en ${Math.floor(params.hoursWaiting)} h desde que llegó el lead`,
+        windowNote,
+        "No habrá más avisos de este lead.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    }),
+  );
+}
+
+// Parte una lista de bloques de texto en mensajes que Telegram acepta (límite de 4096
+// caracteres), sin cortar nunca un bloque por la mitad.
+const TELEGRAM_CHUNK_LIMIT = 3800;
+
+function chunkTelegramBlocks(blocks: string[], limit = TELEGRAM_CHUNK_LIMIT): string[] {
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const block of blocks) {
+    const next = current ? `${current}\n${block}` : block;
+    if (next.length > limit && current) {
+      chunks.push(current);
+      current = block;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 export {
   callTelegramApi,
   sendTelegramMessage,
@@ -155,5 +208,7 @@ export {
   sendDeveloperAlert,
   escapeTelegramHtml,
   buildTelegramBody,
+  chunkTelegramBlocks,
   notifyUnattendedLeadToTelegram,
+  notifyUnattendedLeadFinalToTelegram,
 };

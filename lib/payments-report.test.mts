@@ -1,4 +1,4 @@
-// Pruebas de la lista de pagos del botón de Telegram.
+// Pruebas de la detección de pagos que alimenta el botón "🎓 Inscritos del curso".
 //
 //   npm test            (usa el type-stripping nativo de Node, sin dependencias)
 //
@@ -7,12 +7,7 @@
 // comprobantes reales que en septiembre de 2026 no generaron alerta.
 
 import assert from "node:assert/strict";
-import {
-  buildPaymentsReport,
-  clampReportDays,
-  isPaymentClaim,
-  renderPaymentsReport,
-} from "./payments-report.ts";
+import { buildPaymentsReport, isPaymentClaim } from "./payments-report.ts";
 import type { InboundCandidate, OutboundMarker, VisionVerdict } from "./payments-report.ts";
 
 let passed = 0;
@@ -112,13 +107,7 @@ test("un archivo sin ningún contexto de pago va a 'otros', no a 'por revisar'",
   assert.equal(entries[0].category, "unrelated");
 });
 
-test("el rango nunca pasa de un mes", () => {
-  assert.equal(clampReportDays(90), 30);
-  assert.equal(clampReportDays(21), 21);
-  assert.equal(clampReportDays(0), 1);
-});
-
-test("el reporte se parte en mensajes que Telegram acepta, sin perder entradas", () => {
+test("ningún pago de clientes distintos se pierde al agrupar", () => {
   const candidates = Array.from({ length: 120 }, (_, i) =>
     inbound({
       messageId: `m${i}`,
@@ -130,12 +119,7 @@ test("el reporte se parte en mensajes que Telegram acepta, sin perder entradas",
     }),
   );
   const entries = buildPaymentsReport({ candidates, markers: [], vision: new Map() });
-  const chunks = renderPaymentsReport({ entries, days: 30, now: new Date("2026-09-15T12:00:00Z") });
-
-  assert.ok(chunks.length > 1);
-  for (const chunk of chunks) assert.ok(chunk.length <= 4096, `chunk de ${chunk.length}`);
-  const listed = chunks.join("\n").match(/wa\.me\//g) ?? [];
-  assert.equal(listed.length, 120);
+  assert.equal(entries.length, 120);
 });
 
 console.log(`${passed} pruebas de pagos OK`);

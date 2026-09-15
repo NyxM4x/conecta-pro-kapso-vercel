@@ -3,8 +3,9 @@
 //
 //   curl -X POST https://<dominio>/api/telegram/setup -H "X-Bot-Control-Secret: <BOT_CONTROL_SECRET>"
 //
-// Apunta el bot a /api/telegram/webhook con TELEGRAM_WEBHOOK_SECRET y publica el comando
-// /pagos en el menú del bot. Protegido con el mismo secreto que /api/bot-control.
+// Apunta el bot a /api/telegram/webhook con TELEGRAM_WEBHOOK_SECRET y publica los comandos
+// en el menú del bot (el webhook también los republica solo al arrancar). Protegido con el
+// mismo secreto que /api/bot-control.
 
 import { callTelegramApi } from "../../../../lib/telegram";
 
@@ -31,7 +32,11 @@ export async function POST(request: Request) {
   });
 
   const commands = await callTelegramApi("setMyCommands", {
-    commands: [{ command: "pagos", description: "Lista de pagos recibidos (hasta 1 mes)" }],
+    commands: [
+      { command: "menu", description: "Botones del equipo" },
+      { command: "inscritos", description: "Inscritos del curso (con nombre y celular)" },
+      { command: "visitas", description: "Visitas a la oficina por coordinar" },
+    ],
   });
 
   return Response.json({ ok: Boolean(webhook && commands), url, webhook, commands });

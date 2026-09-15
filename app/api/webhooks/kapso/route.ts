@@ -1,5 +1,7 @@
 import { WhatsAppClient } from "@kapso/whatsapp-cloud-api";
 import { createClient } from "@supabase/supabase-js";
+import { after } from "next/server";
+import { runUnattendedLeadChecks } from "../../../../lib/unattended-leads";
 import { openai } from "@ai-sdk/openai";
 import { generateText, Output, experimental_transcribe as transcribe } from "ai";
 import { z } from "zod";
@@ -4895,6 +4897,17 @@ async function notifyMediaFailureToTelegram(params: {
 }
 
 export async function POST(request: Request) {
+  // Escalación de leads sin atender, colgada del tráfico del webhook (el cron de Supabase
+  // nunca corrió). Se ejecuta DESPUÉS de responder y como máximo una vez cada 10 minutos
+  // entre todos los procesos (ver lib/unattended-leads.ts); nunca bloquea al cliente.
+  after(async () => {
+    try {
+      await runUnattendedLeadChecks(getSupabaseClient());
+    } catch (error) {
+      console.error("unattended lead checks failed", error);
+    }
+  });
+
   let payload: Record<string, any>;
 
   try {
