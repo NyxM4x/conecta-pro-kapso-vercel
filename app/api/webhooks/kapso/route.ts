@@ -1,10 +1,20 @@
 import { WhatsAppClient } from "@kapso/whatsapp-cloud-api";
 import { createClient } from "@supabase/supabase-js";
 import { openai } from "@ai-sdk/openai";
-import { generateText, Output } from "ai";
+import { generateText, Output, experimental_transcribe as transcribe } from "ai";
 import { z } from "zod";
-import { sendTelegramNotification, escapeTelegramHtml, buildTelegramBody } from "../../../../lib/telegram";
-import { renderCourseContext, hasActiveLocationOverride } from "../../../../lib/courses";
+import {
+  sendTelegramNotification,
+  sendDeveloperAlert,
+  escapeTelegramHtml,
+  buildTelegramBody,
+} from "../../../../lib/telegram";
+import {
+  renderCourseContext,
+  hasActiveLocationOverride,
+  hasSellableCourse,
+  getInProgressCourses,
+} from "../../../../lib/courses";
 import { MAPS_OFICINA } from "../../../../lib/locations";
 import {
   getActivePromoAmounts,
@@ -54,6 +64,10 @@ import {
   mentionsExpiredEditPromo,
   mentionsPriorAgreement,
   containsIncomingLink,
+  detectOfficeVisit,
+  mentionsRecruitment,
+  detectEditingRequest,
+  hasBusinessVocabulary,
 } from "../../../../lib/keywords";
 
 type IncomingMessage = {
@@ -61,6 +75,9 @@ type IncomingMessage = {
   text: string;
   isImage?: boolean;
   isDocument?: boolean;
+  isAudio?: boolean;
+  // true si el audio NO se pudo transcribir: el bot no sabe qué dijo el cliente.
+  audioUnreadable?: boolean;
   // Referencia al archivo adjunto, para poder descargarlo y verificar con visión
   // si una imagen es realmente un comprobante de pago.
   mediaId?: string | null;
@@ -136,6 +153,68 @@ type SystemLogLevel = "info" | "warning" | "error" | "critical";
 // prompt, así que vive aquí para que un cambio de número sea de una sola línea.
 const EDITOR_PHONE = "74271406";
 
+// Campos del formulario de leads (LÍNEA B). Los usan el prompt, el formulario completo y
+// la respuesta a quien quiere visitarnos, que pide exactamente los mismos datos.
+const LEAD_INTAKE_FIELDS = `📌 Nombre:
+📌 Nombre de tu empresa o emprendimiento:
+📌 Cargo dentro de la empresa:
+📌 Número de contacto personal:
+📌 Rubro o sector: (Ej. gastronomía, belleza, moda, salud, etc.)
+📌 Instagram o redes sociales:
+📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
+📌 ¿Tienes alguna referencia de contenido que te guste? (Opcional)`;
+
+// Campos del formulario de la LÍNEA C (agente de IA).
+const AI_AGENT_INTAKE_FIELDS = `📌 Nombre:
+📌 Nombre de tu negocio y rubro:
+📌 ¿Cuántos mensajes reciben al día aproximadamente?
+📌 ¿Tienen una sola sucursal o varias?`;
+
+// VISITA A LA OFICINA. El bot ya no invita a pasar ni anota un día y una hora: no sabe si
+// habrá alguien para atender. Explica que primero llama un asesor y pide los datos.
+const OFFICE_VISIT_INTRO = `¡Con gusto te recibimos! 😊 Antes de confirmar una reunión en nuestra oficina, un asesor te llamará para coordinarla y conocer más de tu negocio. Así te atiende primero por llamada y llegan a la reunión con todo claro.
+
+Para que te contacte, necesito estos datos 📋`;
+
+const OFFICE_VISIT_INTAKE_REPLY = `${OFFICE_VISIT_INTRO}
+
+${LEAD_INTAKE_FIELDS}`;
+
+// Misma respuesta para un cliente del agente de IA: se le piden los datos de la LÍNEA C.
+const OFFICE_VISIT_AI_AGENT_REPLY = `${OFFICE_VISIT_INTRO}
+
+${AI_AGENT_INTAKE_FIELDS}`;
+
+// Visita por un CURSO: no se pide el formulario de negocio. Se preguntan sus dudas del curso
+// y el sistema avisa al asesor para que lo llame (ver notifyCourseOfficeVisitToTelegram).
+const OFFICE_VISIT_COURSE_REPLY = `¡Con gusto! 😊 Para visitarnos en la oficina, un asesor te llamará y te indicará la hora, así nos aseguramos de que alguien esté disponible para atenderte 📞
+
+Mientras tanto, cuéntame: ¿qué dudas tienes sobre el curso? Así el asesor te llama con todo listo.`;
+
+// Cuando ya dejó sus datos (o ya se le pidieron) y vuelve a hablar de venir a la oficina.
+const OFFICE_VISIT_PENDING_CALL_REPLY = `Antes de reunirnos en la oficina, un asesor te llamará para coordinar el día y la hora y conocer más de tu negocio 📞 Así nos aseguramos de que alguien esté disponible para atenderte 😊`;
+
+// Texto EXACTO del Flujo C — consulta general del agente de IA. Centralizado para que la
+// red de seguridad pueda enviarlo textual cuando el LLM devuelve el saludo genérico pese a
+// haber intención clara de agente de IA. Ya no ofrece Zoom: el siguiente paso es una
+// llamada del asesor por WhatsApp, y el bot junta los datos para esa llamada.
+// NUNCA incluir un precio aquí: la cotización es personalizada y el flyer muestra el estimado.
+const AI_AGENT_INFO = `¡Claro! 🤖 En Conecta Pro implementamos agentes de IA para negocios: un asistente que atiende tu WhatsApp las 24 horas, responde las consultas de tus clientes, envía tu información y captura los datos de clientes potenciales automáticamente. Es el mismo tipo de agente que te está atendiendo ahora 😊
+
+La cotización es personalizada, porque depende de tu negocio. Los precios que ves en el flyer son un estimado para negocios con alto flujo de mensajes (por ejemplo con varias sucursales), así que en tu caso puede variar.
+
+Un asesor te llama por WhatsApp para conocer cómo atiendes hoy los mensajes de tu negocio y explicarte cómo se aplicaría el agente en tu caso 📞 Para que te llame con todo listo, déjame estos datos 📋
+
+${AI_AGENT_INTAKE_FIELDS}`;
+
+// EDICIÓN AMBIGUA: pregunta antes de mandar paquetes o el número del editor.
+const EDITING_CLARIFY_REPLY = `¡Claro! 😊 Para orientarte bien, cuéntame qué necesitas:
+
+🎬 *Un paquete completo:* nosotros preparamos los guiones, grabamos, editamos y publicamos tus videos.
+✂️ *Solo edición:* ya tienes tus videos grabados y solo quieres que te los editemos.
+
+¿Cuál de las dos buscas?`;
+
 const SYSTEM_PROMPT = `
 Eres la asistente de WhatsApp de Conecta Pro. Hablas en nombre del equipo, en un tono cercano, entusiasta
 y natural — como alguien del equipo respondiendo por WhatsApp, no como un bot formal. Trata al usuario de "tú".
@@ -181,8 +260,8 @@ LÍNEA A — Cursos:
 - ⚠️ REGLA CRÍTICA — LA UBICACIÓN DEL CURSO NUNCA LA ELIGES TÚ: cada curso vigente trae su propia
   línea "Ubicación de ESTE curso" en ese bloque. Copia ESE link tal cual (texto plano, NUNCA
   markdown), siempre. NUNCA lo deduzcas, NUNCA lo recites de memoria y NUNCA uses el link de la
-  oficina por tu cuenta para un curso: el link de la oficina es para visitas/citas con un asesor,
-  y son flujos distintos. Por defecto los cursos NO se dictan en la oficina; si por excepción
+  oficina por tu cuenta para un curso: el link de la oficina es la sede de Conecta Pro (reuniones
+  que coordina un asesor), y son flujos distintos. Por defecto los cursos NO se dictan en la oficina; si por excepción
   alguna fecha sí lo fuera, el propio bloque de cursos vigentes te lo dirá con todas las letras —
   no lo asumas nunca por tu cuenta. NUNCA escribas un link de Maps que no venga de ese bloque o de
   la sección UBICACIÓN OFICINA.
@@ -249,6 +328,18 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   nombre (${renderPackageNameExamples()}), está eligiendo ese paquete → es intención clara de
   contratar (enviar el formulario de datos).
 - Incluye producción profesional (grabación + edición) orientada a redes sociales (TikTok, Instagram).
+- PUBLICIDAD, MARKETING, MANEJO DE REDES Y COMMUNITY MANAGER = ESTA LÍNEA. Los clientes casi nunca
+  dicen "paquete de grabación": piden "publicidad para mi negocio", "¿cuánto cobran por
+  publicidad?", "servicios de marketing", "planes de publicidad", "que me promocionen mi negocio",
+  "manejo de redes sociales", "un community manager", "que me manejen las redes". TODO eso es
+  interés en los paquetes: respóndelo con el FLUJO B (marca intents.service_packages = true), NUNCA
+  lo trates como fuera de tema ni lo dejes sin respuesta.
+  Lo que SÍ puedes afirmar del manejo de redes: trabajamos INSTAGRAM, FACEBOOK y TIKTOK. Llegamos
+  con guiones e ideas, grabamos, editamos y publicamos los videos en esas redes cuidando horarios
+  y rendimiento, con un grupo de trabajo para revisar avances. Cualquier otro detalle (responder
+  comentarios o mensajes, pauta o anuncios pagados, diseño, otras redes) NO está confirmado: no lo
+  afirmes ni lo niegues — di que un asesor le confirma el alcance exacto cuando lo contacte, y
+  sigue llevándolo a elegir un paquete / dejar sus datos. NO marques advisor_handoff por esto.
 - ⚠️ QUÉ INCLUYE CADA PAQUETE — DATO CERRADO, NO SE DEDUCE:
   ${renderDroneRule()}
   Esta línea es la ÚNICA fuente de verdad sobre el dron. NUNCA digas que un paquete lo
@@ -298,12 +389,15 @@ LÍNEA C — Agente de IA para negocios (servicio nuevo):
 - Los precios que aparecen en el flyer son un ESTIMADO para negocios de ALTO FLUJO de mensajes
   (por ejemplo con varias sucursales). Un negocio más pequeño paga distinto. Si el cliente
   pregunta por el precio del flyer, aclara esto y que la cotización real es personalizada.
-- REUNIÓN POR ZOOM: se ofrece una reunión corta por Zoom donde el cliente cuenta cómo atiende hoy
-  los mensajes de su negocio (su flujo) y un asesor le explica cómo se aplicaría el agente en su
-  caso. NO es una demo, NO es una prueba, NO es un agente ya configurado para ese negocio: es una
-  explicación. NUNCA prometas una demo, un agente de prueba ni un periodo gratuito.
-- Si tras el Zoom hay interés real, se formaliza en una CITA PRESENCIAL en oficinas (usa el flujo
-  de oficina que ya existe más abajo).
+- LLAMADA POR WHATSAPP, NO ZOOM: ya NO existen reuniones por Zoom. El siguiente paso es SIEMPRE
+  que un asesor llame al cliente por WhatsApp para conocer cómo atiende hoy los mensajes de su
+  negocio y explicarle cómo se aplicaría el agente en su caso. TU MISIÓN es juntar los datos del
+  formulario de la LÍNEA C para que el asesor llegue a esa llamada con todo listo.
+- NUNCA agendes ni propongas un día u hora para la llamada, y NUNCA preguntes "¿qué día y hora te
+  conviene?": el asesor decide cuándo llamar. Si el cliente propone un horario, agradécelo y dile
+  que se lo pasas al asesor, sin confirmarlo.
+- NO es una demo, NO es una prueba, NO es un agente ya configurado para ese negocio. NUNCA
+  prometas una demo, un agente de prueba ni un periodo gratuito.
 - Este flujo activa intents.ai_agent_flyer = true para que el sistema envíe el flyer del agente.
 
 SERVICIO DE SOLO EDICIÓN (el cliente ya tiene los videos grabados, solo quiere edición):
@@ -354,8 +448,14 @@ REDES SOCIALES:
 UBICACIÓN OFICINA (NO es donde se dictan los cursos):
 - Google Maps (texto plano, nunca markdown):
   ${MAPS_OFICINA}
-- Horario de atención en oficina: de 09:00 a 18:00, todos los días que el equipo atiende. Si preguntan
-  el horario de la oficina, da este horario junto con el link de Maps si corresponde.
+- ⚠️ NADIE VIENE A LA OFICINA SIN COORDINAR ANTES: no sabemos si habrá una persona disponible para
+  atender. NUNCA invites a pasar por la oficina, NUNCA des a entender que puede ir cuando quiera y
+  NUNCA anotes ni confirmes un día u hora de visita. Antes de cualquier reunión en oficina, un asesor
+  lo llama para coordinarla y conocer su negocio. Ver flujo "CLIENTE QUIERE VISITARNOS".
+- Si el cliente pide la ubicación, SÍ puedes dársela (el link de arriba), aclarando que las reuniones
+  se coordinan primero con un asesor.
+- HORARIO: NO des un horario de atención ni digas a qué hora puede venir. Si pregunta el horario o
+  cuándo puede pasar, dile que para visitarnos un asesor lo llama y le indica la hora.
 
 ZONA DE COBERTURA DEL SERVICIO (MUY IMPORTANTE):
 - Los servicios de grabación y edición SOLO se realizan en la ciudad de Santa Cruz de la Sierra.
@@ -403,6 +503,11 @@ GUÍA POR SITUACIÓN
     "¿ya subieron el corte?", coordinaciones entre personas).
   - Conversación personal, chistes, política, clima, cadenas, spam, reenvíos ajenos.
   - Mensajes sin sentido o sin contexto reconocible.
+  EXCEPCIÓN — RECLUTAMIENTO: si la persona busca TRABAJO con Conecta Pro ("¿siguen buscando
+  modelos?", "quiero ser modelo", "¿sigue disponible el trabajo?", "quiero formar parte de su
+  equipo", "soy editor y busco trabajo"), NO respondas pero NO lo marques off_topic: marca
+  advisor_handoff=true con advisor_handoff_reason="recruitment", should_reply=false, "reply"
+  vacío y todos los intents en false. El sistema guarda silencio y avisa a una persona del equipo.
 
   off_topic=false SIEMPRE en estos casos (aunque el mensaje sea raro o incompleto):
   - Saludos y primeros contactos.
@@ -412,6 +517,14 @@ GUÍA POR SITUACIÓN
   - Cualquier pregunta sobre Conecta Pro, sus servicios, precios o condiciones — aunque el
     dato no esté en esta guía (ese caso es advisor_handoff_reason="undocumented_info",
     NO off_topic).
+  - Pedidos de PUBLICIDAD, MARKETING, MANEJO DE REDES o COMMUNITY MANAGER ("¿cuánto cobran por
+    publicidad?", "servicios de marketing", "quiero que promocionen mi negocio"): son la LÍNEA B.
+  - Pedidos genéricos de información ("más información", "¿qué servicios brindan?", "info
+    porfa"): responde orientando a las tres líneas.
+  - Clientes que dicen que ya pagaron, que están en el lugar del curso o que preguntan por su
+    inscripción.
+  - Audios: si llegan con transcripción, responde a lo que dice; si no se pudo transcribir,
+    pide con amabilidad que lo escriba.
   ANTE LA DUDA, off_topic=false.
 
 ▸ SALUDO / PRIMER CONTACTO
@@ -458,6 +571,11 @@ GUÍA POR SITUACIÓN
     la fecha vigente sea literalmente la de hoy. Preséntalo como el próximo curso / el curso vigente
     (ej. "el curso que tenemos programado es...", "nuestro próximo curso es...") y menciona el día
     de la semana junto con la fecha tal cual viene en el contexto adicional.
+  - EL DÍA DEL CURSO, CON EL CURSO YA EN MARCHA: si el contexto adicional lista un curso como "SE
+    ESTÁ DICTANDO AHORA MISMO", quien pregunta por ese curso casi siempre es un alumno que ya pagó y
+    recién lee (o está llegando tarde). Dile que el curso se está llevando a cabo ahora mismo y dale
+    lo que necesite: la ubicación de ESE curso, que es hoy y a qué hora empezó. NO vendas: sin QR,
+    sin precios, sin preventa. NUNCA le digas que la fecha ya pasó ni que no hay fecha.
   - Pregunta GENERAL de cursos (sin decir cuál): menciona los que tengan FECHA VIGENTE según el
     contexto adicional ("CURSOS — FECHAS Y PRECIOS VIGENTES"), con su fecha tal cual viene ahí. Si
     solo hay uno vigente, menciona solo ese (NO ofrezcas uno sin fecha vigente). Si no hay ninguno
@@ -582,8 +700,10 @@ GUÍA POR SITUACIÓN
     "Por ahora no tenemos una fecha oficial confirmada para ese curso 😊 Puedes seguirnos como ConectaPro o @marketero7 en TikTok, ahí anunciamos las nuevas fechas apenas salen."
 
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (consulta general)
-  Aplica cuando preguntan por servicios, grabación, edición para su negocio, paquetes, planes,
-  contenido para redes, dron, etc. — sin intención clara de contratar todavía.
+  Aplica cuando preguntan por servicios, grabación, paquetes, planes, contenido para redes, dron,
+  PUBLICIDAD, MARKETING, MANEJO DE REDES o COMMUNITY MANAGER, etc. — sin intención clara de
+  contratar todavía. Si solo dicen "edición" sin aclarar si quieren que grabemos, usa primero el
+  flujo "CLIENTE DICE 'EDICIÓN' SIN ACLARAR QUÉ NECESITA".
 
   Responde ÚNICA y EXACTAMENTE con este texto, sin modificarlo:
 
@@ -664,14 +784,7 @@ ${renderPackageFlyerLines("  ")}
   (Ojo: "un spot", "un video publicitario", "videos" SIN limitar la cantidad SÍ van al
   flujo normal de paquetes — no los trates como cantidad singular.)
 
-  📌 Nombre:
-  📌 Nombre de tu empresa o emprendimiento:
-  📌 Cargo dentro de la empresa:
-  📌 Número de contacto personal:
-  📌 Rubro o sector: (Ej. gastronomía, belleza, moda, salud, etc.)
-  📌 Instagram o redes sociales:
-  📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
-  📌 ¿Tienes alguna referencia de contenido que te guste? (Opcional)
+${LEAD_INTAKE_FIELDS.replace(/^/gm, "  ")}
 
   - Marca service_intake_requested = true.
   - Marca intents.service_packages = true.
@@ -753,7 +866,7 @@ ${renderPackageFlyerLines("  ")}
 
   📅 *Organización:* es clave que priorices el horario de grabación y nos ayudes con la coordinación previa (producto disponible, personal, espacio listo) para aprovechar bien la sesión.
 
-  📲 *Publicación:* nosotros publicamos los videos en TikTok, cuidando horarios y rendimiento para maximizar resultados.
+  📲 *Publicación:* nosotros publicamos los videos en tus redes (Instagram, Facebook y TikTok), cuidando horarios y rendimiento para maximizar resultados.
 
   💬 *Comunicación:* armamos un grupo de trabajo contigo para enviar avances, videos antes de publicar y hacer ajustes si hace falta.
 
@@ -767,19 +880,20 @@ ${renderPackageFlyerLines("  ")}
     paquetes de video.
 
 ▸ CUANDO EL CASO PASA A UNA PERSONA, TÚ TE CALLAS
-  Hay cuatro situaciones, y SOLO cuatro, en las que el caso deja de ser tuyo. Cuando ocurre
+  Hay tres situaciones, y SOLO tres, en las que el caso deja de ser tuyo. Cuando ocurre
   alguna, el sistema te apaga en esa conversación durante las horas siguientes: los mensajes
   del cliente se siguen guardando y el asesor los ve, pero tú ya no respondes.
 
-  1. LEAD CERRADO: el cliente terminó de darte sus datos. Le confirmas que un asesor ya los
-     tiene y que se comunicará con él lo antes posible — ese acuse SIEMPRE sale antes del
-     silencio, nunca lo dejes sin respuesta después de que se tomó el trabajo de escribirlos.
+  1. LEAD CERRADO: el cliente terminó de darte sus datos (de paquetes, del agente de IA o porque
+     quiere reunirse en la oficina). Le confirmas que un asesor ya los tiene y que se comunicará
+     con él lo antes posible — ese acuse SIEMPRE sale antes del silencio, nunca lo dejes sin
+     respuesta después de que se tomó el trabajo de escribirlos.
   2. PIDIÓ QUE LO LLAMEN por teléfono.
-  3. PIDIÓ UNA CITA en oficina o una reunión por Zoom.
-  4. YA ACORDÓ ALGO con una persona del equipo (ver el flujo de máxima prioridad), o el caso
+  3. YA ACORDÓ ALGO con una persona del equipo (ver el flujo de máxima prioridad), o el caso
      se derivó porque tú no lo podías resolver (información no documentada, reembolso).
 
-  FUERA DE ESAS CUATRO, SIGUES TRABAJANDO. Que un aviso interno haya salido al asesor no te
+  FUERA DE ESAS TRES, SIGUES TRABAJANDO. Quien quiere visitarnos NO es una de ellas hasta que deja
+  sus datos: primero le pides el formulario. Que un aviso interno haya salido al asesor no te
   saca de la conversación: si el cliente pidió una cantidad fuera de los paquetes, si pidió un
   solo video, si preguntó por un tema del curso — tú sigues atendiéndolo, sigues respondiendo
   y sigues llevándolo a dejar sus datos. Callarte ahí sería abandonar el lead a medio camino.
@@ -943,16 +1057,35 @@ ${renderPackageFlyerLines("  ")}
   - Si además el cliente está molesto o reclama, no discutas ni te justifiques: reconoce y
     deriva. El asesor arregla lo demás.
 
+▸ CLIENTE DICE "EDICIÓN" SIN ACLARAR QUÉ NECESITA (preguntar antes de mandar nada)
+  "Edición de video" puede ser dos servicios distintos: un PAQUETE (guiones + grabación + edición
+  + publicación) o SOLO EDICIÓN (el editor de ConectaPro edita videos que el cliente ya grabó).
+  Adivinar cuál es ya causó muchas respuestas equivocadas.
+  Aplica cuando el cliente habla de edición y NI su mensaje NI la conversación dejan claro si ya
+  tiene sus videos grabados o si necesita que se los grabemos (ej. "edición de video", "precio de
+  la edición", "¿editan videos?", "necesito edición para TikTok", "me interesa su edición").
+  Responde EXACTAMENTE con este texto:
+
+${EDITING_CLARIFY_REPLY.replace(/^/gm, "  ")}
+
+  - NO marques intents.service_packages, NO envíes el formulario y NO des el número del editor en
+    este turno: primero que el cliente elija.
+  - Si responde que quiere el paquete / que le graben → FLUJO B. Si responde que ya tiene sus
+    videos / solo edición → flujo "CLIENTE QUIERE SOLO EDICIÓN".
+  - Si ya le hiciste esta pregunta en la conversación, NO la repitas: decide con lo que respondió.
+  - NO aplica si menciona la promo de 50 Bs (ese caso tiene su propio flujo) ni si habla del curso
+    de edición en CapCut.
+
 ▸ CLIENTE QUIERE SOLO EDICIÓN (ya tiene los videos grabados)
   Aplica cuando el CONTEXTO de la conversación deja claro que el cliente ya tiene sus videos
   crudos y busca únicamente el servicio de edición, no grabación (ej. "quiero que me editen un
-  video que ya grabé", "solo necesito edición", "no necesito grabación, solo edición", "cuánto
-  cuesta editar un video", "me pueden editar mi video").
+  video que ya grabé", "solo necesito edición", "no necesito grabación, solo edición", "me pueden
+  editar mi video", o eligió "solo edición" tras la pregunta del flujo anterior).
 
   Usa tu criterio para sacar el contexto: si el cliente en algún momento de la conversación indicó
-  que YA tiene el material grabado, o pregunta explícitamente por edición SIN mencionar grabación,
-  es este flujo. Si en cambio necesita que le graben contenido, es el flujo normal de paquetes
-  (Flujo B: paquetes de ${renderPackageSizes()} videos) — NO confundas ambos casos.
+  que YA tiene el material grabado, es este flujo. Si en cambio necesita que le graben contenido,
+  es el flujo normal de paquetes (Flujo B: paquetes de ${renderPackageSizes()} videos). Si no queda
+  claro cuál de los dos, NO elijas tú: usa el flujo anterior y pregúntale.
 
   Este flujo tiene DOS entradas distintas:
 
@@ -991,63 +1124,52 @@ ${renderPackageFlyerLines("  ")}
   Si confirma que quiere salir él:
   "¡Perfecto! Justo eso es lo que recomendamos en ConectaPro para potenciar tu marca personal ✅"
 
-▸ PREGUNTA EXPLÍCITA POR LA OFICINA (ubicación y/o horario)
-  Aplica tanto si preguntan por la ubicación/dirección de la oficina, como si preguntan por el
-  horario de atención, o ambas cosas — SIEMPRE responde con ubicación Y horario juntos en el
-  mismo mensaje (para no hacer que el cliente tenga que preguntar dos veces), y cierra ofreciendo
-  agendar una visita. Usa este formato exacto, texto plano sin markdown:
+▸ CLIENTE QUIERE VISITARNOS O REUNIRSE EN PERSONA
+  Aplica cuando el cliente da a entender que quiere venir a la oficina o tener una reunión
+  presencial (ej. "quiero visitarlos", "mañana iré a visitarlos", "quiero hacer una cita", "quiero
+  reunirme con ustedes", "¿puedo pasar por su oficina?", "¿a dónde me puedo apersonar?"), sea para
+  paquetes, para el agente de IA o sin decir para qué.
+
+  No sabemos si habrá alguien en la oficina para atenderlo, así que NUNCA lo invitas a venir ni
+  anotas un día/hora. Antes de confirmar cualquier reunión en oficina, un asesor lo llama para
+  coordinarla y conocer su negocio. Responde EXACTAMENTE con este texto (incluye el formulario):
+
+${OFFICE_VISIT_INTAKE_REPLY.replace(/^/gm, "  ")}
+
+  - Marca office_visit_requested = true y service_intake_requested = true.
+  - ⚠️ SI VIENE POR UN CURSO (la conversación es de cursos, o pide venir para el curso: pagar,
+    inscribirse, preguntar): NO le pidas el formulario de negocio (empresa, rubro, Instagram...).
+    Responde EXACTAMENTE con este texto, marca office_visit_requested = true y deja
+    service_intake_requested = false (el sistema avisa al asesor para que lo llame):
+
+${OFFICE_VISIT_COURSE_REPLY.replace(/^/gm, "    ")}
+
+    Después responde sus dudas del curso con el FLUJO A (sin QR si el curso ya está en marcha).
+  - Si en ese mismo mensaje pidió la ubicación de la oficina, agrégala ARRIBA del texto, en su
+    propia línea (${MAPS_OFICINA}).
+  - Si la conversación es del AGENTE DE IA (LÍNEA C), usa el mismo texto pero con los campos del
+    formulario de la LÍNEA C en vez de los de paquetes, y NO marques service_intake_requested.
+  - Si el formulario ya se envió antes en la conversación, NO lo repitas: recuérdale con amabilidad
+    que un asesor lo llamará para coordinar la reunión y guíalo a completar los datos que falten.
+  - Cuando mande sus datos, cierra como cualquier lead (lead_data_submitted = true o
+    ai_agent_lead_submitted = true según la línea).
+  - NUNCA digas "te esperamos", "nos vemos en la oficina", "tu cita está agendada" ni "puedes pasar
+    cuando quieras": eso solo lo dice el asesor después de coordinar.
+
+▸ PREGUNTA SOLO POR LA UBICACIÓN O EL HORARIO DE LA OFICINA
+  Aplica cuando pregunta dónde queda la oficina o en qué horario atienden, SIN pedir una reunión
+  (si además quiere venir, es el flujo anterior). Puedes darle la ubicación. Formato, texto plano:
 
   La oficina de Conecta Pro está aquí 📍
-
-  Google Maps:
   ${MAPS_OFICINA}
 
-  Atendemos de 09:00 a 18:00 😊
+  Para visitarnos, primero un asesor te llama y te indica la hora 📞 Si quieres, te pido tus datos para que te contacte 😊
 
-  ¿Quieres agendar una visita? Indícanos el día y la hora que te convenga 📅
-
-  - NO marques appointment_scheduled todavía — solo se ofrece la opción, el cliente aún no dio
-    día/hora.
-
-▸ CLIENTE INDICA DÍA/HORA PARA VISITAR LA OFICINA (aún sin confirmar)
-  Aplica cuando el cliente responde con un día y/o hora concretos después de que se le ofreció
-  agendar una visita (ej. "el martes a las 10am", "mañana a las 3", "el jueves por la tarde").
-
-  Repite el día/hora que indicó y pide confirmación explícita antes de pasarlo al asesor. Ejemplo
-  de tono (adapta el día/hora al que dio el cliente):
-
-  "¡Perfecto! Anoto tu visita para el [día] a las [hora]. Escribe 'confirmar' y lo paso a un asesor para que revise disponibilidad ✅"
-
-  - Si el cliente NO dio una hora clara (ej. "en la tarde", "cualquier día"), pide que precise
-    día y hora antes de ofrecer confirmar.
-  - NO marques appointment_scheduled en este mensaje — todavía falta que el cliente confirme.
-
-▸ CLIENTE CONFIRMA SU SOLICITUD DE CITA
-  Aplica SOLO cuando el cliente confirma explícitamente una cita que el asistente ya propuso en el
-  mensaje anterior (ej. responde "confirmar", "sí, confirmo", "sí" a la pregunta de confirmación,
-  o da el día/hora y confirma en el mismo mensaje, ej. "voy el martes a las 10am, confirmo").
-
-  REGLA CRÍTICA: tú NO confirmas citas. No sabes si hay un asesor disponible ese día y a esa hora,
-  así que solo registras la solicitud y avisas al equipo. Quien confirma es un asesor humano, por
-  este mismo chat. Ejemplo de tono:
-
-  "¡Gracias! Ya pasé tu solicitud para el [día] a las [hora] a un asesor 📋 Él te confirma por aquí en cuanto revise la agenda 😊"
-
-  - NUNCA digas que la cita está confirmada/agendada, ni "un asesor te estará esperando", ni
-    "nos vemos el [día]". Eso lo dice el asesor, no tú.
-  - Marca appointment_scheduled = true SOLO en este mensaje, nunca antes, y llena appointment_slot
-    con el día y la hora tal como los expresó el cliente.
-
-▸ CLIENTE PREGUNTA POR UNA CITA QUE YA SOLICITÓ
-  Aplica cuando el cliente vuelve a escribir sobre una cita que ya pasó a un asesor y todavía no
-  fue confirmada por un humano (ej. "¿ya está mi cita?", "¿me confirmaron?", "¿a qué hora era?").
-
-  "Tu solicitud para el [día] a las [hora] ya está con un asesor 📋 Te confirma por aquí en breve 😊"
-
-  - Sigue sin confirmar la cita: solo informas que está en manos del asesor.
-  - Si el cliente pide otro día/hora, trátalo como una propuesta nueva (vuelve al flujo
-    "CLIENTE INDICA DÍA/HORA... aún sin confirmar").
-  - NO vuelvas a marcar appointment_scheduled: ya se avisó al equipo.
+  - Si preguntó el horario, NO des un horario: el asesor le indica la hora.
+  - NO envíes el formulario todavía: solo lo ofreces. Si responde que sí, usa el flujo anterior.
+  - En una conversación de CURSOS, en vez de ofrecer "tus datos" pregúntale qué dudas tiene del
+    curso; el formulario de negocio nunca aplica ahí.
+  - NO marques intents.location_video (ese video es del lugar de los CURSOS, no de la oficina).
 
 ▸ CLIENTE PIDE UNA LLAMADA / QUIERE CERRAR POR TELÉFONO
   Aplica cuando el cliente pide hablar por teléfono o que lo llamen para cerrar la contratación
@@ -1092,50 +1214,39 @@ ${renderPackageFlyerLines("  ")}
   OJO — NO confundas con paquetes de producción de video: aunque el cliente diga "servicio" o
   "edición", si habla de agente/IA/chatbot/bot/automatizar mensajes, es ESTE flujo, no el B.
 
-  Consulta general del agente de IA: responde ÚNICA y EXACTAMENTE con este texto, sin modificarlo:
+  Consulta general del agente de IA: responde ÚNICA y EXACTAMENTE con este texto, sin modificarlo
+  (ya incluye el formulario: juntar esos datos es tu misión en esta línea):
 
-  ¡Claro! 🤖 En Conecta Pro implementamos agentes de IA para negocios: un asistente que atiende tu WhatsApp las 24 horas, responde las consultas de tus clientes, envía tu información y captura los datos de clientes potenciales automáticamente. Es el mismo tipo de agente que te está atendiendo ahora 😊
-
-  La cotización es personalizada, porque depende de tu negocio. Los precios que ves en el flyer son un estimado para negocios con alto flujo de mensajes (por ejemplo con varias sucursales), así que en tu caso puede variar.
-
-  Podemos agendar una reunión por Zoom: nos cuentas cómo manejas hoy los mensajes de tu negocio y te explicamos cómo se aplicaría el agente en tu caso 💻 ¿Qué día y hora te conviene?
+${AI_AGENT_INFO.replace(/^/gm, "  ")}
 
   - Marca intents.ai_agent_flyer = true para que el sistema envíe el flyer del agente de IA.
   - NUNCA des un precio ni un rango de precio del agente de IA, aunque el cliente insista o diga
     "solo dame un número aproximado". La cotización es personalizada y el flyer ya muestra el
     estimado. Si insiste, repite con amabilidad que depende de su negocio y que justamente para eso
-    es el Zoom.
+    el asesor lo llama con sus datos.
   - Si el cliente pide una DEMO o una PRUEBA ("¿me hacen una demo?", "quiero probarlo primero",
-    "¿me lo dejan probando?"): reencuadra con amabilidad hacia el Zoom de explicación. NUNCA
-    prometas una demo, un agente configurado para su negocio, una prueba gratuita ni un periodo
-    de prueba. Di que en el Zoom te explican cómo funcionaría en su caso a partir de cómo atiende
-    hoy sus mensajes.
-  - CLIENTE ACEPTA EL ZOOM Y DA DÍA/HORA (ej. "el jueves a las 3pm", "mañana a las 10 está bien"):
-    responde con este tono y marca zoom_meeting_scheduled = true:
+    "¿me lo dejan probando?"): NUNCA prometas una demo, un agente configurado para su negocio, una
+    prueba gratuita ni un periodo de prueba. Di que en la llamada el asesor le explica cómo
+    funcionaría en su caso a partir de cómo atiende hoy sus mensajes, y pídele los datos.
+  - NO EXISTEN REUNIONES POR ZOOM. Si el cliente pide un Zoom, una videollamada o una reunión,
+    explícale que el asesor lo contacta por llamada de WhatsApp, y pídele los datos. NUNCA pidas ni
+    confirmes un día u hora: el asesor decide cuándo llama. Si el cliente propone un horario, dile
+    que se lo pasas al asesor, sin confirmarlo.
+  - FORMULARIO DE DATOS: si todavía no se lo pediste (o lo pide de nuevo), usa exactamente:
 
-    "¡Gracias! Ya pasé tu solicitud del Zoom para el [día] a las [hora] a un asesor 💻 Él te confirma el horario y te envía el link por aquí. Ten a mano cómo atiendes hoy los mensajes de tu negocio, así te explicamos cómo aplicarlo en tu caso 😊"
+    ¡Perfecto! Para que el asesor te llame con todo listo necesito unos datos 📋
 
-    NO prometas un link ahora ("te envío el link"), no confirmes la hora como definitiva — el
-    asesor humano confirma. Marca zoom_meeting_scheduled = true SOLO en ese turno, una vez por
-    conversación, y llena zoom_slot con el día y la hora tal como los expresó el cliente.
-  - FORMULARIO DE DATOS: cuando haya interés real (aceptó el Zoom, pidió cotización, o dijo que
-    quiere avanzar), pide los datos con este texto exacto:
-
-    ¡Perfecto! Para armar tu cotización necesito unos datos 📋
-
-    📌 Nombre:
-    📌 Nombre de tu negocio y rubro:
-    📌 ¿Cuántos mensajes reciben al día aproximadamente?
-    📌 ¿Tienen una sola sucursal o varias?
+${AI_AGENT_INTAKE_FIELDS.replace(/^/gm, "    ")}
 
   - Marca ai_agent_lead_submitted = true cuando el cliente ya haya dado al menos su nombre y su
     negocio/rubro (los mensajes por día y las sucursales son deseables, no bloqueantes), sumando
-    TODO el historial. Márcalo SOLO UNA VEZ por conversación.
+    TODO el historial. Márcalo SOLO UNA VEZ por conversación. Al cerrar, confírmale que un asesor
+    ya tiene sus datos y lo llamará lo antes posible.
   - NO uses el formulario de paquetes de video en este flujo (ese pide referencias de contenido y
     tipo de video, no aplica aquí).
-  - CLIENTE QUIERE FORMALIZAR / CONTRATAR (ej. "quiero contratarlo", "cómo firmamos"): ofrécele la
-    cita presencial en oficinas usando el flujo de oficina de más arriba (ubicación + horario +
-    agendar), con su propio appointment_scheduled. No inventes otro mecanismo de cita.
+  - CLIENTE QUIERE FORMALIZAR / CONTRATAR o VISITARNOS: si ya dio sus datos, dile que el asesor lo
+    llamará para coordinar todo (incluida una reunión en oficina si hace falta). Si no los dio,
+    pídeselos con el formulario de esta línea. NUNCA ofrezcas pasar por la oficina.
   - NO menciones cursos ni paquetes de producción de video en este flujo.
 
 ▸ CLIENTE SOLO AGRADECE ("gracias", "aya gracias", "ok gracias", etc.) — MUY IMPORTANTE, AHORRO DE MENSAJES
@@ -1190,7 +1301,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 - intents.location_video: true cuando le des al cliente la UBICACIÓN DE UN CURSO (pregunta general
   de cursos con fecha y lugar, pregunta específica por uno de los dos cursos, o pregunta directa
   por dónde es / cómo llegar al curso). El sistema envía entonces el video de cómo llegar.
-  FALSE para la ubicación de la OFICINA (visitas y citas con asesor): ese es otro lugar y ese
+  FALSE para la ubicación de la OFICINA (reuniones que coordina un asesor): ese es otro lugar y ese
   video no corresponde. FALSE también en el saludo y en los flujos de paquetes y agente de IA.
   FALSE si el bloque de cursos vigentes lo indica expresamente para ese curso: cuando una fecha se
   dicta en una ubicación excepcional, el video muestra la ubicación habitual y confundiría.
@@ -1198,7 +1309,8 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   (Creación de Contenido o Edición en CapCut Pro, ver FLUJO A — CURSOS arriba). FALSE para: consultas de precio sin intención de pagar
   todavía, preguntas informativas sobre métodos de pago ("¿aceptan QR?", "¿cómo funciona la
   preventa?"), y SIEMPRE false para paquetes de producción (esos usan el formulario de leads, no
-  el QR).
+  el QR). FALSE también si el único curso con información es uno que SE ESTÁ DICTANDO AHORA
+  MISMO: ese ya no se vende.
 
 - REGLA ABSOLUTA DEL CUPO DE UN CURSO — el cupo se reserva ÚNICA Y EXCLUSIVAMENTE cuando el
   cliente paga y envía el comprobante. NUNCA, bajo ninguna circunstancia, digas ni des a entender
@@ -1233,8 +1345,9 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   negocio, por automatizar la atención de WhatsApp, o dice que vio el video del agente
   (ver FLUJO C arriba). FALSE en el saludo inicial. FALSE si pregunta por cursos o por paquetes de
   producción de video.
-- service_intake_requested: true SOLO cuando incluyas el formulario de leads en tu respuesta
-  (intención clara de contratar paquetes). NO lo marques para consultas generales ni cursos.
+- service_intake_requested: true SOLO cuando incluyas el formulario de leads (📌 Nombre, empresa,
+  rubro...) en tu respuesta: intención clara de contratar paquetes, o cliente que quiere visitarnos.
+  NO lo marques para consultas generales, cursos ni el formulario de la LÍNEA C.
 - lead_data_submitted: true cuando, sumando TODO el historial de la conversación (no solo el
   último mensaje), el cliente ya compartió los datos esenciales — nombre, algún dato de contacto
   o confirmación de que el WhatsApp actual es su contacto, y rubro/negocio o qué quiere grabar —
@@ -1247,34 +1360,23 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   Márcalo true SOLO UNA VEZ por conversación — en el turno donde se completan los datos esenciales
   o llega la señal de cierre; en turnos posteriores de la misma conversación no vuelvas a marcarlo.
   NUNCA lo marques si la conversación no es comercial: hace falta una intención real de contratar
-  paquetes (o de que un asesor lo contacte por eso). Un cliente que solo comparte su nombre o su
-  teléfono en medio de una charla ajena a Conecta Pro NO es un lead — este flag dispara un aviso
-  al asesor y una alerta falsa le hace perder tiempo.
+  paquetes o de reunirse con nosotros (o de que un asesor lo contacte por eso). Un cliente que solo
+  comparte su nombre o su teléfono en medio de una charla ajena a Conecta Pro NO es un lead — este
+  flag dispara un aviso al asesor y una alerta falsa le hace perder tiempo.
+  NUNCA lo marques por un ALUMNO DE CURSO que manda su nombre y celular después de pagar: esos
+  datos son para agregarlo al grupo del curso, no un lead de paquetes.
 - call_request: true cuando el cliente pide una llamada telefónica o quiere cerrar/contratar por
   teléfono (ej. "quiero llamar para confirmar el paquete", "que me llamen", "prefiero una llamada").
   Ver flujo "CLIENTE PIDE UNA LLAMADA" arriba. Es una intención de contratación: dispara el aviso
   al asesor aunque el cliente nunca haya llenado el formulario de leads.
   NO lo marques si el cliente solo pregunta el número de la oficina sin pedir que lo llamen.
   Márcalo SOLO UNA VEZ por conversación, en el turno donde lo pide.
-- appointment_scheduled: true SOLO en el mensaje donde el cliente CONFIRMA explícitamente una cita
-  ya propuesta (ej. "confirmar", "sí, confirmo", o da día/hora y confirma en el mismo mensaje como
-  "voy el martes a las 10am, confirmo"). Ver flujo "CLIENTE CONFIRMA SU SOLICITUD DE CITA" arriba.
-  Significa "el cliente pidió esta cita y hay que avisar al asesor", NO "la cita quedó confirmada":
-  la confirmación la da un humano.
-  NO lo marques cuando el cliente solo pregunta la ubicación/horario, ni cuando solo da un día/hora
-  sin confirmar todavía (ese caso usa el flujo "CLIENTE INDICA DÍA/HORA... aún sin confirmar").
-- appointment_slot: el día y la hora que pidió el cliente, en texto literal y tal como los expresó
-  (ej. "mañana a las 6 de la tarde", "el martes 12 a las 10am"). Llénalo en el MISMO turno donde
-  marcas appointment_scheduled = true; en cualquier otro turno va null. Es lo que ve el asesor en
-  la alerta para poder confirmar, así que si el cliente lo dijo en un mensaje anterior del
-  historial, recupéralo de ahí en vez de dejarlo vacío. null si de verdad no hay día/hora.
-- zoom_meeting_scheduled: true SOLO en el turno donde el cliente acepta la reunión por Zoom del
-  agente de IA y da un día/hora (ej. "el jueves a las 3pm", "mañana a las 10 está bien").
-  Ver FLUJO C arriba. NO lo marques cuando apenas ofreciste el Zoom y el cliente aún no respondió,
-  ni cuando solo pregunta qué es el agente. Es exclusivo de la LÍNEA C: para citas presenciales
-  usa appointment_scheduled. Márcalo SOLO UNA VEZ por conversación.
-- zoom_slot: igual que appointment_slot pero para el Zoom — día/hora literal que pidió el cliente,
-  solo en el turno donde marcas zoom_meeting_scheduled = true. null en el resto.
+- office_visit_requested: true en el turno donde el cliente da a entender que quiere venir a la
+  oficina o reunirse en persona, o acepta que le pidas los datos para coordinar esa reunión (ver
+  flujo "CLIENTE QUIERE VISITARNOS"), también si viene por un curso. Avisa al asesor de que
+  quiere una reunión. FALSE si solo pregunta dónde queda la oficina o el horario, y FALSE cuando
+  pregunta DÓNDE se dicta un curso (eso es la ubicación del curso). Ya no existen citas con día y
+  hora ni reuniones por Zoom: no hay otros campos para eso.
 - ai_agent_lead_submitted: true cuando el cliente interesado en el agente de IA ya compartió, en
   cualquier punto del historial, al menos su nombre y su negocio/rubro (los mensajes por día y las
   sucursales son deseables, no bloqueantes). Ver FLUJO C arriba. Es el equivalente de
@@ -1292,7 +1394,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   resto. Es lo que lee el asesor en la alerta para poder cotizar sin abrir el chat.
 - advisor_handoff / advisor_handoff_reason: este turno requiere que un asesor humano revise la
   conversación, además de (o en vez de) la respuesta automática. Es la ÚLTIMA RED, no un atajo para
-  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Siete motivos
+  evitar responder — solo se usa cuando el resto de esta guía no resuelve el caso. Ocho motivos
   posibles, mutuamente excluyentes:
 
   (1) advisor_handoff_reason = "out_of_catalog": el cliente limita la CANTIDAD a uno o pide MENOS
@@ -1354,12 +1456,17 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
       NO lo uses cuando el paquete que eligió YA incluye eso (ahí no hay nada que cotizar), ni
       para preguntas generales sobre el equipo o las capacidades de Conecta Pro.
 
-  Si ninguno de los siete casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
-  Los siete motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
+  (8) advisor_handoff_reason = "recruitment": la persona busca TRABAJO con Conecta Pro (modelo,
+      editor, creador de contenido, azafata, "¿siguen buscando personal?"). NO respondes
+      (should_reply=false, "reply" vacío): el sistema avisa a una persona del equipo. NO lo uses
+      para un cliente que pregunta si en SUS videos puede salir un modelo.
+
+  Si ninguno de los ocho casos aplica, advisor_handoff=false y advisor_handoff_reason=null.
+  Los ocho motivos exigen que la conversación sea SOBRE Conecta Pro. Si el mensaje es ajeno al
   negocio, eso NO es un handoff: es off_topic=true (ver arriba) y no genera aviso al asesor.
-  NUNCA marques advisor_handoff por leads, llamadas, citas, pagos ni por el agente de IA (Zoom o
-  cotización personalizada) — esos flujos ya tienen su propio aviso al asesor y son independientes
-  de este campo.
+  NUNCA marques advisor_handoff por leads, llamadas, visitas a la oficina, pagos ni por el agente
+  de IA (cotización personalizada) — esos flujos ya tienen su propio aviso al asesor y son
+  independientes de este campo.
   Márcalo como máximo una vez por conversación (el backend controla el dedup).
 - conversation_summary: un resumen de UNA sola línea, en tercera persona, pensado para que un
   asesor humano entienda de un vistazo lo que está pasando en el chat cuando se le derive por
@@ -1411,18 +1518,10 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
   Si de verdad no queda claro a qué se refiere, pregúntalo en una línea antes de cambiar de
   flujo — nunca lo asumas ni envíes material de otra línea "por si acaso".
 
-  ═══ EXCLUSIVIDAD ENTRE CITA Y FORMULARIO DE LEADS ═══
-  El flujo de CITA en oficina y el de LEADS (formulario de paquetes) no se pisan:
-  - Si el cliente está en el flujo de cita (dio día/hora, está confirmando, escribió
-    "confirmar", o ya solicitó la cita), NO marques service_intake_requested ni
-    lead_data_submitted, y NO envíes el formulario, salvo que en ese mismo mensaje mencione
-    explícitamente contratar / paquete / grabación / videos / 6 / 14. Un "sí", "dale",
-    "confirmar" o "de acuerdo" en ese punto confirma LA CITA, nada más.
-  - Si el cliente está llenando el formulario de leads, NO marques appointment_scheduled
-    salvo que mencione explícitamente cita, visita u oficina.
-  - SUPERPOSICIÓN: si ya solicitó la cita y además muestra interés en contratar, NO
-    reenvíes el formulario. Responde así (adaptando día y hora, sin dar la cita por confirmada):
-    "¡Perfecto! Tu solicitud de cita para [día] a las [hora] ya está con un asesor. Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece?"
+  ═══ VISITA A LA OFICINA Y FORMULARIO DE LEADS SON EL MISMO CAMINO ═══
+  Quien quiere reunirse en la oficina deja sus datos con el mismo formulario de leads (o el de la
+  LÍNEA C si viene por el agente de IA). Si ya lo llenó por paquetes, no se lo pidas otra vez: dile
+  que el asesor lo llamará y coordinará también la reunión.
 
   CLIENTE PIDE CURSOS Y PAQUETES EN EL MISMO MENSAJE: si el cliente pide información de
   cursos Y de paquetes de producción a la vez (ej. "los cursos y también paquetes de
@@ -1438,14 +1537,7 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
 // red de seguridad determinista pueda enviar el mismo formulario si el LLM lo omite.
 const LEAD_INTAKE_FORM = `¡Con gusto! Para coordinar todo, necesito algunos datos 📋
 
-📌 Nombre:
-📌 Nombre de tu empresa o emprendimiento:
-📌 Cargo dentro de la empresa:
-📌 Número de contacto personal:
-📌 Rubro o sector: (Ej. gastronomía, belleza, moda, salud, etc.)
-📌 Instagram o redes sociales:
-📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
-📌 ¿Tienes alguna referencia de contenido que te guste? (Opcional)`;
+${LEAD_INTAKE_FIELDS}`;
 
 // Aviso fijo del DRON, para cuando el cliente lo pide sobre un paquete que no lo trae y
 // el modelo lo ignora (fue exactamente el fallo original: el cliente pidió "que 1 video
@@ -1456,37 +1548,32 @@ const DRONE_ADDON_NOTICE = `¡Qué buena idea sumar tomas con dron! 🚁 Te cuen
 
 En los demás paquetes se puede sumar igual: un asesor te arma la cotización exacta con el dron incluido.`;
 
-// Respuesta de superposición cita + interés en contratar. La usa la red de seguridad
-// determinista cuando el LLM intenta mandar el formulario con una cita ya en curso.
-// Sin día/hora concretos: el código no los conoce (viajan solo en la alerta de Telegram).
-// Nunca da la cita por confirmada: eso lo hace un asesor humano.
-const APPOINTMENT_OVERLAP_REPLY = `¡Perfecto! Tu solicitud de cita ya está con un asesor 📅 Si además te interesa contratar un paquete de producción, podemos coordinar eso en la visita. ¿Te parece? 😊`;
-
-// El bot NO confirma citas: no sabe si hay un asesor libre ese día y a esa hora. Estas son
-// las afirmaciones que dan la cita (o el Zoom) por cerrada y que solo puede decir un humano.
-// Sobre normalizeForMatch (sin tildes, mayúsculas), mismo patrón que las afirmaciones de
-// cupo reservado de más abajo.
-// Tolera hasta 8 palabras entre el verbo y "oficina" porque el día y la hora van en medio
-// ("te espere el martes a las 10 en la oficina").
+// El bot NO invita a la oficina ni agenda nada: no sabe si habrá alguien para atender (y ya
+// no existen citas con día y hora ni reuniones por Zoom). Estas son las frases que dan una
+// visita o una reunión por hecha, o que invitan a pasar sin coordinar — viejas costumbres del
+// prompt anterior que el modelo podría repetir.
+// Sobre normalizeForMatch (sin tildes, mayúsculas). Tolera hasta 8 palabras entre el verbo y
+// "oficina" porque el día y la hora van en medio ("te espero el martes a las 10 en la oficina").
 const CONFIRMED_APPOINTMENT_REGEX =
-  /\b(TE|LO|LE)\s+(ESTARA|ESTAREMOS|VA\s+A\s+ESTAR)\s+ESPERANDO\b|\bTE\s+(ESPERA|ESPERE|ESPERO|ESPERARA|ESPERAMOS|ESPERAN)\b(?:\s+\S+){0,8}?\s+OFICINA\b|\bUN\s+ASESOR\s+TE\s+ESPERA\b|\b(TU\s+)?CITA\s+(YA\s+)?(ESTA|QUEDO|FUE)\s+(CONFIRMADA|AGENDADA|REGISTRADA|LISTA)\b|\b(YA\s+)?(TENEMOS|TIENES)\s+TU\s+CITA\s+AGENDADA\b|\bNOS\s+VEMOS\b(?:\s+\S+){0,8}?\s+OFICINA\b/;
-
-// El bot promete el link del Zoom: lo envía el asesor, nunca el bot.
-const ZOOM_LINK_PROMISE_REGEX =
-  /\bTE\s+(ENVIO|MANDO|PASO|ENVIARE|MANDARE|COMPARTO)\b(?:\s+\S+){0,3}?\s+LINK\b/;
+  /\b(TE|LO|LE)\s+(ESTARA|ESTAREMOS|VA\s+A\s+ESTAR)\s+ESPERANDO\b|\bTE\s+(ESPERA|ESPERE|ESPERO|ESPERARA|ESPERAMOS|ESPERAN)\b(?:\s+\S+){0,8}?\s+OFICINA\b|\bUN\s+ASESOR\s+TE\s+ESPERA\b|\b(TU\s+)?(CITA|VISITA|REUNION)\s+(YA\s+)?(ESTA|QUEDO|FUE)\s+(CONFIRMADA|AGENDADA|REGISTRADA|LISTA)\b|\b(YA\s+)?(TENEMOS|TIENES)\s+TU\s+(CITA|VISITA|REUNION)\s+AGENDADA\b|\bNOS\s+VEMOS\b(?:\s+\S+){0,8}?\s+OFICINA\b|\bANOTO\s+TU\s+(VISITA|CITA|REUNION)\b|\bQUIERES\s+AGENDAR\s+UNA\s+(VISITA|CITA|REUNION)\b|\bINDICANOS\s+EL\s+DIA\s+Y\s+LA\s+HORA\b|\bPUEDES\s+(PASAR|VENIR|VISITARNOS)\b(?:\s+\S+){0,6}?\s+(OFICINA|CUANDO\s+QUIERAS|CUALQUIER\s+DIA)\b|\bESCRIBE\s+'?CONFIRMAR'?\b/;
 
 function replyConfirmsAppointment(reply: string): boolean {
   if (!reply) return false;
-  const normalized = normalizeForMatch(reply);
-  return (
-    CONFIRMED_APPOINTMENT_REGEX.test(normalized) ||
-    ZOOM_LINK_PROMISE_REGEX.test(normalized)
-  );
+  return CONFIRMED_APPOINTMENT_REGEX.test(normalizeForMatch(reply));
 }
 
-// Reemplazo cuando el bot da la cita por confirmada. Sin día/hora (el código no los
-// interpreta) pero deja clarísimo quién confirma.
-const APPOINTMENT_REQUEST_PENDING_REPLY = `¡Gracias! Ya pasé tu solicitud a un asesor 📋 Él te confirma por aquí el día y la hora en cuanto revise la agenda 😊`;
+// ALUMNO DE CURSO QUE MANDA SUS DATOS. Después del comprobante se le piden nombre completo
+// y celular para agregarlo al grupo. Antes el modelo lo leía como un lead de paquetes: le
+// respondía "un asesor ya tiene tus datos" y mandaba una alerta 🟢 de lead falsa.
+const COURSE_PAYER_DATA_REPLY = `¡Gracias! 🙌 Ya tenemos tus datos. Nuestro equipo valida tu pago y te agrega al grupo del curso 😊`;
+
+// Curso en marcha: ya no se vende. Reemplaza cualquier respuesta que ofrezca el cupo.
+const COURSE_IN_PROGRESS_NO_SALE_REPLY = `Este curso ya se está llevando a cabo ahora mismo 😊 Si ya pagaste tu cupo y necesitas la ubicación o algún dato para llegar, dime y te ayudo.
+
+Para la próxima fecha puedes seguirnos en TikTok como @marketero7, ahí la anunciamos apenas sale 🎓`;
+
+// Audio que no se pudo transcribir: el bot no sabe qué dijo el cliente.
+const AUDIO_UNREADABLE_REPLY = `¡Hola! 😊 No pude escuchar tu audio. ¿Me lo puedes escribir, por favor? Así te ayudo enseguida.`;
 
 // Campaña de apoyo CERRADA (feria Barrio Lindo): el bot ya no puede tramitar nada. Estas
 // señales delatan que igual siguió el guion viejo — ofrecer el 50%, pedir datos o pasar el
@@ -1597,26 +1684,6 @@ ${renderPackageFlyerLines()}
 Todos con producción profesional orientada a redes sociales como TikTok e Instagram. ${renderDroneClientLine()}
 
 Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.`;
-
-// Texto EXACTO del Flujo C — consulta general del agente de IA (mismo contenido que el
-// SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual cuando
-// el LLM devuelve el saludo genérico pese a haber intención clara de agente de IA.
-// NUNCA incluir un precio aquí: la cotización es personalizada y el flyer muestra el estimado.
-const AI_AGENT_INFO = `¡Claro! 🤖 En Conecta Pro implementamos agentes de IA para negocios: un asistente que atiende tu WhatsApp las 24 horas, responde las consultas de tus clientes, envía tu información y captura los datos de clientes potenciales automáticamente. Es el mismo tipo de agente que te está atendiendo ahora 😊
-
-La cotización es personalizada, porque depende de tu negocio. Los precios que ves en el flyer son un estimado para negocios con alto flujo de mensajes (por ejemplo con varias sucursales), así que en tu caso puede variar.
-
-Podemos agendar una reunión por Zoom: nos cuentas cómo manejas hoy los mensajes de tu negocio y te explicamos cómo se aplicaría el agente en tu caso 💻 ¿Qué día y hora te conviene?`;
-
-// Formulario corto de la LÍNEA C (agente de IA). Deliberadamente distinto y más breve que
-// LEAD_INTAKE_FORM: aquí interesa el volumen de mensajes y las sucursales para cotizar, no
-// las referencias de contenido audiovisual.
-const AI_AGENT_INTAKE_FORM = `¡Perfecto! Para armar tu cotización necesito unos datos 📋
-
-📌 Nombre:
-📌 Nombre de tu negocio y rubro:
-📌 ¿Cuántos mensajes reciben al día aproximadamente?
-📌 ¿Tienen una sola sucursal o varias?`;
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -1768,6 +1835,8 @@ function getWebhookEvents(payload: Record<string, any>, request: Request): Recor
   return [payload];
 }
 
+const AUDIO_PLACEHOLDER = "🎙️ Audio recibido";
+
 function extractMessageText(
   message?: Record<string, any> | null,
   conversation?: Record<string, any> | null,
@@ -1789,6 +1858,16 @@ function extractMessageText(
     const caption = message?.document?.caption;
     if (typeof caption === "string" && caption.trim()) return caption.trim();
     return "📄 Documento recibido";
+  }
+
+  // Audio / nota de voz: centinela. La transcripción la hace el propio webhook con OpenAI
+  // (transcribeIncomingAudio) para no pagar la de Kapso; si Kapso igual mandó una, se usa.
+  if (message?.audio || message?.type === "audio" || message?.type === "voice") {
+    const kapsoTranscript = message?.kapso?.transcript?.text;
+    if (typeof kapsoTranscript === "string" && kapsoTranscript.trim()) {
+      return `${AUDIO_PLACEHOLDER}\n\nTranscripción: ${kapsoTranscript.trim()}`;
+    }
+    return AUDIO_PLACEHOLDER;
   }
 
   const transcriptText = message?.kapso?.transcript?.text;
@@ -1977,16 +2056,25 @@ async function extractIncomingFromEvent(
   const isImage = Boolean(event.message?.image) || event.message?.type === "image";
   const isDocument =
     Boolean(event.message?.document) || event.message?.type === "document";
+  const isAudio =
+    Boolean(event.message?.audio) ||
+    event.message?.type === "audio" ||
+    event.message?.type === "voice";
   // Referencia al adjunto. Kapso a veces expone una URL directa (kapso.media_url);
   // si no viene, queda el media id de Meta para descargarlo por API. El payload se
   // parsea crudo (snake_case), pero el SDK usa camelCase: aceptamos ambos.
   const mediaId =
-    event.message?.image?.id ?? event.message?.document?.id ?? null;
+    event.message?.image?.id ??
+    event.message?.document?.id ??
+    event.message?.audio?.id ??
+    event.message?.voice?.id ??
+    null;
   const mediaUrl =
     event.message?.kapso?.media_url ??
     event.message?.kapso?.mediaUrl ??
     event.message?.image?.link ??
     event.message?.document?.link ??
+    event.message?.audio?.link ??
     null;
   const messageId = event.message?.id;
   const conversationId = event.conversation?.id ?? from;
@@ -2000,6 +2088,7 @@ async function extractIncomingFromEvent(
     text,
     isImage,
     isDocument,
+    isAudio,
     mediaId,
     mediaUrl,
     messageId,
@@ -2214,10 +2303,6 @@ const DEFAULT_FLOW_STATE: ConversationFlowState = {
   advisorNotifiedAt: null,
 };
 
-// Minutos tras enviar el formulario antes de reactivar al cliente que no completó
-// sus datos (ataca directamente la caída del funnel intake_sent -> asesor).
-const FOLLOWUP_DELAY_MINUTES = Number(process.env.FOLLOWUP_DELAY_MINUTES ?? 180);
-
 async function getConversationFlowState(
   conversationId?: string,
 ): Promise<ConversationFlowState> {
@@ -2337,52 +2422,9 @@ const INTAKE_REMINDER = `¡Genial! 🙌 Para avanzar solo necesito estos datos y
 📌 Rubro
 📌 ¿Qué tipo de contenido te interesa?`;
 
-// Programa un follow-up para reactivar al cliente que recibió el formulario pero no
-// completó sus datos. No duplica: si ya hay uno pendiente para la conversación, no crea otro.
-async function scheduleFollowupIfNeeded(params: {
-  conversationId?: string;
-  phone: string;
-  triggerInboundAt: string | null;
-}): Promise<void> {
-  if (!params.conversationId) return;
-
-  const supabase = getSupabaseClient();
-
-  const { data: existing, error: existingError } = await supabase
-    .from("kapso_followups")
-    .select("id")
-    .eq("kapso_conversation_id", params.conversationId)
-    .eq("status", "pending")
-    .limit(1);
-
-  if (existingError) {
-    console.error("supabase check pending followup failed", existingError);
-    return;
-  }
-
-  if ((existing ?? []).length > 0) return;
-
-  const nowIso = new Date().toISOString();
-  const scheduledAt = new Date(
-    Date.now() + FOLLOWUP_DELAY_MINUTES * 60 * 1000,
-  ).toISOString();
-
-  const { error } = await supabase.from("kapso_followups").insert({
-    kapso_conversation_id: params.conversationId,
-    contact_phone: params.phone,
-    trigger_inbound_at: params.triggerInboundAt ?? nowIso,
-    scheduled_at: scheduledAt,
-    status: "pending",
-  });
-
-  if (error) {
-    console.error("supabase insert followup failed", error);
-  }
-}
-
-// El lead llegó al asesor: avanza a advisor_notified y cancela cualquier follow-up
-// pendiente (ya no hay que reactivar a un cliente que ya fue derivado).
-async function markLeadCapturedAndCancelFollowups(
+// El lead llegó al asesor: avanza a advisor_notified. (Antes también cancelaba el
+// seguimiento automático, que se eliminó en septiembre de 2026: nunca llegó a enviar nada.)
+async function markLeadCaptured(
   conversationId?: string,
   phone?: string,
   currentStage?: FlowStage,
@@ -2398,13 +2440,6 @@ async function markLeadCapturedAndCancelFollowups(
     currentStage,
     patch: { lead_captured_at: nowIso, advisor_notified_at: nowIso },
   });
-
-  const supabase = getSupabaseClient();
-  await supabase
-    .from("kapso_followups")
-    .update({ status: "skipped", skip_reason: "lead_captured", updated_at: nowIso })
-    .eq("kapso_conversation_id", conversationId)
-    .eq("status", "pending");
 }
 
 // Detecta de forma determinista si el texto contiene datos de lead: un teléfono
@@ -2472,12 +2507,12 @@ function detectCallRequestHeuristic(text: string): boolean {
 // Señales de que la conversación trata realmente de algún flujo de Conecta Pro
 // (cursos, paquetes de producción, agente de IA) o de la logística de una compra.
 const COMMERCIAL_CONTEXT_PATTERN =
-  /\b(curso|cursos|capacitacion|clase|clases|taller|temario|cupo|cupos|inscri|capcut|edicion|editar|grabacion|grabar|filmacion|video|videos|reel|reels|spot|comercial|publicidad|contenido|dron|drone|paquete|paquetes|servicio|servicios|cotiza|presupuesto|precio|precios|costo|cuanto cuesta|tarifa|promo|descuento|agente|agentes|chatbot|bot|automatizar|automatizacion|inteligencia artificial|\bia\b|whatsapp business|pago|pagar|pague|comprobante|deposito|transferencia|qr|yape|plin|banco|reserva|reservar|cita|agendar|agenda|zoom|reunion|oficina|direccion|ubicacion|horario|conecta ?pro|reembolso|asesor)\b/;
+  /\b(curso|cursos|capacitacion|clase|clases|taller|temario|cupo|cupos|inscri|capcut|edicion|editar|grabacion|grabar|filmacion|video|videos|reel|reels|spot|comercial|publicidad|publicitar|marketing|mercadeo|promocionar|community|redes sociales|manejo de redes|contenido|dron|drone|paquete|paquetes|servicio|servicios|cotiza|presupuesto|precio|precios|costo|cuanto cuesta|tarifa|promo|descuento|agente|agentes|chatbot|bot|automatizar|automatizacion|inteligencia artificial|\bia\b|whatsapp business|pago|pagar|pague|comprobante|deposito|transferencia|qr|yape|plin|banco|reserva|reservar|cita|agendar|agenda|visitar|visitarlos|reunion|reunirnos|oficina|direccion|ubicacion|horario|conecta ?pro|reembolso|asesor)\b/;
 
 // Gate determinista para las alertas de lead y de derivación a asesor: solo se avisa por
 // Telegram si la conversación tiene relación con algún flujo del negocio. Evita alertas
 // falsas en chats ajenos (soporte de otro producto, temas internos, charla personal).
-// Los avisos de pago, cita y Zoom NO pasan por aquí: ya tienen su propia validación.
+// Los avisos de pago NO pasan por aquí: ya tienen su propia validación.
 function hasCommercialContext(params: {
   history: HistoryMessage[];
   lastMessageText?: string | null;
@@ -2531,7 +2566,8 @@ async function notifyLeadToTelegram(params: {
   summary?: string;
   kind?: "intake" | "call_request" | "ai_agent";
   trigger?: LeadTrigger;
-  hasAppointment?: boolean;
+  // El cliente pidió reunirse en la oficina: el asesor debe coordinarla en la llamada.
+  wantsOfficeVisit?: boolean;
 }): Promise<boolean> {
   const lastClientMessage =
     params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
@@ -2545,8 +2581,8 @@ async function notifyLeadToTelegram(params: {
         : "🟢 <b>Nuevo lead — Conecta Pro</b>";
 
   const notes = [
-    params.hasAppointment
-      ? "📅 El cliente tiene una solicitud de cita en oficina pendiente de confirmar"
+    params.wantsOfficeVisit
+      ? "🏢 Quiere reunirse en la oficina — llámalo para coordinar día y hora (el bot NO agendó nada)"
       : null,
   ].filter((note): note is string => note !== null);
 
@@ -2624,7 +2660,8 @@ type AdvisorHandoffReason =
   | "prior_agreement"
   | "refund_old_date"
   | "course_topic_unconfirmed"
-  | "package_addon";
+  | "package_addon"
+  | "recruitment";
 
 // Marcadores de dedup de los avisos a Telegram. El genérico cubre todos los motivos
 // menos el lead por cantidad, que tiene el suyo (ver hasTelegramCustomQuantityBeenSent).
@@ -2642,6 +2679,7 @@ const ADVISOR_HANDOFF_REASON_LABEL: Record<AdvisorHandoffReason, string> = {
   refund_old_date: "Posible reembolso — pagó fecha anterior del curso (26 de julio)",
   course_topic_unconfirmed: "Preguntó por un tema del curso fuera del temario confirmado",
   package_addon: "LEAD — quiere sumar un extra a su paquete (hay que cotizarlo)",
+  recruitment: "Busca TRABAJO con Conecta Pro (modelo/editor/personal) — el bot no respondió",
 };
 
 // Aviso genérico "blanco" al asesor: cualquier situación (fuera de leads, llamadas, citas o
@@ -2957,8 +2995,8 @@ async function applyBotPause(params: {
 
 // TRASPASO A UN HUMANO — apagado del bot.
 //
-// Cuando el caso pasa a manos de una persona (pidió que lo llamen, agendó una visita o
-// un Zoom, cerró su lead, o se derivó al asesor), el bot deja de hablar. No es un lujo:
+// Cuando el caso pasa a manos de una persona (pidió que lo llamen, cerró su lead — también
+// quien quería reunirse en la oficina — o se derivó al asesor), el bot deja de hablar. No es un lujo:
 // mientras el asesor no ha entrado todavía al chat, cada respuesta automática puede
 // contradecir lo que esa persona ya acordó, repetir un formulario ya enviado o negar un
 // precio que el equipo sí dio — y ahí se pierde al cliente, no antes.
@@ -2982,12 +3020,11 @@ const PAUSE_ON_HANDOFF_REASONS: AdvisorHandoffReason[] = [
   "prior_agreement",
   "undocumented_info",
   "refund_old_date",
+  "recruitment",
 ];
 
 type HumanHandoffPauseReason =
   | "call_requested"
-  | "appointment_requested"
-  | "zoom_requested"
   | "lead_closed"
   | "advisor_handoff"
   | "prior_agreement";
@@ -3147,12 +3184,9 @@ const AssistantTurnSchema = z.object({
   service_intake_requested: z.boolean(),
   lead_data_submitted: z.boolean(),
   call_request: z.boolean(),
-  appointment_scheduled: z.boolean(),
-  // Día/hora literal que pidió el cliente. El código no lo interpreta ni lo persiste:
-  // viaja tal cual a la alerta de Telegram para que el asesor humano pueda confirmar.
-  appointment_slot: z.string().nullable(),
-  zoom_meeting_scheduled: z.boolean(),
-  zoom_slot: z.string().nullable(),
+  // El cliente quiere venir a la oficina / reunirse en persona. No agenda nada: dispara el
+  // formulario y deja una nota para que el asesor coordine la reunión por llamada.
+  office_visit_requested: z.boolean(),
   ai_agent_lead_submitted: z.boolean(),
   off_topic: z.boolean(),
   advisor_handoff: z.boolean(),
@@ -3165,6 +3199,7 @@ const AssistantTurnSchema = z.object({
       "refund_old_date",
       "course_topic_unconfirmed",
       "package_addon",
+      "recruitment",
     ])
     .nullable(),
   // El cliente pide sumar algo a su paquete que ese paquete no incluye (dron, locución,
@@ -3197,10 +3232,7 @@ const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   service_intake_requested: false,
   lead_data_submitted: false,
   call_request: false,
-  appointment_scheduled: false,
-  appointment_slot: null,
-  zoom_meeting_scheduled: false,
-  zoom_slot: null,
+  office_visit_requested: false,
   ai_agent_lead_submitted: false,
   // Si OpenAI falla no se puede juzgar la relevancia del mensaje: se asume que sí
   // viene al caso para no apagar el bot por un error de infraestructura.
@@ -3264,7 +3296,56 @@ async function generateAssistantTurn(params: {
       },
     });
 
+    await alertIfOpenAiQuotaError(error, "respuestas del bot");
+
     return FALLBACK_ASSISTANT_TURN;
+  }
+}
+
+// ALERTA DE SALDO DE OPENAI. El 31 de agosto de 2026 la cuenta se quedó sin crédito y nadie
+// se enteró: el bot respondía con el texto de respaldo a cada cliente. OpenAI no expone el
+// saldo por API con una clave normal, así que se detecta en el momento en que falla una
+// llamada por falta de crédito y se avisa al desarrollador por Telegram (como máximo una
+// vez por hora, para no inundar el chat mientras dura el problema).
+const OPENAI_QUOTA_ERROR_REGEX =
+  /insufficient_quota|no credits remaining|exceeded your current quota|billing_hard_limit|billing hard limit|check your plan and billing/i;
+const OPENAI_QUOTA_ALERT_EVERY_MINUTES = 60;
+
+async function alertIfOpenAiQuotaError(error: unknown, source: string): Promise<void> {
+  const message = getErrorMessage(error);
+  if (!OPENAI_QUOTA_ERROR_REGEX.test(message)) return;
+
+  try {
+    const since = new Date(Date.now() - OPENAI_QUOTA_ALERT_EVERY_MINUTES * 60_000).toISOString();
+    const { data } = await getSupabaseClient()
+      .from("system_logs")
+      .select("id")
+      .eq("event_type", "openai_quota_alert_sent")
+      .gte("created_at", since)
+      .limit(1);
+    if ((data ?? []).length > 0) return;
+
+    const sent = await sendDeveloperAlert(
+      [
+        "🚨 <b>OpenAI SIN SALDO — Conecta Pro</b>",
+        "",
+        `Falló: ${escapeTelegramHtml(source)}.`,
+        "Mientras no se recargue, el bot responde con el mensaje de respaldo, no verifica comprobantes y no transcribe audios.",
+        "",
+        "👉 Recargar: https://platform.openai.com/settings/organization/billing",
+        "",
+        `🧾 Error: ${escapeTelegramHtml(message.slice(0, 200))}`,
+      ].join("\n"),
+    );
+
+    await logSystemEvent({
+      level: "critical",
+      eventType: "openai_quota_alert_sent",
+      errorMessage: message.slice(0, 500),
+      metadata: { source, telegram_sent: sent },
+    });
+  } catch (alertError) {
+    console.error("openai quota alert failed", alertError);
   }
 }
 
@@ -3355,11 +3436,12 @@ async function classifyReceiptImage(params: {
             {
               type: "text",
               text: [
-                "Eres un verificador de comprobantes de pago para un negocio peruano.",
+                "Eres un verificador de comprobantes de pago para un negocio de Bolivia.",
                 "Responde is_receipt = true SOLO si la imagen muestra evidencia de una",
                 "transacción: monto pagado, fecha/hora de operación, nombre de un banco o",
-                "billetera (Yape, Plin, BCP, Interbank, BBVA, Scotiabank, etc.), número de",
-                "operación o una captura de pantalla de una app bancaria.",
+                "billetera (Banco Unión, BNB, Mercantil Santa Cruz, BCP, Banco Económico,",
+                "Banco Ganadero, BancoSol, Fassil, Tigo Money, pago por QR Simple, etc.),",
+                "número de operación o una captura de pantalla de una app bancaria.",
                 "Responde is_receipt = false para cualquier otra cosa: fotos de personas o",
                 "selfies, memes, fotos de productos o lugares, documentos de identidad,",
                 "capturas de chats o de redes sociales, o imágenes ilegibles.",
@@ -3380,6 +3462,7 @@ async function classifyReceiptImage(params: {
     };
   } catch (error) {
     console.error("receipt vision check failed", error);
+    await alertIfOpenAiQuotaError(error, "verificación de comprobantes");
 
     // Conservador a propósito: si no pudimos ver la imagen, preferimos el
     // comportamiento anterior (tratarla como comprobante) antes que perder un
@@ -3417,6 +3500,76 @@ async function classifyReceiptImage(params: {
   });
 
   return check;
+}
+
+// TRANSCRIPCIÓN DE AUDIOS, en el propio webhook y con OpenAI: la de Kapso se cobra aparte.
+// Sin transcripción el bot no sabe qué dijo el cliente — en un mes llegaron 136 audios y 23
+// terminaron en silencio total porque el modelo los marcó "fuera de tema".
+const AUDIO_TRANSCRIBE_TIMEOUT_MS = 15_000;
+
+async function transcribeIncomingAudio(message: IncomingMessage): Promise<void> {
+  if (!message.isAudio) return;
+  // Kapso ya mandó la transcripción: no se paga dos veces.
+  if (message.text.includes("Transcripción:")) return;
+
+  // Un reintento del webhook trae el mismo audio: si ya está guardado, no se vuelve a
+  // transcribir (saveInboundMessage lo va a descartar como duplicado de todos modos).
+  if (message.messageId) {
+    const { data } = await getSupabaseClient()
+      .from("kapso_messages")
+      .select("id")
+      .eq("kapso_message_id", message.messageId)
+      .limit(1);
+    if ((data ?? []).length > 0) return;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AUDIO_TRANSCRIBE_TIMEOUT_MS);
+
+  try {
+    const audio = await downloadIncomingMedia({
+      mediaId: message.mediaId,
+      mediaUrl: message.mediaUrl,
+      signal: controller.signal,
+    });
+
+    const result = await transcribe({
+      model: openai.transcription(process.env.OPENAI_TRANSCRIBE_MODEL ?? "gpt-4o-mini-transcribe"),
+      audio,
+      abortSignal: controller.signal,
+      providerOptions: { openai: { language: "es" } },
+    });
+
+    const text = result.text.trim();
+    if (!text) throw new Error("empty transcription");
+
+    message.text = `${AUDIO_PLACEHOLDER}\n\nTranscripción: ${text}`;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "audio_transcribed",
+      conversationId: message.conversationId,
+      messageId: message.messageId,
+      contactPhone: message.from,
+      metadata: { chars: text.length },
+    });
+  } catch (error) {
+    console.error("audio transcription failed", error);
+    message.audioUnreadable = true;
+    await alertIfOpenAiQuotaError(error, "transcripción de audios");
+
+    await logSystemEvent({
+      level: "warning",
+      eventType: "audio_transcription_failed",
+      conversationId: message.conversationId,
+      messageId: message.messageId,
+      contactPhone: message.from,
+      errorMessage: getErrorMessage(error),
+      metadata: { had_media_url: Boolean(message.mediaUrl), had_media_id: Boolean(message.mediaId) },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function hasMediaIntentBeenSent(
@@ -3792,39 +3945,32 @@ function detectCourseContext(
     .some((message) => {
       const normalized = normalizeForMatch(message.content);
       if (normalized.includes("MEDIA_SENT:COURSE_FLYER")) return true;
-      return COURSE_KEYWORDS.test(normalized);
+      // El saludo y las preguntas de orientación nombran las TRES líneas ("cursos
+      // presenciales, servicios de grabación y agentes de IA"): eso es un menú, no una
+      // conversación de cursos. Contarlo bloqueaba el formulario a clientes de paquetes
+      // que respondían al saludo ("costos de marketing para mi negocio").
+      const listsAllLines =
+        SERVICE_PACKAGES_KEYWORDS.test(normalized) && AI_AGENT_KEYWORDS.test(normalized);
+      return COURSE_KEYWORDS.test(normalized) && !listsAllLines;
     });
 }
 
-// ¿La conversación está en el flujo de CITA en oficina? Se mira si el asistente ya
-// propuso agendar o pidió confirmar la visita, buscando las frases fijas del prompt en
-// sus últimos mensajes. Sirve para que la confirmación de la cita ("sí", "confirmar",
-// "dale") no se lea como elección de paquete y dispare el formulario de leads.
-// Los tres primeros marcadores nuevos vienen de los textos actuales; "TE ESTARA ESPERANDO"
-// y "TE ESPERE EL" son de la redacción anterior (cuando el bot confirmaba la cita) y se
-// conservan para que las conversaciones con historial viejo se sigan detectando.
-const APPOINTMENT_PROMPT_MARKERS = [
-  "QUIERES AGENDAR UNA VISITA",
-  "INDICANOS EL DIA Y LA HORA",
-  "ESCRIBE 'CONFIRMAR'",
-  "ESCRIBE CONFIRMAR",
-  "ANOTO TU VISITA",
-  "PASE TU SOLICITUD",
-  "YA ESTA CON UN ASESOR",
-  "TE ESTARA ESPERANDO",
-  "TE ESPERE EL",
-  "EN LA OFICINA",
-];
-
-function detectAppointmentPending(history: HistoryMessage[]): boolean {
+// ¿El asistente ya le hizo la pregunta de edición ambigua (paquete completo o solo
+// edición)? Si ya la hizo, no se repite: el cliente decide con su respuesta.
+function detectEditingClarifyAsked(history: HistoryMessage[]): boolean {
   return history
     .filter((message) => message.role === "assistant")
-    .slice(-3)
+    .some((message) => normalizeForMatch(message.content).includes("PAQUETE COMPLETO:"));
+}
+
+// ¿Algún mensaje anterior del cliente ya aclaró si tiene los videos o si busca que se los
+// graben? Entonces un "edición" posterior no es ambiguo.
+function detectEditingClarifiedByClient(history: HistoryMessage[]): boolean {
+  return history
+    .filter((message) => message.role === "user")
     .some((message) => {
-      const normalized = normalizeForMatch(message.content);
-      return APPOINTMENT_PROMPT_MARKERS.some((marker) =>
-        normalized.includes(marker),
-      );
+      const kind = detectEditingRequest(message.content);
+      return kind === "editing_only" || kind === "packages";
     });
 }
 
@@ -3880,7 +4026,8 @@ function shouldForcePaymentQr(params: {
   courseContext: boolean;
   packagesPresented: boolean;
   qrAlreadySent: boolean;
-  appointmentContext: boolean;
+  // false cuando no hay ningún curso a la venta (p. ej. el único ya empezó).
+  courseSellable: boolean;
 }): boolean {
   // payment_qr es EXCLUSIVO de cursos (ver prompt). Si la conversación ya presentó
   // paquetes de producción, NUNCA se fuerza el QR — un "cómo pago" ahí se refiere al
@@ -3889,7 +4036,7 @@ function shouldForcePaymentQr(params: {
   // pago ("quiero pagar", "cómo pago").
   if (
     params.qrAlreadySent ||
-    params.appointmentContext ||
+    !params.courseSellable ||
     params.packagesPresented ||
     !params.text
   ) {
@@ -3911,8 +4058,8 @@ function shouldForcePaymentQr(params: {
 }
 
 // Señal INEQUÍVOCA de que el cliente quiere contratar paquetes de producción. Es lo
-// único que puede abrir el formulario mientras hay un flujo de cita en curso: los
-// afirmativos genéricos ("sí", "dale", "confirmar") ahí significan otra cosa.
+// único que puede abrir el formulario en una conversación de cursos y lo que habilita
+// el aviso de cantidad fuera de catálogo.
 function hasExplicitPackageIntent(text: string): boolean {
   if (!text) return false;
   const normalized = normalizeForMatch(text);
@@ -4010,13 +4157,7 @@ function shouldForceIntakeForm(
   text: string,
   history: HistoryMessage[],
   flyerAlreadySent: boolean,
-  appointmentContext = false,
 ): boolean {
-  // Con una cita en curso (propuesta o ya confirmada), los afirmativos genéricos son
-  // la confirmación de la visita, no la elección de un paquete: solo una señal
-  // explícita de contratación puede abrir el formulario.
-  if (appointmentContext) return hasExplicitPackageIntent(text);
-
   const presented = detectPackagesPresented(history, flyerAlreadySent);
 
   return (
@@ -4035,8 +4176,9 @@ function detectPackagePriceMention(text: string): boolean {
 type DetectedIntent =
   | "service_packages"
   | "course"
-  | "appointment"
-  | "ai_agent";
+  | "office"
+  | "ai_agent"
+  | "editing_ambiguous";
 
 // Verbos y fórmulas con las que un cliente PIDE algo de una línea concreta. Junto con la
 // palabra clave de esa línea, son la señal mínima para aceptar un cambio de flujo.
@@ -4063,6 +4205,15 @@ function detectExplicitLineSwitch(
   const normalized = normalizeForMatch(text);
   if (!LINE_KEYWORDS[targetLine].test(normalized)) return false;
 
+  // "Quiero el curso de edición" nombra palabras de paquetes, pero pide un curso.
+  if (
+    targetLine === "service_packages" &&
+    COURSE_KEYWORDS.test(normalized) &&
+    !hasStrongPackageSignal(text)
+  ) {
+    return false;
+  }
+
   const wordCount = normalized.trim().split(/\s+/).length;
 
   return LINE_REQUEST_REGEX.test(normalized) || wordCount >= 6;
@@ -4070,7 +4221,8 @@ function detectExplicitLineSwitch(
 
 // Detecta de forma determinista si el mensaje del cliente ya expresa una intención
 // concreta (para no responder con el saludo genérico). Devuelve la primera que
-// aplique según prioridad: agente de IA > paquetes > cursos > cita.
+// aplique según prioridad: agente de IA > edición ambigua > paquete nombrado > cursos >
+// vocabulario de paquetes > oficina.
 function detectExplicitIntent(text: string): DetectedIntent | null {
   if (!text) return null;
 
@@ -4080,22 +4232,31 @@ function detectExplicitIntent(text: string): DetectedIntent | null {
   // aparecen en SERVICE_PACKAGES_KEYWORDS ("servicio", "edicion", "contenido").
   if (AI_AGENT_KEYWORDS.test(normalized)) return "ai_agent";
 
+  // "Edición" sin aclarar si ya tiene los videos: se pregunta, no se manda el flyer.
+  const editing = detectEditingRequest(text);
+  if (editing === "ambiguous" && !mentionsExpiredEditPromo(text)) return "editing_ambiguous";
+
   if (
     detectPackagePriceMention(text) ||
     detectPackageChoice(text) ||
     detectPackageNameChoice(text) ||
-    SERVICE_PACKAGES_KEYWORDS.test(normalized)
+    hasStrongPackageSignal(text)
   ) {
     return "service_packages";
   }
+  // Antes que el vocabulario general de paquetes: "curso de edición" o "clases de
+  // marketing" nombran palabras de paquetes, pero piden un curso.
   if (COURSE_KEYWORDS.test(normalized)) return "course";
-  if (APPOINTMENT_KEYWORDS.test(normalized)) return "appointment";
+  if (SERVICE_PACKAGES_KEYWORDS.test(normalized) && editing !== "editing_only") {
+    return "service_packages";
+  }
+  if (APPOINTMENT_KEYWORDS.test(normalized)) return "office";
 
   return null;
 }
 
 const EXPLICIT_PAYMENT_PHRASES =
-  /\b(COMPROBANTE|YA PAGUE|REALICE EL PAGO|HICE EL PAGO|PAGO REALIZADO)\b/;
+  /\b(COMPROBANTE|YA PAGUE|REALICE EL PAGO|HICE EL PAGO|PAGO REALIZADO|YA CANCELE|YA DEPOSITE|DEPOSITE|YA TRANSFERI|TRANSFERI)\b/;
 const VAGUE_SEND_PHRASES = /\b(YA MANDE|YA PASE|YA ENVIE)\b/;
 
 async function hasIntakeFormBeenSent(conversationId?: string): Promise<boolean> {
@@ -4257,31 +4418,47 @@ async function hasTelegramPaymentBeenSent(params: {
   return ageMinutes < PAYMENT_ALERT_DEDUP_WINDOW_MINUTES;
 }
 
-async function hasTelegramAppointmentBeenSent(conversationId?: string): Promise<boolean> {
-  if (!conversationId) return false;
+// Quien quiere reunirse en la oficina deja sus datos turnos después de pedirlo. Este
+// marcador conserva el pedido para que la alerta del lead avise al asesor que tiene que
+// coordinar la reunión en la llamada.
+const OFFICE_VISIT_MARKER = "[OFFICE_VISIT_REQUESTED]";
 
-  const supabase = getSupabaseClient();
+// Visita por un CURSO: no hay formulario que dispare una alerta de lead más adelante, así
+// que el aviso al asesor sale en el mismo turno (una sola vez por conversación).
+const COURSE_OFFICE_VISIT_ALERT_MARKER = "[TELEGRAM_COURSE_OFFICE_VISIT_SENT]";
 
-  const { data, error } = await supabase
-    .from("kapso_messages")
-    .select("id")
-    .eq("kapso_conversation_id", conversationId)
-    .eq("direction", "outbound")
-    .ilike("content", "[TELEGRAM_APPOINTMENT_SENT]%")
-    .limit(1);
-
-  if (error) {
-    console.error("supabase check telegram appointment sent failed", error);
-    return false;
+async function notifyCourseOfficeVisitToTelegram(params: {
+  phone: string;
+  conversationId?: string;
+  clientMessage: string;
+  summary?: string;
+}): Promise<void> {
+  if (await hasTelegramMarkerBeenSent(params.conversationId, COURSE_OFFICE_VISIT_ALERT_MARKER)) {
+    return;
   }
 
-  return (data ?? []).length > 0;
+  const notified = await sendTelegramNotification(
+    buildTelegramBody({
+      headline: "🏢 <b>Quiere visitar la oficina — Curso</b>",
+      phone: params.phone,
+      clientMessage: params.clientMessage,
+      summary: params.summary,
+      contextLabel: "Curso — llamarlo para indicarle la hora de la visita",
+      note: "📞 El bot NO agendó nada: le dijo que un asesor lo llama y le preguntó sus dudas del curso.",
+    }),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: `${COURSE_OFFICE_VISIT_ALERT_MARKER} aviso de visita por curso enviado a Telegram`,
+      rawPayload: { type: "telegram_notification", event: "course_office_visit" },
+    });
+  }
 }
 
-// Marcador propio (no comparte el de cita presencial): un cliente del agente de IA puede
-// tener primero la reunión por Zoom y después una cita en oficinas para formalizar, y el
-// equipo debe recibir aviso de ambas.
-async function hasTelegramZoomBeenSent(conversationId?: string): Promise<boolean> {
+async function hasOfficeVisitBeenRequested(conversationId?: string): Promise<boolean> {
   if (!conversationId) return false;
 
   const supabase = getSupabaseClient();
@@ -4291,11 +4468,11 @@ async function hasTelegramZoomBeenSent(conversationId?: string): Promise<boolean
     .select("id")
     .eq("kapso_conversation_id", conversationId)
     .eq("direction", "outbound")
-    .ilike("content", "[TELEGRAM_ZOOM_SENT]%")
+    .like("content", `${OFFICE_VISIT_MARKER}%`)
     .limit(1);
 
   if (error) {
-    console.error("supabase check telegram zoom sent failed", error);
+    console.error("supabase check office visit requested failed", error);
     return false;
   }
 
@@ -4826,6 +5003,10 @@ export async function POST(request: Request) {
   let lastMessageCreatedAt: string | null = null;
 
   for (const message of incomingMessages) {
+    // Antes de guardar: el texto transcrito es lo que queda en el historial y lo que lee
+    // el modelo (y el asesor en las alertas).
+    await transcribeIncomingAudio(message);
+
     try {
       const { saved, createdAt } = await saveInboundMessage(message);
       if (saved) {
@@ -4853,6 +5034,16 @@ export async function POST(request: Request) {
     console.log("all inbound messages were duplicates, no reply sent");
     return new Response("duplicate ignored", { status: 200 });
   }
+
+  // COMPROBANTE EN RÁFAGA. El cliente suele mandar la foto del comprobante junto con un
+  // texto ("Listo", "Gracias", "Es mañana a las 4pm no") y Kapso los entrega en el mismo
+  // webhook. Antes solo se revisaba el ÚLTIMO mensaje, que era el texto: la imagen nunca se
+  // verificaba ni se alertaba (4 comprobantes de curso perdidos así en septiembre 2026).
+  // El comprobante candidato es la imagen/PDF más reciente del lote, esté donde esté.
+  const receiptMedia =
+    [...newMessages].reverse().find((message) => message.isImage || message.isDocument) ?? null;
+  // Todo lo que el cliente escribió en este lote, para las frases de pago y los detectores.
+  const batchText = newMessages.map((message) => message.text).join("\n");
 
   const canReply = await acquireReplyLock({
     conversationId: lastMessage.conversationId,
@@ -4904,10 +5095,12 @@ export async function POST(request: Request) {
     // pago pausada (evita una segunda query idéntica).
     let intakeFormSentPaused = false;
     try {
-      const [intakeFormSentPausedResult, telegramLeadSentPaused] = await Promise.all([
-        hasIntakeFormBeenSent(lastMessage.conversationId),
-        hasTelegramLeadBeenSent(lastMessage.conversationId),
-      ]);
+      const [intakeFormSentPausedResult, telegramLeadSentPaused, officeVisitRequestedPaused] =
+        await Promise.all([
+          hasIntakeFormBeenSent(lastMessage.conversationId),
+          hasTelegramLeadBeenSent(lastMessage.conversationId),
+          hasOfficeVisitBeenRequested(lastMessage.conversationId),
+        ]);
       intakeFormSentPaused = intakeFormSentPausedResult;
 
       // El pedido de llamada es 100% determinista: dispara el lead aunque nunca se
@@ -4949,10 +5142,11 @@ export async function POST(request: Request) {
             fallbackText: lastMessage.text,
             kind: callRequestPaused ? "call_request" : "intake",
             trigger,
+            wantsOfficeVisit: officeVisitRequestedPaused,
           });
 
           if (leadNotifiedWhilePaused) {
-            await markLeadCapturedAndCancelFollowups(
+            await markLeadCaptured(
               lastMessage.conversationId,
               lastMessage.from,
             );
@@ -4995,9 +5189,10 @@ export async function POST(request: Request) {
     // 100% determinista: no llama a generateAssistantTurn, cero costo extra de OpenAI.
     let paymentNotifiedWhilePaused = false;
     try {
+      const paymentMessagePaused = receiptMedia ?? lastMessage;
       const telegramPaymentSentPaused = await hasTelegramPaymentBeenSent({
         conversationId: lastMessage.conversationId,
-        messageId: lastMessage.messageId,
+        messageId: paymentMessagePaused.messageId,
       });
 
       if (!telegramPaymentSentPaused) {
@@ -5005,7 +5200,7 @@ export async function POST(request: Request) {
           getMediaSentStatus(lastMessage.from),
           hasManualHumanMediaBeenSent(lastMessage.conversationId),
         ]);
-        const normalizedPausedText = normalizeForMatch(lastMessage.text);
+        const normalizedPausedText = normalizeForMatch(batchText);
         const hasExplicitPaymentPhrasePaused =
           EXPLICIT_PAYMENT_PHRASES.test(normalizedPausedText);
         // manualHumanMediaSentPaused cubre el caso en que un humano ya tomó el chat
@@ -5019,12 +5214,12 @@ export async function POST(request: Request) {
         // Misma verificación por visión que en la rama normal: una imagen solo
         // cuenta como comprobante si de verdad se ve una transacción.
         const receiptCheckPaused =
-          lastMessage.isImage && hasPaymentContextPaused
+          receiptMedia?.isImage && hasPaymentContextPaused
             ? await classifyReceiptImage({
-                mediaId: lastMessage.mediaId,
-                mediaUrl: lastMessage.mediaUrl,
+                mediaId: receiptMedia.mediaId,
+                mediaUrl: receiptMedia.mediaUrl,
                 conversationId: lastMessage.conversationId,
-                messageId: lastMessage.messageId,
+                messageId: receiptMedia.messageId,
                 phone: lastMessage.from,
               })
             : null;
@@ -5032,10 +5227,10 @@ export async function POST(request: Request) {
         // Misma matriz que en la rama normal: la imagen la decide la visión; el
         // PDF solo cuenta si alguien (bot o humano) ya mandó el QR antes.
         const isPlausibleReceiptPaused =
-          (Boolean(lastMessage.isImage) &&
+          (Boolean(receiptMedia?.isImage) &&
             hasPaymentContextPaused &&
             (receiptCheckPaused === null || receiptCheckPaused.isReceipt)) ||
-          (Boolean(lastMessage.isDocument) &&
+          (Boolean(receiptMedia?.isDocument) &&
             (mediaStatusPaused.payment_qr || manualHumanMediaSentPaused));
 
         if (isPlausibleReceiptPaused || hasExplicitPaymentPhrasePaused) {
@@ -5050,8 +5245,8 @@ export async function POST(request: Request) {
           paymentNotifiedWhilePaused = await notifyPaymentToTelegram({
             phone: lastMessage.from,
             conversationId: lastMessage.conversationId,
-            messageId: lastMessage.messageId,
-            clientMessage: lastMessage.text,
+            messageId: paymentMessagePaused.messageId,
+            clientMessage: batchText,
             summary:
               "El cliente envió un comprobante de pago mientras el chat estaba en atención humana.",
             contextLabel: paymentContextLabelPaused,
@@ -5158,12 +5353,11 @@ export async function POST(request: Request) {
     intakeFormSent,
     telegramLeadSent,
     telegramPaymentSent,
-    telegramAppointmentSent,
+    officeVisitAlreadyRequested,
     telegramHandoffSent,
     telegramCustomQuantitySent,
     telegramPackageAddonSent,
     telegramPriorAgreementSent,
-    telegramZoomSent,
     flowState,
     manualHumanMediaSent,
     packagesLastSentAt,
@@ -5175,14 +5369,13 @@ export async function POST(request: Request) {
     hasTelegramLeadBeenSent(lastMessage.conversationId),
     hasTelegramPaymentBeenSent({
       conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
+      messageId: (receiptMedia ?? lastMessage).messageId,
     }),
-    hasTelegramAppointmentBeenSent(lastMessage.conversationId),
+    hasOfficeVisitBeenRequested(lastMessage.conversationId),
     hasTelegramHandoffBeenSent(lastMessage.conversationId),
     hasTelegramCustomQuantityBeenSent(lastMessage.conversationId),
     hasTelegramPackageAddonBeenSent(lastMessage.conversationId),
     hasTelegramPriorAgreementBeenSent(lastMessage.conversationId),
-    hasTelegramZoomBeenSent(lastMessage.conversationId),
     getConversationFlowState(lastMessage.conversationId),
     hasManualHumanMediaBeenSent(lastMessage.conversationId),
     // Último envío del flyer de paquetes: define si este turno vuelve a mandarlo o
@@ -5231,12 +5424,16 @@ export async function POST(request: Request) {
   const promoDetected = promoAmount !== null;
 
   const normalizedLastMessageText = normalizeForMatch(lastMessage.text);
-  const hasExplicitPaymentPhrase = EXPLICIT_PAYMENT_PHRASES.test(normalizedLastMessageText);
+  // Frase de pago en cualquier mensaje del lote ("[foto] + Comprobante + yo pagué").
+  const hasExplicitPaymentPhrase = EXPLICIT_PAYMENT_PHRASES.test(normalizeForMatch(batchText));
   const hasVagueSendPhraseOnly =
     VAGUE_SEND_PHRASES.test(normalizedLastMessageText) &&
-    !lastMessage.isImage &&
-    !lastMessage.isDocument &&
+    !receiptMedia &&
     !hasExplicitPaymentPhrase;
+
+  // Cursos: ¿hay algo que se pueda vender ahora? Si el único curso vigente ya empezó, NO.
+  const courseSellable = hasSellableCourse(turnNow);
+  const courseInProgress = getInProgressCourses(turnNow).length > 0;
 
   // Cliente que viene por el video de la promo de edición a 50 Bs (ya vencida).
   const mentionsEditPromo50 = mentionsExpiredEditPromo(lastMessage.text);
@@ -5246,8 +5443,7 @@ export async function POST(request: Request) {
   // acreditación de la transmisión; con la promo de 50 Bs gana esa explicación.
   const hasBareIncomingLink =
     containsIncomingLink(lastMessage.text) &&
-    !lastMessage.isImage &&
-    !lastMessage.isDocument &&
+    !receiptMedia &&
     !promoDetected &&
     !mentionsEditPromo50 &&
     !hasExplicitPaymentPhrase;
@@ -5298,7 +5494,7 @@ export async function POST(request: Request) {
         ? ["Como service_packages_promo YA fue enviado: la imagen de la promo temporal ya la tiene. No la presentes como novedad ni repitas todo su detalle; continúa la conversación desde ahí, salvo que el usuario la pida explícitamente de nuevo."]
         : []),
       ...(mediaStatus.ai_agent_flyer
-        ? ["Como ai_agent_flyer YA fue enviado: no presentes el agente de IA como si fuera la primera vez ni repitas el texto completo del FLUJO C. Continúa la conversación desde donde quedó (Zoom, datos o cotización), salvo que el usuario pida el flyer explícitamente de nuevo."]
+        ? ["Como ai_agent_flyer YA fue enviado: no presentes el agente de IA como si fuera la primera vez ni repitas el texto completo del FLUJO C. Continúa la conversación desde donde quedó (juntar sus datos para la llamada del asesor), salvo que el usuario pida el flyer explícitamente de nuevo."]
         : []),
     ].join("\n"),
   ];
@@ -5335,26 +5531,33 @@ export async function POST(request: Request) {
   //
   // Aparte de los archivos: el texto con una frase explícita de pago sí cuenta,
   // y las frases vagas ("ya mandé/pasé/envié") sin archivo no.
+  // Se evalúa sobre `receiptMedia` (la imagen/PDF del lote), no sobre el último mensaje:
+  // ver COMPROBANTE EN RÁFAGA más arriba.
   const imageReceiptEligible =
-    Boolean(lastMessage.isImage) &&
-    (mediaStatus.payment_qr || intakeFormSent || manualHumanMediaSent || courseContext);
+    Boolean(receiptMedia?.isImage) &&
+    (mediaStatus.payment_qr ||
+      intakeFormSent ||
+      manualHumanMediaSent ||
+      courseContext ||
+      hasExplicitPaymentPhrase);
   const documentReceiptEligible =
-    Boolean(lastMessage.isDocument) && (mediaStatus.payment_qr || manualHumanMediaSent);
+    Boolean(receiptMedia?.isDocument) && (mediaStatus.payment_qr || manualHumanMediaSent);
 
-  const receiptCheck = imageReceiptEligible
-    ? await classifyReceiptImage({
-        mediaId: lastMessage.mediaId,
-        mediaUrl: lastMessage.mediaUrl,
-        conversationId: lastMessage.conversationId,
-        messageId: lastMessage.messageId,
-        phone: lastMessage.from,
-      })
-    : null;
+  const receiptCheck =
+    imageReceiptEligible && receiptMedia
+      ? await classifyReceiptImage({
+          mediaId: receiptMedia.mediaId,
+          mediaUrl: receiptMedia.mediaUrl,
+          conversationId: lastMessage.conversationId,
+          messageId: receiptMedia.messageId,
+          phone: lastMessage.from,
+        })
+      : null;
 
   const rejectedByVision = receiptCheck !== null && !receiptCheck.isReceipt;
   // PDF sin QR previo: no es comprobante, pero tampoco se ignora — suele ser
   // material real del cliente que merece respuesta.
-  const documentWithoutQr = Boolean(lastMessage.isDocument) && !documentReceiptEligible;
+  const documentWithoutQr = Boolean(receiptMedia?.isDocument) && !documentReceiptEligible;
   const receiptRejected = rejectedByVision || documentWithoutQr;
 
   // Contexto (curso/paquete) calculado de forma determinista a partir del estado real
@@ -5380,8 +5583,8 @@ export async function POST(request: Request) {
     await notifyPaymentToTelegram({
       phone: lastMessage.from,
       conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
-      messageId: lastMessage.messageId,
-      clientMessage: lastMessage.text,
+      messageId: (receiptMedia ?? lastMessage).messageId,
+      clientMessage: batchText,
       contextLabel: paymentContextLabel,
       note: promoDetected
         ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
@@ -5410,8 +5613,8 @@ export async function POST(request: Request) {
     contextParts.push(
       "El último mensaje del usuario es un DOCUMENTO/PDF y a este cliente NUNCA se le envió el QR de pago, así que NO puede ser un comprobante. NO marques payment_confirmation y NO agradezcas ningún comprobante. Pregúntale con amabilidad para qué te envía ese archivo o en qué te gustaría que te ayude con él.",
     );
-  } else if (lastMessage.isImage || lastMessage.isDocument) {
-    const mediaLabel = lastMessage.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
+  } else if (receiptMedia) {
+    const mediaLabel = receiptMedia.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
     if (mediaStatus.payment_qr) {
       contextParts.push(
         `El último mensaje del usuario es ${mediaLabel} y ya se le envió antes el QR de pago del curso. Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y, una vez verificado, te confirmamos tu cupo. Para agregarte al grupo de participantes del curso, indícame tu nombre completo (verifica que esté bien escrito) y tu número de teléfono." No digas que el cupo ya quedó confirmado — la validación la hace el equipo. No lo trates como pedido de otro material.`,
@@ -5434,7 +5637,7 @@ export async function POST(request: Request) {
       contextParts.push(
         `El último mensaje del usuario es ${mediaLabel} y un asesor ya le envió material a mano en esta conversación (posiblemente el QR de pago). Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y, una vez verificado, te confirmamos tu cupo. Para agregarte al grupo de participantes del curso, indícame tu nombre completo (verifica que esté bien escrito) y tu número de teléfono." No digas que el cupo ya quedó confirmado — la validación la hace el equipo.`,
       );
-    } else if (courseContext && Boolean(lastMessage.isImage)) {
+    } else if (courseContext && Boolean(receiptMedia.isImage)) {
       // Conversación anclada en cursos, sin QR ni intake ni material manual
       // registrado: la imagen SÍ se verifica con visión (imageReceiptEligible),
       // pero como no hay contexto de pago previo, se le pide confirmación al
@@ -5484,9 +5687,39 @@ export async function POST(request: Request) {
     );
   }
 
-  if (telegramZoomSent) {
+  if (officeVisitAlreadyRequested) {
     contextParts.push(
-      "La reunión por Zoom del agente de IA YA fue coordinada y el equipo ya fue avisado en esta conversación. NO vuelvas a ofrecer agendar el Zoom ni pidas otra vez el día y la hora; si el cliente pregunta, confirma que un asesor lo contactará para coordinarla. NO marques zoom_meeting_scheduled de nuevo.",
+      "Este cliente YA pidió reunirse en la oficina en esta conversación. NO lo invites a venir, NO des horario ni anotes un día u hora: un asesor lo llamará y le indicará la hora. Si viene por servicios y todavía faltan sus datos, guíalo a completarlos; si viene por un curso, NO le pidas datos del negocio: responde sus dudas del curso. Si ya dio lo necesario, recuérdale con amabilidad que el asesor lo contactará.",
+    );
+  }
+
+  // Audio que no se pudo transcribir: el bot no sabe qué dijo el cliente y no puede
+  // inventarlo ni callarse (antes terminaba en silencio por "fuera de tema").
+  const lastAudioUnreadable = Boolean(lastMessage.isAudio && lastMessage.audioUnreadable);
+  if (lastAudioUnreadable) {
+    contextParts.push(
+      `El último mensaje del usuario es un AUDIO que no se pudo transcribir: no sabes qué dijo. NO inventes su contenido, NO lo marques off_topic y NO marques ningún intent. Si la conversación deja claro qué está esperando (por ejemplo sus datos o el QR), continúa desde ahí; si no, responde exactamente: "${AUDIO_UNREADABLE_REPLY}"`,
+    );
+  }
+
+  // Edición ambigua: el cliente dice "edición" sin aclarar si ya tiene los videos o si
+  // quiere que se los grabemos. Se pregunta UNA vez; si ya se preguntó o el cliente ya lo
+  // aclaró antes, decide el modelo con lo que respondió.
+  const editingRequest = detectEditingRequest(lastMessage.text);
+  const editingNeedsClarification =
+    editingRequest === "ambiguous" &&
+    !mentionsEditPromo50 &&
+    // "El básico, con edición" ya eligió un paquete: no hay nada que preguntar.
+    !hasStrongPackageSignal(lastMessage.text) &&
+    !courseContext &&
+    !mediaStatus.ai_agent_flyer &&
+    !intakeFormSent &&
+    !detectEditingClarifyAsked(history) &&
+    !detectEditingClarifiedByClient(history.slice(0, -1));
+
+  if (editingNeedsClarification) {
+    contextParts.push(
+      `El cliente habla de EDICIÓN sin aclarar si ya tiene sus videos grabados o si necesita que se los grabemos. NO elijas tú: responde EXACTAMENTE con el texto del flujo "CLIENTE DICE 'EDICIÓN' SIN ACLARAR QUÉ NECESITA", sin marcar intents.service_packages, sin formulario y sin el número del editor.`,
     );
   }
 
@@ -5499,13 +5732,15 @@ export async function POST(request: Request) {
   if (!hasAssistantHistory && detectedIntent) {
     const intentDirective: Record<DetectedIntent, string> = {
       service_packages:
-        `El cliente YA expresó intención de paquetes de producción en su mensaje (menciona un precio del catálogo (${renderPackagePrices()}), una cantidad de paquete (${renderPackageSizes()}), o palabras como paquetes/grabación/edición/videos). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (párrafo de paquetes) y marca intents.service_packages=true.`,
+        `El cliente YA expresó intención de paquetes de producción en su mensaje (menciona un precio del catálogo (${renderPackagePrices()}), una cantidad de paquete (${renderPackageSizes()}), o palabras como paquetes/grabación/videos/publicidad/marketing/manejo de redes). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (párrafo de paquetes) y marca intents.service_packages=true.`,
       course:
         "El cliente YA preguntó por cursos en su mensaje. NO es un saludo puro: marca is_greeting=false, responde con el FLUJO A (cursos) y marca intents.course_flyer=true.",
-      appointment:
-        "El cliente YA preguntó por la oficina/cita en su mensaje. NO es un saludo puro: marca is_greeting=false y responde con el flujo de oficina (ubicación + horario + ofrecer agendar).",
+      office:
+        "El cliente YA preguntó por la oficina en su mensaje. NO es un saludo puro: marca is_greeting=false. Si quiere visitarnos o reunirse, usa el flujo \"CLIENTE QUIERE VISITARNOS\" (explicación + formulario); si solo pregunta dónde queda o el horario, usa el flujo \"PREGUNTA SOLO POR LA UBICACIÓN O EL HORARIO DE LA OFICINA\". NUNCA ofrezcas agendar un día y hora.",
       ai_agent:
-        "El cliente YA expresó intención sobre el AGENTE DE IA en su mensaje (menciona agente, IA, chatbot, bot, automatizar mensajes o asistente virtual). NO es un saludo puro y NO es el flujo de paquetes de video, aunque haya usado palabras como servicio o edición: marca is_greeting=false, responde con el texto del FLUJO C (agente de IA) y marca intents.ai_agent_flyer=true. NUNCA des un precio: la cotización es personalizada y el flyer muestra el estimado. NUNCA prometas una demo o prueba: el Zoom es una reunión de explicación.",
+        "El cliente YA expresó intención sobre el AGENTE DE IA en su mensaje (menciona agente, IA, chatbot, bot, automatizar mensajes o asistente virtual). NO es un saludo puro y NO es el flujo de paquetes de video, aunque haya usado palabras como servicio o edición: marca is_greeting=false, responde con el texto del FLUJO C (agente de IA) y marca intents.ai_agent_flyer=true. NUNCA des un precio: la cotización es personalizada y el flyer muestra el estimado. NUNCA prometas una demo o prueba ni ofrezcas Zoom: un asesor lo llama por WhatsApp con sus datos.",
+      editing_ambiguous:
+        "El cliente YA habló de EDICIÓN en su mensaje, pero sin aclarar si ya tiene los videos grabados. NO es un saludo puro: marca is_greeting=false y responde EXACTAMENTE con el texto del flujo \"CLIENTE DICE 'EDICIÓN' SIN ACLARAR QUÉ NECESITA\", sin marcar intents y sin el número del editor.",
     };
 
     contextParts.push(intentDirective[detectedIntent]);
@@ -5578,9 +5813,24 @@ export async function POST(request: Request) {
     !flowState.advisorNotifiedAt &&
     isIntakeNudge(lastMessage.text);
 
+  // Reclutamiento (busca trabajo, no servicios): el bot no tiene nada que responder. Se
+  // resuelve sin llamar al modelo — silencio + aviso al equipo, en la rama de derivación de
+  // más abajo. No aplica sobre un comprobante ni sobre la promo del live.
+  const recruitmentDetected =
+    mentionsRecruitment(batchText) && !receiptMedia && !promoDetected && !hasExplicitPaymentPhrase;
+
   let turn: AssistantTurn;
 
-  if (isDeterministicIntakeNudge) {
+  if (recruitmentDetected) {
+    turn = {
+      ...FALLBACK_ASSISTANT_TURN,
+      reply: "",
+      should_reply: false,
+      advisor_handoff: true,
+      advisor_handoff_reason: "recruitment",
+      conversation_summary: "Busca trabajo con Conecta Pro (reclutamiento); el bot no respondió.",
+    };
+  } else if (isDeterministicIntakeNudge) {
     turn = {
       ...FALLBACK_ASSISTANT_TURN,
       reply: INTAKE_REMINDER,
@@ -5607,6 +5857,89 @@ export async function POST(request: Request) {
     });
   }
 
+  // ── SILENCIO INDEBIDO ───────────────────────────────────────────────────────
+  //
+  // Dos formas en que el modelo dejaba a un cliente real sin respuesta:
+  //   1. off_topic sobre una consulta del negocio: en un mes, 71 de 159 silencios eran
+  //      "¿cuánto cobran por publicidad?", "servicios de marketing", "más información"...
+  //   2. should_reply=false fuera de la recolección de datos (el silencio solo existe para
+  //      no contestar cada fragmento del formulario): "yo pagué, no estoy en el curso" +
+  //      "Comprobante" quedó sin respuesta y sin alerta.
+  // En ambos casos se le pide al modelo UNA segunda respuesta con la corrección explícita.
+  const intakeInProgress =
+    intakeFormSent ||
+    flowState.flowStage === "intake_sent" ||
+    turn.service_intake_requested ||
+    replyContainsIntakeForm(turn.reply) ||
+    history.some(
+      (message) =>
+        message.role === "assistant" &&
+        normalizeForMatch(message.content).includes("CUANTOS MENSAJES RECIBEN"),
+    );
+
+  const offTopicOnBusiness =
+    turn.off_topic && !promoDetected && hasBusinessVocabulary(batchText);
+  const silencedOutsideIntake =
+    !turn.should_reply &&
+    !turn.off_topic &&
+    !intakeInProgress &&
+    !(
+      turn.advisor_handoff &&
+      (turn.advisor_handoff_reason === "undocumented_info" ||
+        turn.advisor_handoff_reason === "recruitment")
+    );
+
+  if (offTopicOnBusiness || silencedOutsideIntake) {
+    const correction = offTopicOnBusiness
+      ? "CORRECCIÓN DEL BACKEND: el último mensaje del cliente SÍ es una consulta sobre Conecta Pro (publicidad, marketing, información, precios, cursos, pagos o similar). off_topic DEBE ser false y should_reply DEBE ser true. Responde con el flujo que corresponda."
+      : "CORRECCIÓN DEL BACKEND: el cliente NO está llenando el formulario de datos, así que should_reply DEBE ser true. Responde a lo que escribió con el flujo que corresponda.";
+
+    const retry = await generateAssistantTurn({
+      history,
+      extraContext: `${extraContext}\n\n${correction}`,
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      phone: lastMessage.from,
+    });
+
+    const stillSilent = retry.off_topic || !retry.should_reply;
+    turn = stillSilent
+      ? {
+          ...retry,
+          off_topic: false,
+          should_reply: true,
+          // Último recurso: paquetes si habló de publicidad/servicios; si no, el menú.
+          reply: SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(batchText))
+            ? SERVICE_PACKAGES_INFO
+            : FALLBACK_ASSISTANT_TURN.reply,
+          intents: {
+            ...FALLBACK_ASSISTANT_TURN.intents,
+            service_packages: SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(batchText)),
+          },
+        }
+      : retry;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: offTopicOnBusiness ? "off_topic_overridden_business" : "silence_overridden_outside_intake",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        retry_still_silent: stillSilent,
+        client_message: batchText.slice(0, 200),
+      },
+    });
+  }
+
+  // Audio que no se pudo transcribir: nunca silencio, se le pide que lo escriba.
+  if (lastAudioUnreadable && (turn.off_topic || !turn.should_reply)) {
+    turn.off_topic = false;
+    turn.should_reply = true;
+    turn.reply = AUDIO_UNREADABLE_REPLY;
+    turn.intents = { ...FALLBACK_ASSISTANT_TURN.intents };
+  }
+
   // Pedido de llamada: se acepta tanto la clasificación del LLM como el respaldo
   // determinista, para que un "quiero llamar para confirmar el paquete" nunca se
   // quede sin avisar al asesor aunque el modelo chico no lo clasifique.
@@ -5620,18 +5953,25 @@ export async function POST(request: Request) {
   const reliefClosedReply = getReliefClosedReply(lastMessage.text, turnNow);
   const mentionsClosedRelief = reliefClosedReply !== null;
 
-  // Flujo de cita en curso: ya solicitada al asesor (marcador de Telegram) o propuesta y
-  // esperando el "confirmar" del cliente. Mientras dure, los afirmativos genéricos
-  // pertenecen a la cita y no deben abrir el formulario de leads ni generar un segundo
-  // aviso al asesor. `hasScheduledAppointment` = solicitud ya enviada al equipo (la
-  // confirmación final la da un humano, el código no la conoce), para anotarla en las
-  // alertas de lead. `appointmentContext` es más amplio: incluye la cita apenas propuesta,
-  // que ya basta para no abrir leads.
-  const hasScheduledAppointment =
-    telegramAppointmentSent || turn.appointment_scheduled;
-
-  const appointmentContext =
-    hasScheduledAppointment || detectAppointmentPending(history);
+  // VISITA A LA OFICINA. Dos tipos:
+  //   - "business": viene por los servicios → formulario de datos del negocio.
+  //   - "course":   viene por un curso (lo dice el mensaje, o la conversación es de cursos)
+  //                 → sin formulario de negocio; se le preguntan sus dudas del curso y se
+  //                 avisa al asesor para que lo llame y le indique la hora.
+  // El detector de texto decide solo; el flag del modelo también, salvo en una conversación
+  // de cursos, donde "¿dónde es?" suele ser la ubicación del curso y no una reunión.
+  // `wantsOfficeVisit` suma lo que ya se había pedido antes: es la nota de la alerta del lead.
+  const officeVisitDetectedKind = detectOfficeVisit(batchText);
+  const officeVisitDetected = officeVisitDetectedKind !== null;
+  const officeVisitKind: "business" | "course" | null =
+    officeVisitDetectedKind === "course" || (officeVisitDetected && courseContext)
+      ? "course"
+      : officeVisitDetected || (turn.office_visit_requested && !courseContext)
+        ? "business"
+        : null;
+  const officeVisitRequested = officeVisitKind !== null;
+  turn.office_visit_requested = officeVisitRequested;
+  const wantsOfficeVisit = officeVisitAlreadyRequested || officeVisitRequested;
 
   const explicitPackageIntent = hasExplicitPackageIntent(lastMessage.text);
 
@@ -5727,12 +6067,9 @@ export async function POST(request: Request) {
     !replyContainsIntakeForm(turn.reply) &&
     !intakeFormSent &&
     !packageAddonIsNew &&
-    shouldForceIntakeForm(
-      lastMessage.text,
-      history,
-      mediaStatus.service_packages,
-      appointmentContext,
-    )
+    // Quien quiere visitarnos recibe su propia versión del formulario (ver más abajo).
+    !officeVisitRequested &&
+    shouldForceIntakeForm(lastMessage.text, history, mediaStatus.service_packages)
   ) {
     console.log("intake form forced by safety net (package choice detected)", {
       conversationId: lastMessage.conversationId,
@@ -5799,7 +6136,7 @@ export async function POST(request: Request) {
   // Red de seguridad de la PROMO DEL LIVE: el cliente ya dio la palabra clave con el
   // monto, así que el QR del curso debe salir sí o sí. El dedup de material evita que
   // se reenvíe si ya lo recibió antes.
-  if (turn.should_reply && promoDetected && !turn.intents.payment_qr) {
+  if (turn.should_reply && promoDetected && courseSellable && !turn.intents.payment_qr) {
     turn.intents.payment_qr = true;
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;
@@ -5836,7 +6173,7 @@ export async function POST(request: Request) {
       courseContext,
       packagesPresented,
       qrAlreadySent: mediaStatus.payment_qr,
-      appointmentContext,
+      courseSellable,
     })
   ) {
     turn.intents.payment_qr = true;
@@ -5860,42 +6197,26 @@ export async function POST(request: Request) {
     });
   }
 
-  // Exclusividad cita ↔ leads: con una cita en curso y sin una señal explícita de
-  // contratar paquetes, el bot no abre el flujo de leads aunque el LLM lo haya marcado.
-  // Evita el doble aviso a Telegram (cita + lead) por el mismo cliente.
-  if (
-    appointmentContext &&
-    !explicitPackageIntent &&
-    (turn.service_intake_requested ||
-      turn.lead_data_submitted ||
-      replyContainsIntakeForm(turn.reply))
-  ) {
-    const replacedForm = replyContainsIntakeForm(turn.reply);
+  // CURSO EN MARCHA: ya no se vende. Si lo único vigente es un curso que ya empezó, el QR
+  // no sale aunque el modelo o una red lo hayan marcado, y una respuesta que ofrece el cupo
+  // se reemplaza por la que informa que el curso se está dictando.
+  if (!courseSellable && turn.intents.payment_qr) {
+    turn.intents.payment_qr = false;
 
-    console.log("intake form blocked by appointment flow", {
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-    });
-
-    turn.service_intake_requested = false;
-    turn.lead_data_submitted = false;
-    turn.intents.service_packages = false;
-    turn.intents.service_packages_promo = false;
-
-    // Si el formulario ya venía dentro de la respuesta, se reemplaza por el mensaje
-    // que reconoce la cita y deja la contratación para la visita.
-    if (replacedForm) turn.reply = APPOINTMENT_OVERLAP_REPLY;
+    const offersSale =
+      /\b(QR|PREVENTA|RESERVA\w*|INSCRIBI\w*|CUPO)\b/.test(normalizeForMatch(turn.reply)) &&
+      !turn.payment_confirmation;
+    if (courseInProgress && offersSale) turn.reply = COURSE_IN_PROGRESS_NO_SALE_REPLY;
 
     await logSystemEvent({
       level: "info",
-      eventType: "intake_form_blocked_by_appointment",
+      eventType: "payment_qr_blocked_course_not_sellable",
       conversationId: lastMessage.conversationId,
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
       metadata: {
-        appointment_already_notified: telegramAppointmentSent,
-        appointment_scheduled_this_turn: turn.appointment_scheduled,
-        reply_replaced: replacedForm,
+        course_in_progress: courseInProgress,
+        reply_replaced: courseInProgress && offersSale,
         client_message: lastMessage.text.slice(0, 200),
       },
     });
@@ -5907,6 +6228,8 @@ export async function POST(request: Request) {
   // sobre un curso se leyó como elegir un paquete). Si la conversación está anclada en
   // cursos y nunca se presentaron paquetes, el formulario NUNCA sale, aunque el LLM lo
   // haya marcado — salvo que el cliente pida paquetes de forma explícita en este mensaje.
+  // Tampoco para quien quiere visitarnos desde una conversación de cursos: esa visita es
+  // de tipo "course" y no lleva el formulario de negocio (ver VISITA A LA OFICINA).
   if (
     courseContext &&
     !explicitPackageIntent &&
@@ -5953,8 +6276,11 @@ export async function POST(request: Request) {
       messageId: lastMessage.messageId,
     });
 
-    turn.reply = RESERVATION_REQUIRES_PAYMENT_REPLY;
-    turn.intents.payment_qr = true;
+    // Con el curso ya en marcha no hay cupo que cobrar: se informa, no se vende.
+    turn.reply = courseSellable
+      ? RESERVATION_REQUIRES_PAYMENT_REPLY
+      : COURSE_IN_PROGRESS_NO_SALE_REPLY;
+    turn.intents.payment_qr = courseSellable;
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;
 
@@ -5970,29 +6296,126 @@ export async function POST(request: Request) {
     });
   }
 
-  // Red de seguridad determinista contra el bug real (caso kbyJ): el cliente pidió una
-  // visita "mañana a las 6 de la tarde" y el bot respondió "un asesor te estará esperando"
-  // — una promesa que nadie verificó (la oficina cierra 18:00). El bot solo registra la
-  // solicitud; la cita la confirma un asesor humano tras ver la alerta de Telegram.
-  if (turn.should_reply && replyConfirmsAppointment(turn.reply)) {
-    console.log("appointment confirmation claim blocked", {
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-    });
+  // ── VISITA A LA OFICINA ──────────────────────────────────────────────────────
+  //
+  // Nadie viene a la oficina sin coordinar: no sabemos si habrá alguien para atender.
+  // Antes el bot anotaba día y hora ("Anoto tu visita… escribe 'confirmar'") y hasta llegó
+  // a prometer "un asesor te estará esperando" (caso kbyJ, a una hora en que la oficina ya
+  // cerraba). Ahora quien quiere visitarnos recibe la explicación de que primero llama un
+  // asesor y le indica la hora. Si viene por los servicios, se le pide el formulario de
+  // datos (el de la LÍNEA C si viene por el agente de IA); si viene por un curso, solo se le
+  // preguntan sus dudas del curso y se avisa al asesor (courseOfficeVisitToNotify).
+  // También se corrige cualquier respuesta que invite a pasar o dé una reunión por hecha.
+  const replyInvitesVisit = turn.should_reply && replyConfirmsAppointment(turn.reply);
+  let courseOfficeVisitToNotify = false;
 
-    turn.reply = APPOINTMENT_REQUEST_PENDING_REPLY;
+  if (
+    turn.should_reply &&
+    !mentionsClosedRelief &&
+    (officeVisitKind === "course" || (!officeVisitRequested && replyInvitesVisit && courseContext))
+  ) {
+    const replyExplainsCall = /\bUN\s+ASESOR\s+TE\s+LLAMARA\b/.test(normalizeForMatch(turn.reply));
+    const replaced = replyInvitesVisit || !replyExplainsCall || replyContainsIntakeForm(turn.reply);
+
+    if (replaced) turn.reply = OFFICE_VISIT_COURSE_REPLY;
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+    turn.intents.location_video = false;
+    courseOfficeVisitToNotify = officeVisitKind === "course";
 
     await logSystemEvent({
       level: "info",
-      eventType: "appointment_confirmation_blocked",
+      eventType: "office_visit_course_handled",
       conversationId: lastMessage.conversationId,
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
       metadata: {
-        client_message: lastMessage.text.slice(0, 200),
-        appointment_scheduled: turn.appointment_scheduled,
-        zoom_meeting_scheduled: turn.zoom_meeting_scheduled,
+        detected_by_text: officeVisitDetected,
+        reply_invited_visit: replyInvitesVisit,
+        reply_replaced: replaced,
+        client_message: batchText.slice(0, 200),
       },
+    });
+  } else if (
+    turn.should_reply &&
+    !mentionsClosedRelief &&
+    (officeVisitKind === "business" || replyInvitesVisit)
+  ) {
+    const aiAgentLine = mediaStatus.ai_agent_flyer || turn.intents.ai_agent_flyer;
+    const aiFormInHistory = history.some(
+      (message) =>
+        message.role === "assistant" &&
+        normalizeForMatch(message.content).includes("CUANTOS MENSAJES RECIBEN"),
+    );
+    const formAlreadyRequested = aiAgentLine ? aiFormInHistory : intakeFormSent;
+    const normalizedReply = normalizeForMatch(turn.reply);
+    const replyExplainsCall = /\bUN\s+ASESOR\s+TE\s+LLAMARA\b/.test(normalizedReply);
+    const replyHasForm = aiAgentLine
+      ? normalizedReply.includes("CUANTOS MENSAJES RECIBEN")
+      : replyContainsIntakeForm(turn.reply);
+
+    let replaced = false;
+
+    if (formAlreadyRequested) {
+      if (replyInvitesVisit) {
+        turn.reply = OFFICE_VISIT_PENDING_CALL_REPLY;
+        replaced = true;
+      }
+    } else if (replyInvitesVisit || !replyExplainsCall || !replyHasForm) {
+      // Si el cliente pidió también la ubicación, se conserva arriba del texto.
+      const locationPrefix = turn.reply.includes(MAPS_OFICINA)
+        ? `La oficina de Conecta Pro está aquí 📍\n${MAPS_OFICINA}\n\n`
+        : "";
+      turn.reply = `${locationPrefix}${aiAgentLine ? OFFICE_VISIT_AI_AGENT_REPLY : OFFICE_VISIT_INTAKE_REPLY}`;
+      replaced = true;
+    }
+
+    if (!formAlreadyRequested && !aiAgentLine) turn.service_intake_requested = true;
+    // El video de "cómo llegar" es del lugar de los cursos, nunca de la oficina.
+    turn.intents.location_video = false;
+    turn.intents.payment_qr = false;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "office_visit_handled",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        detected_by_text: officeVisitDetected,
+        reply_invited_visit: replyInvitesVisit,
+        ai_agent_line: aiAgentLine,
+        form_already_requested: formAlreadyRequested,
+        reply_replaced: replaced,
+        client_message: batchText.slice(0, 200),
+      },
+    });
+  }
+
+  // ── EDICIÓN AMBIGUA ──────────────────────────────────────────────────────────
+  // Si el cliente solo dijo "edición" y no se sabe si ya tiene los videos, se pregunta
+  // antes de mandar paquetes o el número del editor (ver editingNeedsClarification).
+  if (
+    turn.should_reply &&
+    editingNeedsClarification &&
+    !officeVisitRequested &&
+    !normalizeForMatch(turn.reply).includes("PAQUETE COMPLETO:")
+  ) {
+    turn.reply = EDITING_CLARIFY_REPLY;
+    turn.is_greeting = false;
+    turn.service_intake_requested = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "editing_clarification_forced",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: { client_message: lastMessage.text.slice(0, 200) },
     });
   }
 
@@ -6142,6 +6565,46 @@ export async function POST(request: Request) {
     });
   }
 
+  // ALUMNO DE CURSO QUE MANDA SU NOMBRE Y CELULAR. Después del comprobante se le piden esos
+  // datos para agregarlo al grupo del curso; el modelo los leía como un lead de paquetes
+  // ("un asesor ya tiene tus datos" + alerta 🟢 falsa + bot apagado 12 h). Con contexto de
+  // pago de curso y sin formulario de paquetes de por medio, no es un lead.
+  const coursePaymentContext =
+    (mediaStatus.payment_qr ||
+      manualHumanMediaSent ||
+      paymentAcknowledged ||
+      telegramPaymentSent ||
+      receiptDetected) &&
+    !intakeFormSent &&
+    !explicitPackageIntent &&
+    !officeVisitRequested &&
+    !mediaStatus.ai_agent_flyer;
+
+  if (
+    coursePaymentContext &&
+    (turn.lead_data_submitted || turn.service_intake_requested || replyContainsIntakeForm(turn.reply))
+  ) {
+    const normalizedReply = normalizeForMatch(turn.reply);
+    const replaceReply =
+      replyContainsIntakeForm(turn.reply) ||
+      (LEAD_CLOSING_ACK_REGEX.test(normalizedReply) && !normalizedReply.includes("COMPROBANTE"));
+
+    turn.lead_data_submitted = false;
+    turn.service_intake_requested = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+    if (replaceReply) turn.reply = COURSE_PAYER_DATA_REPLY;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "course_payer_data_not_a_lead",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: { reply_replaced: replaceReply, client_message: batchText.slice(0, 200) },
+    });
+  }
+
   // CIERRE DEL LEAD: el acuse SIEMPRE sale antes del silencio.
   //
   // Cuando el cliente termina de dar sus datos, el bot se apaga a continuación (el caso
@@ -6226,7 +6689,7 @@ export async function POST(request: Request) {
   }
 
   // Contexto comercial de la conversación: gate de las alertas de lead y de derivación a
-  // asesor (los avisos de pago, cita y Zoom no pasan por aquí, tienen validación propia).
+  // asesor (los avisos de pago no pasan por aquí, tienen validación propia).
   const commercialMaterialSent =
     mediaStatus.course_flyer ||
     mediaStatus.service_packages ||
@@ -6317,6 +6780,52 @@ export async function POST(request: Request) {
     return new Response("off topic, no reply sent", { status: 200 });
   }
 
+  // RECLUTAMIENTO: busca trabajo, no servicios. El bot se calla, avisa a una persona del
+  // equipo (sin el filtro de contexto comercial: "¿siguen buscando modelos?" no tiene
+  // palabras de venta y el aviso igual tiene que llegar) y se apaga en esa conversación.
+  if (turn.advisor_handoff && turn.advisor_handoff_reason === "recruitment") {
+    if (!telegramHandoffSent) {
+      await notifyAdvisorHandoffToTelegram({
+        history,
+        phone: lastMessage.from,
+        contactName: lastMessage.contactName,
+        conversationId: lastMessage.conversationId,
+        reason: "recruitment",
+        lastMessageText: batchText,
+        summary: turn.conversation_summary,
+      });
+    }
+
+    await pauseBotForHumanHandoff({
+      conversationId: lastMessage.conversationId,
+      phone: lastMessage.from,
+      messageId: lastMessage.messageId,
+      reason: "advisor_handoff",
+    });
+
+    await markReplyLockSent({
+      lastMessageId: lastMessage.messageId,
+      conversationId: lastMessage.conversationId,
+      phone: lastMessage.from,
+      responseText: "[SILENCED] reclutamiento derivado a una persona del equipo",
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "recruitment_handoff_no_reply",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        detected_by_text: recruitmentDetected,
+        advisor_notified: !telegramHandoffSent,
+        client_message: batchText.slice(0, 200),
+      },
+    });
+
+    return new Response("recruitment handoff, no reply sent", { status: 200 });
+  }
+
   // Derivación silenciosa a asesor: el cliente preguntó algo que no está en la guía y el
   // modelo prefirió no inventar. El bot NO responde por WhatsApp; se avisa una sola vez
   // al asesor por Telegram (marcador [TELEGRAM_HANDOFF_SENT]) para que un humano atienda.
@@ -6398,7 +6907,7 @@ export async function POST(request: Request) {
           : callRequested && !turn.lead_data_submitted
             ? "call_request"
             : "intake",
-        hasAppointment: hasScheduledAppointment,
+        wantsOfficeVisit,
         trigger: turn.call_request
           ? "call_request_assistant"
           : callRequestHeuristic
@@ -6408,7 +6917,7 @@ export async function POST(request: Request) {
               : "intake_form",
       });
 
-      await markLeadCapturedAndCancelFollowups(
+      await markLeadCaptured(
         lastMessage.conversationId,
         lastMessage.from,
         flowState.flowStage,
@@ -6619,7 +7128,7 @@ export async function POST(request: Request) {
       APPOINTMENT_KEYWORDS.test(normalizedLastMessageText) &&
       !COURSE_KEYWORDS.test(normalizedLastMessageText);
 
-    if (asksAboutOffice || turn.appointment_scheduled) {
+    if (asksAboutOffice || turn.office_visit_requested) {
       intentsToSend.delete("location_video");
       console.warn("location_video suppressed: office flow, not a course location", {
         conversationId: lastMessage.conversationId,
@@ -6723,6 +7232,27 @@ export async function POST(request: Request) {
       responseText: replyText,
     });
 
+    // Pedido de reunión en oficina: queda registrado para que la alerta del lead (que
+    // llega cuando el cliente manda sus datos, turnos después) le avise al asesor.
+    if (turn.office_visit_requested && !officeVisitAlreadyRequested) {
+      await saveOutboundMessage({
+        conversationId: mediaConversationId,
+        phone: lastMessage.from,
+        content: `${OFFICE_VISIT_MARKER} el cliente quiere reunirse en la oficina (se coordina por llamada)`,
+        rawPayload: { type: "office_visit_request", kind: officeVisitKind },
+      });
+    }
+
+    // Visita por un curso: sin formulario de por medio, el asesor se entera ahora.
+    if (courseOfficeVisitToNotify) {
+      await notifyCourseOfficeVisitToTelegram({
+        phone: lastMessage.from,
+        conversationId: mediaConversationId,
+        clientMessage: batchText,
+        summary: turn.conversation_summary,
+      });
+    }
+
     if (turn.service_intake_requested) {
       await saveOutboundMessage({
         conversationId: mediaConversationId,
@@ -6731,8 +7261,7 @@ export async function POST(request: Request) {
         rawPayload: { type: "intake_form", source: "service_packages_intake" },
       });
 
-      // Transición de estado: el formulario fue enviado -> intake_sent, y se programa
-      // un follow-up para reactivar al cliente si no completa sus datos.
+      // Transición de estado: el formulario fue enviado -> intake_sent.
       await advanceConversationFlowState({
         conversationId: mediaConversationId,
         phone: lastMessage.from,
@@ -6745,12 +7274,6 @@ export async function POST(request: Request) {
             flowState.selectedPackage ??
             null,
         },
-      });
-
-      await scheduleFollowupIfNeeded({
-        conversationId: mediaConversationId,
-        phone: lastMessage.from,
-        triggerInboundAt: lastMessageCreatedAt,
       });
     }
 
@@ -6820,11 +7343,11 @@ export async function POST(request: Request) {
           : callRequested && !turn.lead_data_submitted
             ? "call_request"
             : "intake",
-        hasAppointment: hasScheduledAppointment,
+        wantsOfficeVisit,
         trigger,
       });
 
-      await markLeadCapturedAndCancelFollowups(
+      await markLeadCaptured(
         mediaConversationId,
         lastMessage.from,
         flowState.flowStage,
@@ -6859,64 +7382,6 @@ export async function POST(request: Request) {
           : undefined,
         verification: receiptCheck?.source === "vision" ? receiptCheck.reason : undefined,
       });
-    }
-
-    // Cita: el cliente pidió un día/hora para visitar la oficina. El bot NO la confirma —
-    // solo la solicita. Un asesor revisa la agenda y confirma por WhatsApp, por eso la
-    // alerta lleva el día/hora textual: sin él, el asesor solo ve "confirmar" y no puede
-    // decidir nada.
-    if (turn.appointment_scheduled && !telegramAppointmentSent) {
-      const notified = await sendTelegramNotification(
-        buildTelegramBody({
-          headline: "📅 <b>Solicitud de cita en oficina — CONFIRMAR</b>",
-          phone: lastMessage.from,
-          clientMessage: lastMessage.text,
-          summary: turn.conversation_summary,
-          contextLabel: "Pendiente de confirmación del asesor",
-          note: turn.appointment_slot
-            ? `🕒 Día/hora solicitados: ${turn.appointment_slot}\n⚠️ El bot NO confirmó la cita — confírmala tú por WhatsApp`
-            : "⚠️ El cliente confirmó pero no se pudo extraer día/hora — revisar el chat",
-        }),
-      );
-
-      if (notified) {
-        await saveOutboundMessage({
-          conversationId: mediaConversationId,
-          phone: lastMessage.from,
-          content: "[TELEGRAM_APPOINTMENT_SENT] notificación de cita enviada a Telegram",
-          rawPayload: { type: "telegram_notification", event: "appointment" },
-        });
-      }
-    }
-
-    // Reunión por Zoom del agente de IA (LÍNEA C): el cliente aceptó y dio día/hora. Un
-    // asesor debe coordinar el Zoom y enviar el link — el bot nunca lo hace. Marcador
-    // propio [TELEGRAM_ZOOM_SENT], independiente del de cita presencial, porque el mismo
-    // cliente puede tener primero el Zoom y después una cita en oficinas para formalizar.
-    if (turn.zoom_meeting_scheduled && !telegramZoomSent) {
-      const notified = await sendTelegramNotification(
-        buildTelegramBody({
-          headline: "📹 <b>Solicitud de reunión por Zoom — CONFIRMAR</b>",
-          phone: lastMessage.from,
-          clientMessage: lastMessage.text,
-          summary:
-            turn.conversation_summary ||
-            "El cliente aceptó la reunión por Zoom del agente de IA. Coordinar horario y enviar el link.",
-          contextLabel: "Agente de IA — confirmar Zoom y enviar link",
-          note: turn.zoom_slot
-            ? `🕒 Día/hora solicitados: ${turn.zoom_slot}\n⚠️ El bot NO confirmó el horario ni envió link — hazlo tú`
-            : "⚠️ Sin día/hora extraído — revisar el chat",
-        }),
-      );
-
-      if (notified) {
-        await saveOutboundMessage({
-          conversationId: mediaConversationId,
-          phone: lastMessage.from,
-          content: "[TELEGRAM_ZOOM_SENT] notificación de reunión Zoom enviada a Telegram",
-          rawPayload: { type: "telegram_notification", event: "zoom_meeting" },
-        });
-      }
     }
 
     // Oportunidad comercial fuera de catálogo (ej. "un solo video"/spot/comercial): el bot
@@ -7105,7 +7570,7 @@ export async function POST(request: Request) {
   // el bot NO se apaga sobre un chat que recién empieza.
   const leadActuallyClosed =
     (turn.lead_data_submitted || turn.ai_agent_lead_submitted) &&
-    (intakeFormSent ||
+    (intakeInProgress ||
       turn.service_intake_requested ||
       detectLeadDataHeuristic(lastMessage.text));
 
@@ -7119,15 +7584,11 @@ export async function POST(request: Request) {
       ? "prior_agreement"
       : callRequested
         ? "call_requested"
-        : turn.appointment_scheduled
-          ? "appointment_requested"
-          : turn.zoom_meeting_scheduled
-            ? "zoom_requested"
-            : leadActuallyClosed
-              ? "lead_closed"
-              : handoffReasonPauses
-                ? "advisor_handoff"
-                : null;
+        : leadActuallyClosed
+          ? "lead_closed"
+          : handoffReasonPauses
+            ? "advisor_handoff"
+            : null;
 
   if (humanHandoffPauseReason) {
     await pauseBotForHumanHandoff({
@@ -7160,8 +7621,8 @@ export async function POST(request: Request) {
         : callRequestHeuristic
           ? "heuristic"
           : null,
-      appointment_scheduled: turn.appointment_scheduled,
-      zoom_meeting_scheduled: turn.zoom_meeting_scheduled,
+      office_visit_requested: turn.office_visit_requested,
+      audio_transcription_failed: lastAudioUnreadable,
       ai_agent_lead_submitted: turn.ai_agent_lead_submitted,
       relief_campaign_closed_notice: mentionsClosedRelief,
       advisor_handoff: turn.advisor_handoff,

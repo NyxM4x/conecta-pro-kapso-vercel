@@ -1,29 +1,66 @@
-// Notificaciones a Telegram compartidas entre el webhook (app/api/webhooks/kapso)
-// y los cron jobs (app/api/cron/*), que corren como route handlers independientes.
+// Notificaciones a Telegram compartidas entre el webhook (app/api/webhooks/kapso),
+// los cron jobs (app/api/cron/*) y el webhook del propio bot de Telegram
+// (app/api/telegram/*), que corren como route handlers independientes.
 
-async function sendTelegramNotification(text: string): Promise<boolean> {
+// Llamada genérica a la Bot API. Devuelve null si falta el token o la llamada falla.
+async function callTelegramApi(method: string, body: Record<string, unknown>): Promise<any | null> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-
-  if (!token || !chatId) return false;
+  if (!token) return null;
 
   try {
-    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+      body: JSON.stringify(body),
     });
 
-    if (!response.ok) {
-      console.error("sendTelegramNotification failed", response.status, await response.text());
-      return false;
+    const json = await response.json().catch(() => null);
+
+    if (!response.ok || !json?.ok) {
+      console.error(`telegram ${method} failed`, response.status, JSON.stringify(json));
+      return null;
     }
 
-    return true;
+    return json;
   } catch (error) {
-    console.error("sendTelegramNotification threw", error);
-    return false;
+    console.error(`telegram ${method} threw`, error);
+    return null;
   }
+}
+
+// Mensaje a un chat concreto, con botones opcionales (inline_keyboard).
+async function sendTelegramMessage(params: {
+  chatId: string | number;
+  text: string;
+  replyMarkup?: Record<string, unknown>;
+  // Las listas llevan decenas de links a wa.me: sin esto Telegram arma una vista previa.
+  disablePreview?: boolean;
+}): Promise<boolean> {
+  const result = await callTelegramApi("sendMessage", {
+    chat_id: params.chatId,
+    text: params.text,
+    parse_mode: "HTML",
+    ...(params.disablePreview ? { disable_web_page_preview: true } : {}),
+    ...(params.replyMarkup ? { reply_markup: params.replyMarkup } : {}),
+  });
+
+  return result !== null;
+}
+
+async function sendTelegramNotification(text: string): Promise<boolean> {
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!chatId) return false;
+  return sendTelegramMessage({ chatId, text });
+}
+
+// Alertas TÉCNICAS para el desarrollador (ej. OpenAI sin saldo), separadas del grupo de
+// asesores. Van al chat de TELEGRAM_DEV_CHAT_ID (el chat personal del desarrollador con el
+// bot; el id se obtiene escribiéndole /id al bot). Sin esa variable caen en el grupo del
+// equipo para que la alerta no se pierda.
+async function sendDeveloperAlert(text: string): Promise<boolean> {
+  const chatId = process.env.TELEGRAM_DEV_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+  if (!chatId) return false;
+  return sendTelegramMessage({ chatId, text });
 }
 
 // Escapa los caracteres que Telegram interpreta como HTML (parse_mode: "HTML"),
@@ -112,7 +149,10 @@ async function notifyUnattendedLeadToTelegram(params: {
 }
 
 export {
+  callTelegramApi,
+  sendTelegramMessage,
   sendTelegramNotification,
+  sendDeveloperAlert,
   escapeTelegramHtml,
   buildTelegramBody,
   notifyUnattendedLeadToTelegram,

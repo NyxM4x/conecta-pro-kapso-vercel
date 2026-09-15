@@ -2,8 +2,15 @@
 //
 // Antes las fechas vivían escritas a mano dentro del system prompt, así que un curso
 // ya dictado se seguía anunciando como próximo hasta que alguien editaba el prompt.
-// Aquí son datos: un curso deja de anunciarse solo cuando faltan menos de
-// COURSE_CLOSES_MINUTES_BEFORE minutos para su hora de inicio.
+// Aquí son datos, y cada curso pasa solo por tres estados según la hora actual:
+//
+//   1. PRÓXIMO  (hasta la hora de inicio): se anuncia, se informa y se vende.
+//   2. EN CURSO (desde el inicio hasta COURSE_INFO_MINUTES_AFTER_START después): ya NO
+//      se vende, pero se sigue dando su información — ubicación, que es hoy, horario.
+//      Existe por un caso real: el día del curso, alumnos que YA habían pagado
+//      preguntaban dónde era y el bot les contestaba que "no hay fecha", porque el curso
+//      se apagaba antes de empezar.
+//   3. TERMINADO: pasa a "ya se dictó" y deja de exponer fecha, precio y ubicación.
 //
 // PARA ACTUALIZAR: edita SOLO la lista COURSES de abajo. Cuando un curso reciba nueva
 // fecha, cambia su `startsAt` y vuelve a estar vigente automáticamente.
@@ -16,17 +23,19 @@ import { MAPS_CURSOS } from "./locations.ts";
 
 const BOLIVIA_TZ = "America/La_Paz";
 
-// Un curso se cierra 30 minutos antes de empezar: pasado ese punto ya no se anuncia
-// ni se vende, porque el cliente no llegaría a tiempo.
-const COURSE_CLOSES_MINUTES_BEFORE = 30;
+// Cuánto tiempo después de la hora de inicio se sigue informando un curso. Con cursos a
+// las 16:00, 90 minutos cubren hasta las 17:30: quien llega tarde o recién lee el día del
+// curso todavía recibe la ubicación.
+const COURSE_INFO_MINUTES_AFTER_START = 90;
 
 // Ubicación EXCEPCIONAL para una fecha puntual de un curso. Existe para no tener que
 // escribir la excepción dentro del prompt, donde sobreviviría al evento y obligaría al
 // modelo a razonar sobre fechas.
 type CourseLocationOverride = {
   mapsUrl: string;
-  // Se ignora pasada esta fecha, AUNQUE el curso reciba un `startsAt` nuevo. Es el
-  // segundo candado: la excepción muere por su cuenta, no solo junto con la fecha.
+  // Hora de inicio de la fecha excepcional. La excepción sigue vigente durante la
+  // ventana EN CURSO (hasta COURSE_INFO_MINUTES_AFTER_START después) y muere sola,
+  // AUNQUE el curso reciba un `startsAt` nuevo: es el segundo candado.
   until: string;
   // Qué debe comunicarle el bot al cliente sobre el cambio de lugar.
   note: string;
@@ -54,6 +63,8 @@ type Course = {
   locationOverride?: CourseLocationOverride;
 };
 
+type CourseStatus = "upcoming" | "in_progress" | "finished";
+
 const COURSES: Course[] = [
   {
     id: "creacion_contenido",
@@ -74,39 +85,66 @@ const COURSES: Course[] = [
   },
 ];
 
+const startTime = (course: Course) => new Date(course.startsAt).getTime();
+const infoEndTime = (course: Course) =>
+  startTime(course) + COURSE_INFO_MINUTES_AFTER_START * 60_000;
+
+function getCourseStatus(course: Course, now: Date): CourseStatus {
+  const t = now.getTime();
+  if (t < startTime(course)) return "upcoming";
+  if (t < infoEndTime(course)) return "in_progress";
+  return "finished";
+}
+
+const byStart = (a: Course, b: Course) => startTime(a) - startTime(b);
+
 // Única fuente de la ubicación de un curso. Devuelve `note` solo cuando la excepción
 // está vigente; el resto del sistema usa esa presencia para saber que el lugar cambió.
 function getCourseLocation(course: Course, now: Date): { mapsUrl: string; note?: string } {
   const override = course.locationOverride;
 
-  if (override && new Date(override.until).getTime() > now.getTime()) {
-    return { mapsUrl: override.mapsUrl, note: override.note };
+  if (override) {
+    const overrideEnds =
+      new Date(override.until).getTime() + COURSE_INFO_MINUTES_AFTER_START * 60_000;
+
+    if (overrideEnds > now.getTime()) {
+      return { mapsUrl: override.mapsUrl, note: override.note };
+    }
   }
 
   return { mapsUrl: MAPS_CURSOS };
 }
 
-// ¿Algún curso vigente se dicta ahora mismo en una ubicación excepcional? La usa el
-// webhook para no enviar el video de "cómo llegar", que muestra la ubicación habitual.
-function hasActiveLocationOverride(now: Date): boolean {
-  return getActiveCourses(now).some((course) => getCourseLocation(course, now).note !== undefined);
-}
-
-function getCourseCloseTime(course: Course): number {
-  return new Date(course.startsAt).getTime() - COURSE_CLOSES_MINUTES_BEFORE * 60_000;
-}
-
-// Cursos que todavía se pueden anunciar y vender, ordenados del más próximo al más lejano.
+// Cursos que todavía se pueden anunciar y VENDER (aún no empezaron), del más próximo al
+// más lejano.
 function getActiveCourses(now: Date): Course[] {
-  return COURSES.filter((course) => getCourseCloseTime(course) > now.getTime()).sort(
-    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
-  );
+  return COURSES.filter((course) => getCourseStatus(course, now) === "upcoming").sort(byStart);
 }
 
-// Cursos cuya fecha ya pasó (o está por empezar): existen en el catálogo pero no
-// tienen fecha vigente. Sirven para responder "ese curso ya se dictó".
+// Cursos que se están dictando ahora mismo: se informan, pero no se venden.
+function getInProgressCourses(now: Date): Course[] {
+  return COURSES.filter((course) => getCourseStatus(course, now) === "in_progress").sort(byStart);
+}
+
+// Cursos que ya terminaron: existen en el catálogo pero no tienen fecha vigente. Sirven
+// para responder "ese curso ya se dictó".
 function getExpiredCourses(now: Date): Course[] {
-  return COURSES.filter((course) => getCourseCloseTime(course) <= now.getTime());
+  return COURSES.filter((course) => getCourseStatus(course, now) === "finished");
+}
+
+// ¿Hay algún curso que se pueda cobrar ahora? Lo usa el webhook para no mandar el QR de
+// pago cuando lo único vigente es un curso que ya empezó.
+function hasSellableCourse(now: Date): boolean {
+  return getActiveCourses(now).length > 0;
+}
+
+// ¿Algún curso que todavía se informa (próximo o en curso) se dicta en una ubicación
+// excepcional? La usa el webhook para no enviar el video de "cómo llegar", que muestra la
+// ubicación habitual.
+function hasActiveLocationOverride(now: Date): boolean {
+  return [...getActiveCourses(now), ...getInProgressCourses(now)].some(
+    (course) => getCourseLocation(course, now).note !== undefined,
+  );
 }
 
 // "domingo 9 de agosto, 4:00 PM" en hora de Bolivia. Intl devuelve "4:00 p. m." en
@@ -121,7 +159,11 @@ function formatCourseDate(iso: string): string {
     month: "long",
   }).format(date);
 
-  const time = new Intl.DateTimeFormat("es-BO", {
+  return `${day}, ${formatBoliviaTime(date)}`;
+}
+
+function formatBoliviaTime(date: Date): string {
+  return new Intl.DateTimeFormat("es-BO", {
     timeZone: BOLIVIA_TZ,
     hour: "numeric",
     minute: "2-digit",
@@ -131,8 +173,6 @@ function formatCourseDate(iso: string): string {
     .replace(/\s*a\.?\s*m\.?/i, " AM")
     .replace(/\s*p\.?\s*m\.?/i, " PM")
     .trim();
-
-  return `${day}, ${time}`;
 }
 
 function formatNowInBolivia(now: Date): string {
@@ -154,11 +194,29 @@ function formatNowInBolivia(now: Date): string {
   return formatted;
 }
 
+// Líneas de ubicación de un curso, comunes a los cursos próximos y a los en curso.
+function renderLocationLines(course: Course, now: Date): string[] {
+  const location = getCourseLocation(course, now);
+  const lines = [
+    `    Ubicación de ESTE curso (link tal cual, texto plano, es la fuente de verdad): ${location.mapsUrl}`,
+  ];
+
+  if (location.note) {
+    lines.push(
+      `    ⚠️ ${location.note}`,
+      "    ⚠️ NO marques intents.location_video para este curso: el video de cómo llegar muestra la ubicación habitual y contradiría este link.",
+    );
+  }
+
+  return lines;
+}
+
 // Bloque que se inyecta en el contexto del prompt en CADA mensaje. Es la única fuente
 // de fechas y precios de cursos: el prompt estático ya no los contiene, para que el
 // modelo no pueda recitar de memoria una fecha vencida.
 function renderCourseContext(now: Date): string {
   const active = getActiveCourses(now);
+  const inProgress = getInProgressCourses(now);
   const expired = getExpiredCourses(now);
 
   const lines = [
@@ -166,27 +224,35 @@ function renderCourseContext(now: Date): string {
     `- Fecha y hora actual en Bolivia: ${formatNowInBolivia(now)}.`,
   ];
 
+  if (inProgress.length > 0) {
+    lines.push(
+      "- Cursos que SE ESTÁN DICTANDO AHORA MISMO (hoy). Ya NO se venden: NO envíes el QR (intents.payment_qr = false), NO ofrezcas preventa, NO des precios y NO invites a inscribirse. Pero SÍ das toda su información a quien la pida — muchos son alumnos que YA pagaron y recién preguntan el mismo día. Si preguntan por el curso, di que se está llevando a cabo ahora mismo (empezó a la hora indicada) y responde lo que necesiten: la ubicación (marca intents.location_video = true salvo aviso contrario abajo), que es hoy y el horario. Si alguien que aún no pagó quiere inscribirse, dile con amabilidad que este curso ya está en marcha y que puede seguirnos en TikTok como @marketero7 para enterarse de la próxima fecha. NUNCA digas que la fecha ya pasó ni que no hay fecha para este curso:",
+    );
+
+    for (const course of inProgress) {
+      lines.push(
+        `  • ${course.name} — HOY, empezó a las ${formatBoliviaTime(new Date(course.startsAt))} (${formatCourseDate(course.startsAt)}).`,
+        ...renderLocationLines(course, now),
+      );
+    }
+  }
+
   if (active.length > 0) {
     lines.push("- Cursos CON FECHA VIGENTE (los ÚNICOS que puedes anunciar, ofrecer y cobrar):");
 
     for (const course of active) {
-      const location = getCourseLocation(course, now);
-
       lines.push(
         `  • ${course.name} — ${formatCourseDate(course.startsAt)}. Precios: ${course.pricePreventa} Bs preventa (pagando antes del día del curso) / ${course.pricePresencial} Bs presencial (pagando el mismo día).`,
-        `    Ubicación de ESTE curso (link tal cual, texto plano, es la fuente de verdad): ${location.mapsUrl}`,
+        ...renderLocationLines(course, now),
       );
-
-      if (location.note) {
-        lines.push(
-          `    ⚠️ ${location.note}`,
-          "    ⚠️ NO marques intents.location_video para este curso: el video de cómo llegar muestra la ubicación habitual y contradiría este link.",
-        );
-      }
     }
-  } else {
+  } else if (inProgress.length === 0) {
     lines.push(
       "- NINGÚN curso tiene fecha vigente en este momento. Si preguntan por cursos, di que aún no hay una fecha oficial confirmada y que pueden seguirnos en redes como ConectaPro o @marketero7, donde anunciamos las nuevas fechas apenas salen. NUNCA inventes una fecha ni prometas uno próximo con fecha concreta.",
+    );
+  } else {
+    lines.push(
+      "- Fuera del curso que se está dictando hoy, NINGÚN otro curso tiene fecha vigente: no hay nada que vender. Para próximas fechas, que nos sigan en TikTok como @marketero7. NUNCA inventes una fecha.",
     );
   }
 
@@ -206,13 +272,16 @@ function renderCourseContext(now: Date): string {
 
 export {
   COURSES,
-  COURSE_CLOSES_MINUTES_BEFORE,
+  COURSE_INFO_MINUTES_AFTER_START,
+  getCourseStatus,
   getActiveCourses,
+  getInProgressCourses,
   getExpiredCourses,
   getCourseLocation,
+  hasSellableCourse,
   hasActiveLocationOverride,
   formatCourseDate,
   formatNowInBolivia,
   renderCourseContext,
 };
-export type { Course, CourseLocationOverride };
+export type { Course, CourseLocationOverride, CourseStatus };

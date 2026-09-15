@@ -10,8 +10,16 @@
 import assert from "node:assert/strict";
 import {
   containsIncomingLink,
+  detectEditingRequest,
+  hasBusinessVocabulary,
   mentionsExpiredEditPromo,
+  mentionsOfficeVisit,
+  detectOfficeVisit,
+  mentionsRecruitment,
   mentionsPriorAgreement,
+  normalizeForMatch,
+  COURSE_KEYWORDS,
+  SERVICE_PACKAGES_KEYWORDS,
 } from "./keywords.ts";
 
 let passed = 0;
@@ -151,6 +159,192 @@ test("un texto normal no trae enlaces", () => {
   assert.equal(containsIncomingLink("hola, cuánto cuesta el curso?"), false);
   assert.equal(containsIncomingLink("mi correo es juan arroba gmail"), false);
   assert.equal(containsIncomingLink(""), false);
+});
+
+// --- Publicidad y manejo de redes son paquetes -----------------------------
+//
+// Frases tomadas tal cual de chats reales (ago–sep 2026) que el bot dejó sin flyer o sin
+// respuesta.
+
+test("la publicidad, el marketing y el manejo de redes cuentan como paquetes", () => {
+  const frases = [
+    "Buenas noches disculpe una consulta cuanto cobran por publicidad??",
+    "Servicios de marketing",
+    "Me puede enviar los planes de publicidad",
+    "Realizan Manejo de Redes Sociales para negocios",
+    "Quisiera q me puedan promocionar mi negocio",
+    "Necesito una empresa de marketing para mi negocio",
+    "busco un community manager",
+    "que manejen mis redes",
+    "Quería saber los precios de marketing, publicidad, para una venta de repuesto",
+  ];
+
+  for (const frase of frases) {
+    assert.equal(SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(frase)), true, frase);
+  }
+});
+
+test("'vi su anuncio' no dice de qué línea viene", () => {
+  assert.equal(SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch("Vi un anuncio en tik tok")), false);
+});
+
+test("pedir capacitación en marketing sigue siendo un curso", () => {
+  const frase = "Quiero capacitarme sobre como realizar marketing en tiktok";
+  assert.equal(COURSE_KEYWORDS.test(normalizeForMatch(frase)), true);
+});
+
+// --- Visita a la oficina ----------------------------------------------------
+
+test("reconoce al cliente que quiere visitarnos o reunirse en persona", () => {
+  const frases = [
+    "Mañana ire a visitarlos",
+    "Quiero reunirme con usted para ver sobre las propuesta",
+    "Quiero hacer una cita",
+    "puedo pasar por su oficina mañana?",
+    "me gustaría una reunión presencial",
+    "a donde me puedo apersonar",
+    "voy a ir a la oficina el lunes",
+  ];
+
+  for (const frase of frases) {
+    assert.equal(mentionsOfficeVisit(frase), true, frase);
+  }
+});
+
+test("preguntar solo dónde queda la oficina no es pedir una reunión", () => {
+  assert.equal(mentionsOfficeVisit("¿dónde queda su oficina?"), false);
+  assert.equal(mentionsOfficeVisit("pásame la ubicación de la oficina"), false);
+  assert.equal(mentionsOfficeVisit("qué horario tienen"), false);
+});
+
+test("negar la visita, pedirla virtual o buscar trabajo no es una visita", () => {
+  assert.equal(mentionsOfficeVisit("No, no puedo ir yo a su oficina"), false);
+  assert.equal(mentionsOfficeVisit("a las 16:00 podríamos reunirnos de forma virtual o por llamada"), false);
+  assert.equal(mentionsOfficeVisit("cómo puedo formar parte de su equipo o a donde me puedo apersonar"), false);
+  // Un cliente empresa que habla de SUS propias oficinas.
+  assert.equal(mentionsOfficeVisit("le escribo para coordinar una reunión en nuestras oficinas"), false);
+});
+
+test("la ubicación del curso nunca es una visita a la oficina", () => {
+  assert.equal(mentionsOfficeVisit("voy a ir al curso, ¿es en la oficina?"), false);
+  assert.equal(detectOfficeVisit("¿dónde es el curso? ¿puedo ir a su oficina?"), null);
+});
+
+test("quien quiere visitarnos por un curso no recibe el formulario de negocio", () => {
+  assert.equal(detectOfficeVisit("¿puedo pasar por su oficina a pagar el curso?"), "course");
+  assert.equal(detectOfficeVisit("quiero visitarlos para ver lo del curso de capcut"), "course");
+  assert.equal(detectOfficeVisit("quiero visitarlos para ver lo de la publicidad"), "business");
+});
+
+// --- Reclutamiento ----------------------------------------------------------
+
+test("reconoce a quien busca trabajo (frases reales)", () => {
+  const frases = [
+    "Buenas tardes me salió un video que estaban buscando modelos para crear contenido",
+    "Siguen buscando chica",
+    "Holaa Sigue disponible el trabajo",
+    "Muy Buenos días cómo puedo formar parte de su equipo",
+    "Hola buenos días quisiera saber, cuáles son los requisitos para ser modelo",
+    "Aun están buscando personas?",
+    "Buenas tardes de casualidad necesitan azafata para la fexpocruz?",
+    "Quería preguntarle si sigue disponible para que yo pueda trabajar como influencer",
+    "Hay dice que hay vacantes disponibles",
+  ];
+
+  for (const frase of frases) {
+    assert.equal(mentionsRecruitment(frase), true, frase);
+  }
+});
+
+test("un cliente que pregunta por modelos en SUS videos no es reclutamiento", () => {
+  assert.equal(mentionsRecruitment("¿sale un modelo en los videos o tengo que salir yo?"), false);
+  assert.equal(mentionsRecruitment("Quiero trabajar con ustedes"), false);
+  // Cliente que quiere un video para SU convocatoria de personal.
+  assert.equal(
+    mentionsRecruitment("quisiera comenzar un video buscando personal y luego el otro para la inaguracion"),
+    false,
+  );
+  assert.equal(mentionsRecruitment("quiero publicidad para mi negocio"), false);
+});
+
+// --- Edición ambigua --------------------------------------------------------
+
+test("edición sin más contexto es ambigua: hay que preguntar", () => {
+  const frases = [
+    "Edición de video",
+    "Edición !!",
+    "Buenas tardes Disculpe precio de la edición de video",
+    "Necesito edición para tik tok",
+    "Editan videos vi su publicación en tik tok",
+    "Me interesa su edición",
+    "Cuánto me cobra editar un vídeo",
+  ];
+
+  for (const frase of frases) {
+    assert.equal(detectEditingRequest(frase), "ambiguous", frase);
+  }
+});
+
+test("quien ya tiene sus videos quiere solo edición", () => {
+  const frases = [
+    "Quiero que me editen mis videos",
+    "solo necesito edición",
+    "ya tengo los videos grabados, solo quiero que me los editen",
+    "Solo necesito edicion soy del interior",
+    "tengo un video que quiero editar, me ayudan?",
+    "no necesito grabación, solo edición",
+    "Imagino que solo es enviar un vídeo en bruto, para que solo le hagan edición",
+    "Lo q me interesa es solamente la edición",
+    "Y solo ediciones",
+    "Si yo me grabo en mi casa solo hablando cualquier cosa y edición quiero nomás",
+    "Quería saber si editan clip de free fire",
+  ];
+
+  for (const frase of frases) {
+    assert.equal(detectEditingRequest(frase), "editing_only", frase);
+  }
+});
+
+test("grabación + edición o publicidad es un paquete", () => {
+  assert.equal(detectEditingRequest("Los paquetes de edición y grabación desde que precios tiene?"), "packages");
+  assert.equal(detectEditingRequest("Queria informacion servicio de grabacion y edicion de video para mi negocio"), "packages");
+  assert.equal(detectEditingRequest("Busco alguien q me grave los videos y me los edite"), "packages");
+});
+
+test("'paquetes de edición' sigue sin decir si ya tiene los videos", () => {
+  assert.equal(detectEditingRequest("Me interesa saber paquetes de edición"), "ambiguous");
+});
+
+test("el curso de edición en CapCut no pasa por este detector", () => {
+  assert.equal(detectEditingRequest("cuando tendra de nuevo el curso de edicion de capcut"), null);
+  assert.equal(detectEditingRequest("hola, quiero información"), null);
+});
+
+// --- Vocabulario del negocio contra el silencio por "fuera de tema" --------
+
+test("una consulta del negocio nunca se silencia como fuera de tema", () => {
+  const frases = [
+    "Me puede brindar más información sobre los precio de publicidad",
+    "Qeria saber información",
+    "Que servicio brindan?",
+    "Mas información sobre los cursos de editar videos",
+    "Le escribo por las ediciones de video",
+    "Buen di yo pague no estoy en el curso",
+    "Ya Ise mi cancelación",
+  ];
+
+  for (const frase of frases) {
+    assert.equal(hasBusinessVocabulary(frase), true, frase);
+  }
+});
+
+test("reclutamiento, charla y difusiones largas no fuerzan respuesta", () => {
+  assert.equal(hasBusinessVocabulary("Quería saber sobre las modelos para sus redes sociales"), false);
+  assert.equal(hasBusinessVocabulary("Siguen buscando personas para crear contenido?"), false);
+  assert.equal(hasBusinessVocabulary("Mielda toy viendo las imgs en el gym"), false);
+  const difusion =
+    "🐾 Hola somos HuelliHogar, queremos contarte de nuestros servicios de guardería para tu mascota con juegos, baño, corte de pelo, transporte puerta a puerta, veterinario de confianza y muchas sorpresas más para que tu perrito la pase increíble mientras tú trabajas tranquilo todo el día";
+  assert.equal(hasBusinessVocabulary(difusion), false);
 });
 
 console.log(`${passed} pruebas OK`);
