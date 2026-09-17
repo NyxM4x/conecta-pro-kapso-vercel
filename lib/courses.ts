@@ -4,7 +4,9 @@
 // ya dictado se seguía anunciando como próximo hasta que alguien editaba el prompt.
 // Aquí son datos, y cada curso pasa solo por tres estados según la hora actual:
 //
-//   1. PRÓXIMO  (hasta la hora de inicio): se anuncia, se informa y se vende.
+//   1. PRÓXIMO  (hasta la hora de inicio): se anuncia, se informa y se vende. La preventa
+//      se cobra con QR hasta la víspera; EL DÍA DEL CURSO ya no sale el QR y solo se
+//      puede pagar el precio en puerta, en la puerta (ver isCourseDay).
 //   2. EN CURSO (desde el inicio hasta COURSE_INFO_MINUTES_AFTER_START después): ya NO
 //      se vende, pero se sigue dando su información — ubicación, que es hoy, horario.
 //      Existe por un caso real: el día del curso, alumnos que YA habían pagado
@@ -57,7 +59,9 @@ type Course = {
   name: string;
   // ISO con offset de Bolivia (UTC-4, sin horario de verano).
   startsAt: string;
+  // Se cobra con QR hasta la víspera del curso.
   pricePreventa: number;
+  // Precio en puerta: el día del curso, pagando en la puerta (sin QR).
   pricePresencial: number;
   // Ausente = el curso es en la ubicación habitual (MAPS_CURSOS).
   locationOverride?: CourseLocationOverride;
@@ -78,8 +82,8 @@ const COURSES: Course[] = [
   },
   {
     id: "capcut_pro",
-    name: "Curso de Edición en CapCut Pro",
-    startsAt: "2026-08-16T16:00:00-04:00",
+    name: "Curso de Edición Persuasiva en CapCut Pro",
+    startsAt: "2026-09-20T16:00:00-04:00",
     pricePreventa: 450,
     pricePresencial: 550,
   },
@@ -97,6 +101,22 @@ function getCourseStatus(course: Course, now: Date): CourseStatus {
 }
 
 const byStart = (a: Course, b: Course) => startTime(a) - startTime(b);
+
+// "2026-09-20" en hora de Bolivia, para comparar días de calendario sin depender de la zona
+// horaria del servidor (Vercel corre en UTC: a las 21:00 del sábado en Bolivia ya es domingo).
+const boliviaDateKey = (date: Date) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: BOLIVIA_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+
+// ¿Hoy (en Bolivia) es el día del curso? Desde las 00:00 de ese día la preventa está
+// cerrada: quien no pagó ya no recibe el QR y solo puede pagar en la puerta.
+function isCourseDay(course: Course, now: Date): boolean {
+  return boliviaDateKey(now) === boliviaDateKey(new Date(course.startsAt));
+}
 
 // Única fuente de la ubicación de un curso. Devuelve `note` solo cuando la excepción
 // está vigente; el resto del sistema usa esa presencia para saber que el lugar cambió.
@@ -132,10 +152,16 @@ function getExpiredCourses(now: Date): Course[] {
   return COURSES.filter((course) => getCourseStatus(course, now) === "finished");
 }
 
-// ¿Hay algún curso que se pueda cobrar ahora? Lo usa el webhook para no mandar el QR de
-// pago cuando lo único vigente es un curso que ya empezó.
+// Cursos que son HOY y todavía no empiezan: se anuncian, pero solo se cobran en la puerta.
+function getDoorSaleCourses(now: Date): Course[] {
+  return getActiveCourses(now).filter((course) => isCourseDay(course, now));
+}
+
+// ¿Hay algún curso que se pueda cobrar con QR ahora? Lo usa el webhook para no mandar el QR
+// de pago cuando lo único vigente es un curso que ya empezó o que es hoy (el día del curso
+// solo se paga en la puerta).
 function hasSellableCourse(now: Date): boolean {
-  return getActiveCourses(now).length > 0;
+  return getActiveCourses(now).some((course) => !isCourseDay(course, now));
 }
 
 // ¿Algún curso que todavía se informa (próximo o en curso) se dicta en una ubicación
@@ -151,15 +177,22 @@ function hasActiveLocationOverride(now: Date): boolean {
 // es-BO, así que se normaliza al formato que ya usaban los mensajes del bot.
 function formatCourseDate(iso: string): string {
   const date = new Date(iso);
+  return `${formatBoliviaDay(date)}, ${formatBoliviaTime(date)}`;
+}
 
-  const day = new Intl.DateTimeFormat("es-BO", {
+// Último día de la preventa: la víspera del curso ("sábado 19 de septiembre"). Bolivia no
+// tiene horario de verano, así que restar 24 horas siempre cae en el día anterior.
+function formatPresaleDeadline(course: Course): string {
+  return formatBoliviaDay(new Date(startTime(course) - 24 * 60 * 60_000));
+}
+
+function formatBoliviaDay(date: Date): string {
+  return new Intl.DateTimeFormat("es-BO", {
     timeZone: BOLIVIA_TZ,
     weekday: "long",
     day: "numeric",
     month: "long",
   }).format(date);
-
-  return `${day}, ${formatBoliviaTime(date)}`;
 }
 
 function formatBoliviaTime(date: Date): string {
@@ -242,7 +275,9 @@ function renderCourseContext(now: Date): string {
 
     for (const course of active) {
       lines.push(
-        `  • ${course.name} — ${formatCourseDate(course.startsAt)}. Precios: ${course.pricePreventa} Bs preventa (pagando antes del día del curso) / ${course.pricePresencial} Bs presencial (pagando el mismo día).`,
+        isCourseDay(course, now)
+          ? `  • ${course.name} — HOY, ${formatCourseDate(course.startsAt)}. La preventa YA CERRÓ (fue hasta ayer, ${formatPresaleDeadline(course)}): hoy NO envíes el QR (intents.payment_qr = false), NO ofrezcas preventa y NO des el precio de preventa. Quien todavía quiera sumarse puede pagar ${course.pricePresencial} Bs EN LA PUERTA del curso: díselo y dale la ubicación. Muchos que escriben hoy YA pagaron: si dice que ya pagó, no le cobres de nuevo, solo confírmale la hora y la ubicación.`
+          : `  • ${course.name} — ${formatCourseDate(course.startsAt)}. Precios: ${course.pricePreventa} Bs preventa (pagando con QR hasta el ${formatPresaleDeadline(course)}) / ${course.pricePresencial} Bs en puerta (pagando en la puerta el día del curso).`,
         ...renderLocationLines(course, now),
       );
     }
@@ -270,6 +305,23 @@ function renderCourseContext(now: Date): string {
   return lines.join("\n");
 }
 
+// Respuesta fija del día del curso (antes de que empiece) para cuando el modelo igual quiso
+// mandar el QR u ofrecer la preventa. Se arma aquí porque lleva el precio en puerta y la
+// ubicación del curso. null si hoy no hay ningún curso por empezar.
+function renderCourseDayDoorReply(now: Date): string | null {
+  const [course] = getDoorSaleCourses(now);
+  if (!course) return null;
+
+  return [
+    `¡Hoy es el ${course.name}! 🎉 Empieza a las ${formatBoliviaTime(new Date(course.startsAt))}. La preventa ya cerró, pero todavía puedes sumarte pagando ${course.pricePresencial} Bs en la puerta 😊`,
+    "",
+    "📍 Ubicación:",
+    getCourseLocation(course, now).mapsUrl,
+    "",
+    "Si ya pagaste tu cupo, no tienes que pagar nada más: te esperamos 🙌",
+  ].join("\n");
+}
+
 export {
   COURSES,
   COURSE_INFO_MINUTES_AFTER_START,
@@ -277,11 +329,14 @@ export {
   getActiveCourses,
   getInProgressCourses,
   getExpiredCourses,
+  getDoorSaleCourses,
   getCourseLocation,
+  isCourseDay,
   hasSellableCourse,
   hasActiveLocationOverride,
   formatCourseDate,
   formatNowInBolivia,
   renderCourseContext,
+  renderCourseDayDoorReply,
 };
 export type { Course, CourseLocationOverride, CourseStatus };

@@ -16,6 +16,7 @@ import {
   hasActiveLocationOverride,
   hasSellableCourse,
   getInProgressCourses,
+  renderCourseDayDoorReply,
 } from "../../../../lib/courses";
 import { MAPS_OFICINA } from "../../../../lib/locations";
 import {
@@ -253,7 +254,8 @@ Conecta Pro tiene TRES líneas activas:
 
 LÍNEA A — Cursos:
 - Conecta Pro dicta cursos presenciales en Santa Cruz de la Sierra, Bolivia: Curso de Creación de
-  Contenido y Curso de Edición en CapCut Pro.
+  Contenido y Curso de Edición Persuasiva en CapCut Pro (también le dicen "curso de CapCut" o "de
+  edición en CapCut": es el mismo).
 - ⚠️ FECHAS, PRECIOS Y UBICACIÓN: NUNCA los recites de memoria. Llegan en el contexto adicional de
   cada mensaje bajo "CURSOS — FECHAS Y PRECIOS VIGENTES" — esa es la ÚNICA fuente de verdad, se
   actualiza sola y solo incluye los cursos con fecha vigente. Si un curso no aparece ahí como
@@ -279,12 +281,33 @@ LÍNEA A — Cursos:
   Confírmalo de forma breve y con entusiasmo, agregando una frase corta de valor (por ejemplo que
   se ve cómo funciona el algoritmo y cómo usarlo a favor en los lives). NO te extiendas en un
   temario largo ni inventes módulos, horarios por tema, certificados ni materiales.
+- Curso de Edición Persuasiva en CapCut Pro (datos CONFIRMADOS, puedes afirmarlos con seguridad):
+  • De qué se trata: edición persuasiva DESDE EL CELULAR con CapCut, para crear videos más
+    profesionales y dinámicos que ayuden a VENDER en redes sociales.
+  • Modalidad: 100% PRESENCIAL y PRÁCTICA. No es para sentarse solo a mirar: cada alumno edita en
+    su propio celular y aplica las herramientas mientras aprende.
+  • Duración: unas 5 horas (entre 4 y 5 horas aproximadamente), en un solo día.
+  • Qué traer: su celular con CapCut instalado y su cuenta iniciada. Se RECOMIENDA tener CapCut
+    Pro activo para poder usar todas las funciones que se enseñan. Si preguntan si es obligatorio,
+    responde que es lo recomendado para aprovechar todas las funciones; no digas que sin Pro no
+    puede asistir.
+  • Temario: cortes precisos y dinámicos; subtítulos que llamen la atención; textos persuasivos
+    dentro del video; animaciones y efectos; efectos de sonido; uso correcto de la música;
+    transiciones profesionales; cómo darle ritmo a los videos; técnicas para mantener la atención
+    del espectador; cómo estructurar una edición enfocada en vender.
+  • BONUS de edición avanzada: poner texto detrás de una persona; eliminar fondos; poner
+    imágenes, videos y elementos detrás del sujeto; trucos para una edición más profesional y
+    llamativa.
+  • Resultado: salir sabiendo transformar un video sencillo en un contenido dinámico, persuasivo y
+    listo para redes sociales.
+  NO inventes certificados, materiales, cupos ni temas fuera de esta lista.
 - REGLA CRÍTICA SOBRE TEMAS DEL CURSO — NUNCA NIEGUES UN TEMA: si el cliente pregunta por un tema
-  que NO está en la lista de arriba (ej. monetización, fotografía, Instagram Reels, publicidad
-  paga), NUNCA respondas que el curso "no lo incluye" ni que "no tiene un enfoque específico" en
-  eso — negar un tema hace perder la venta y además no lo sabes con certeza.
-  En ese caso responde en POSITIVO y breve: que el curso está enfocado en creación de contenido y
-  el algoritmo de TikTok, y que un asesor le confirma el detalle del temario. Ejemplo de tono:
+  que NO está en la lista confirmada de ESE curso (ej. monetización, fotografía, Instagram Reels,
+  publicidad paga), NUNCA respondas que el curso "no lo incluye" ni que "no tiene un enfoque
+  específico" en eso — negar un tema hace perder la venta y además no lo sabes con certeza.
+  En ese caso responde en POSITIVO y breve con el enfoque de ESE curso (Creación de Contenido:
+  creación de contenido y el algoritmo de TikTok; CapCut: edición persuasiva desde el celular para
+  vender en redes), y que un asesor le confirma el detalle del temario. Ejemplo de tono:
 
   "El curso se enfoca en creación de contenido y en el algoritmo de TikTok 🎯 Un asesor te confirma el detalle del temario. Si quieres asegurar tu cupo, te paso el QR de pago 😊"
 
@@ -293,14 +316,14 @@ LÍNEA A — Cursos:
   silencio: esta notificación no bloquea la respuesta, solo avisa al equipo).
   Afirmar de más y negar de más son AMBOS errores: afirma con seguridad SOLO los temas de la lista
   confirmada, y para el resto usa la respuesta en positivo de arriba sin comprometerte.
-- MODALIDAD del Curso de Creación de Contenido: es ÚNICAMENTE PRESENCIAL. NO existen clases
-  virtuales/online y NUNCA habrá una fecha en modalidad virtual, aunque el cliente insista o
-  pregunte varias veces. Sé claro y amable al respecto, sin prometer una futura versión virtual.
+- MODALIDAD de los dos cursos: son ÚNICAMENTE PRESENCIALES. NO existen clases virtuales/online y
+  NUNCA habrá una fecha en modalidad virtual, aunque el cliente insista o pregunte varias veces.
+  Sé claro y amable al respecto, sin prometer una futura versión virtual.
 - Hay un QR de pago disponible (almacenado en el sistema) para que el cliente reserve/pague la
   preventa de cualquiera de los dos cursos (el que tenga fecha vigente). El sistema lo envía
   automáticamente cuando corresponde — nunca prometas "te lo mando ahora", usa frases neutras
   ("el QR está disponible para reservar tu cupo").
-- Este flujo activa intents.course_flyer = true para que el sistema envíe los flyers de ambos cursos.
+- Este flujo activa intents.course_flyer = true para que el sistema envíe los flyers de cursos.
 - ⚠️ REGLA ABSOLUTA — LOS CURSOS NUNCA USAN EL FORMULARIO DE DATOS: un curso se cierra con el QR de
   pago y, después de pagar, el comprobante + nombre completo + número de celular escritos por el
   chat. Eso es TODO lo que se necesita. El formulario de leads (📌 Nombre, empresa, cargo dentro de
@@ -578,6 +601,11 @@ GUÍA POR SITUACIÓN
     recién lee (o está llegando tarde). Dile que el curso se está llevando a cabo ahora mismo y dale
     lo que necesite: la ubicación de ESE curso, que es hoy y a qué hora empezó. NO vendas: sin QR,
     sin precios, sin preventa. NUNCA le digas que la fecha ya pasó ni que no hay fecha.
+  - EL DÍA DEL CURSO, ANTES DE QUE EMPIECE: si el contexto adicional marca un curso como "HOY", la
+    preventa ya cerró y ese día NO hay QR (intents.payment_qr = false). A quien quiera sumarse
+    dile que puede pagar el precio en puerta de ese curso EN LA PUERTA, con la hora de inicio y la
+    ubicación de ESE curso. Quien dice que ya pagó no paga nada más: confírmale la hora y la
+    ubicación.
   - Pregunta GENERAL de cursos (sin decir cuál): menciona los que tengan FECHA VIGENTE según el
     contexto adicional ("CURSOS — FECHAS Y PRECIOS VIGENTES"), con su fecha tal cual viene ahí. Si
     solo hay uno vigente, menciona solo ese (NO ofrezcas uno sin fecha vigente). Si no hay ninguno
@@ -592,6 +620,15 @@ GUÍA POR SITUACIÓN
     salvo que ese curso indique lo contrario en el bloque. Si NO está vigente
     (no aparece en la lista de cursos vigentes), usa el flujo "CLIENTE MENCIONA UN CURSO CUYA
     FECHA YA PASÓ" más abajo — NUNCA inventes ni repitas una fecha vieja.
+  - INFORMACIÓN DEL CURSO DE CAPCUT ("info del curso de CapCut", "¿de qué trata?", "¿cómo es el
+    curso de edición?"), con el curso vigente: da PRIMERO los datos importantes, cortos y uno por
+    línea, en este orden: fecha y hora; precios (preventa y hasta cuándo, y precio en puerta, tal
+    cual vienen en el contexto adicional); modalidad presencial y práctica; duración; que traiga
+    su celular con CapCut Pro y su cuenta. Después la ubicación de ESE curso en su propia línea y,
+    al final, UNA frase corta de lo que va a aprender (edición persuasiva para vender en redes, con
+    bonus de edición avanzada) ofreciendo pasarle el temario completo. NO pegues el temario entero
+    en ese primer mensaje: el temario y el bonus van solo cuando pregunten qué se aprende o qué
+    temas se ven.
   - Pregunta POR LA UBICACIÓN DEL CURSO ("¿dónde es el curso?", "¿cómo llego?", "¿en qué dirección
     es?", "pásame la ubicación del curso"): responde con la ubicación de ESE curso tal cual viene
     en el bloque de cursos vigentes, en su propia línea, y marca intents.location_video = true
@@ -610,16 +647,16 @@ GUÍA POR SITUACIÓN
     NO inventes módulos, duración por tema, certificados ni material de apoyo.
   - Pregunta por PRECIO de alguno de los cursos (ej. "¿cuánto cuesta el curso?",
     "¿precio del curso de creación de contenido?", "¿precio del de CapCut?"): usa SIEMPRE los
-    precios del curso vigente que vienen en el contexto adicional (preventa y presencial), NUNCA
+    precios del curso vigente que vienen en el contexto adicional (preventa y en puerta), NUNCA
     los recites de memoria. Si el curso preguntado no está vigente, usa el flujo "CLIENTE MENCIONA
     UN CURSO CUYA FECHA YA PASÓ". Si la pregunta es general (no especifica cuál curso) y hay más de
     un curso vigente, da los precios diferenciados por curso. Puedes sumar urgencia natural de
     preventa (ej. "aprovecha la preventa"), sin inventar cupos ni decir que "el precio sube" (son
     dos modalidades de pago, no un cambio de precio).
-  - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que el precio de preventa aplica
-    realizando el pago antes del día del curso (la fecha exacta viene en el contexto adicional);
-    el mismo día del curso aplica el precio presencial de ese curso. NUNCA inventes una fecha de
-    corte distinta a la fecha del curso ni menciones cantidad de cupos.
+  - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que la preventa se paga con QR
+    hasta la víspera del curso (el día exacto viene en el contexto adicional); el mismo día del
+    curso ya no hay QR y aplica el precio en puerta, pagando en la puerta. NUNCA inventes una
+    fecha de corte distinta a la del contexto ni menciones cantidad de cupos.
   - Pregunta por modalidad VIRTUAL/online (ej. "¿hay curso virtual?", "¿lo puedo tomar online?",
     "¿tienen versión virtual?"): aclara con amabilidad que el curso es ÚNICAMENTE PRESENCIAL y
     que NUNCA habrá una fecha en modalidad virtual, ni ahora ni en el futuro. No prometas avisar
@@ -1312,7 +1349,7 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   todavía, preguntas informativas sobre métodos de pago ("¿aceptan QR?", "¿cómo funciona la
   preventa?"), y SIEMPRE false para paquetes de producción (esos usan el formulario de leads, no
   el QR). FALSE también si el único curso con información es uno que SE ESTÁ DICTANDO AHORA
-  MISMO: ese ya no se vende.
+  MISMO (ese ya no se vende) o uno marcado como HOY (el día del curso solo se paga en la puerta).
 
 - REGLA ABSOLUTA DEL CUPO DE UN CURSO — el cupo se reserva ÚNICA Y EXCLUSIVAMENTE cuando el
   cliente paga y envía el comprobante. NUNCA, bajo ninguna circunstancia, digas ni des a entender
@@ -5444,9 +5481,11 @@ export async function POST(request: Request) {
     !receiptMedia &&
     !hasExplicitPaymentPhrase;
 
-  // Cursos: ¿hay algo que se pueda vender ahora? Si el único curso vigente ya empezó, NO.
+  // Cursos: ¿hay algo que se pueda cobrar con QR ahora? Si el único curso vigente ya empezó
+  // o es hoy (el día del curso solo se paga en la puerta), NO.
   const courseSellable = hasSellableCourse(turnNow);
   const courseInProgress = getInProgressCourses(turnNow).length > 0;
+  const courseDayDoorReply = renderCourseDayDoorReply(turnNow);
 
   // Cliente que viene por el video de la promo de edición a 50 Bs (ya vencida).
   const mentionsEditPromo50 = mentionsExpiredEditPromo(lastMessage.text);
@@ -6210,9 +6249,10 @@ export async function POST(request: Request) {
     });
   }
 
-  // CURSO EN MARCHA: ya no se vende. Si lo único vigente es un curso que ya empezó, el QR
-  // no sale aunque el modelo o una red lo hayan marcado, y una respuesta que ofrece el cupo
-  // se reemplaza por la que informa que el curso se está dictando.
+  // CURSO EN MARCHA O DÍA DEL CURSO: ya no hay QR. Si lo único vigente es un curso que ya
+  // empezó o que es hoy, el QR no sale aunque el modelo o una red lo hayan marcado. Una
+  // respuesta que ofrece el cupo se reemplaza por la que informa que el curso se está
+  // dictando, o, si todavía no empezó, por la que invita a pagar en la puerta.
   if (!courseSellable && turn.intents.payment_qr) {
     turn.intents.payment_qr = false;
 
@@ -6220,6 +6260,7 @@ export async function POST(request: Request) {
       /\b(QR|PREVENTA|RESERVA\w*|INSCRIBI\w*|CUPO)\b/.test(normalizeForMatch(turn.reply)) &&
       !turn.payment_confirmation;
     if (courseInProgress && offersSale) turn.reply = COURSE_IN_PROGRESS_NO_SALE_REPLY;
+    else if (courseDayDoorReply && offersSale) turn.reply = courseDayDoorReply;
 
     await logSystemEvent({
       level: "info",
@@ -6229,7 +6270,8 @@ export async function POST(request: Request) {
       contactPhone: lastMessage.from,
       metadata: {
         course_in_progress: courseInProgress,
-        reply_replaced: courseInProgress && offersSale,
+        course_day_door_sale: courseDayDoorReply !== null,
+        reply_replaced: (courseInProgress || courseDayDoorReply !== null) && offersSale,
         client_message: lastMessage.text.slice(0, 200),
       },
     });
@@ -6289,10 +6331,13 @@ export async function POST(request: Request) {
       messageId: lastMessage.messageId,
     });
 
-    // Con el curso ya en marcha no hay cupo que cobrar: se informa, no se vende.
+    // Con el curso ya en marcha no hay cupo que cobrar: se informa, no se vende. El día del
+    // curso, antes de empezar, el cupo se paga en la puerta.
     turn.reply = courseSellable
       ? RESERVATION_REQUIRES_PAYMENT_REPLY
-      : COURSE_IN_PROGRESS_NO_SALE_REPLY;
+      : courseInProgress || !courseDayDoorReply
+        ? COURSE_IN_PROGRESS_NO_SALE_REPLY
+        : courseDayDoorReply;
     turn.intents.payment_qr = courseSellable;
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;

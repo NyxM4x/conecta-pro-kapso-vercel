@@ -10,6 +10,8 @@
 //      ubicación y el bot les decía que no había fecha).
 //   3. Los cursos y la oficina son lugares distintos, y una fecha puntual puede dictarse
 //      excepcionalmente en la oficina sin que esa excepción sobreviva al evento.
+//   4. La preventa se cobra con QR hasta la víspera. El día del curso (desde las 00:00 en
+//      Bolivia) el curso se sigue anunciando, pero sin QR: solo se paga en la puerta.
 //
 // La excepción de ubicación se prueba con un curso SINTÉTICO, no con uno del catálogo
 // real: así el catálogo puede quedar limpio (sin excepciones vigentes) y el mecanismo
@@ -22,10 +24,12 @@ import {
   getActiveCourses,
   getInProgressCourses,
   getExpiredCourses,
+  getDoorSaleCourses,
   getCourseLocation,
   hasSellableCourse,
   hasActiveLocationOverride,
   renderCourseContext,
+  renderCourseDayDoorReply,
   COURSES,
 } from "./courses.ts";
 import type { Course } from "./courses.ts";
@@ -58,14 +62,42 @@ for (const course of COURSES) {
   const casiTermina = new Date(inicio + 89 * 60_000); // 17:29 para un curso a las 16:00
   const terminoVentana = new Date(inicio + 90 * 60_000); // 17:30
   const diaSiguiente = new Date(inicio + 24 * 60 * 60_000);
+  // 00:00 del día del curso en Bolivia (startsAt ya viene con offset -04:00).
+  const medianocheDelDia = new Date(`${course.startsAt.slice(0, 10)}T00:00:00-04:00`);
+  const finDeLaVispera = new Date(medianocheDelDia.getTime() - 60_000); // 23:59 de la víspera
+
+  const lineaDelCurso = (momento: Date) =>
+    renderCourseContext(momento).split("\n").find((line) => line.includes(course.name)) ?? "";
 
   test(`${course.name}: la víspera está vigente y se puede vender`, () => {
     assert.ok(getActiveCourses(vispera).includes(course));
     assert.ok(renderCourseContext(vispera).includes(course.name));
   });
 
-  test(`${course.name}: se sigue vendiendo hasta la hora de inicio`, () => {
+  test(`${course.name}: la preventa se cobra con QR hasta el último minuto de la víspera`, () => {
+    // 23:59 del sábado en Bolivia ya es domingo en UTC: el día se cuenta en hora de Bolivia.
+    assert.ok(!getDoorSaleCourses(finDeLaVispera).includes(course), "todavía no es el día del curso");
+    assert.ok(lineaDelCurso(finDeLaVispera).includes(`${course.pricePreventa} Bs preventa`));
+  });
+
+  test(`${course.name}: se sigue anunciando hasta la hora de inicio`, () => {
     assert.ok(getActiveCourses(minutoAntes).includes(course));
+  });
+
+  test(`${course.name}: el día del curso no hay QR, solo se paga en la puerta`, () => {
+    for (const momento of [medianocheDelDia, minutoAntes]) {
+      assert.ok(getActiveCourses(momento).includes(course), "debe seguir anunciándose");
+      assert.ok(getDoorSaleCourses(momento).includes(course), "debe cobrarse en la puerta");
+
+      const linea = lineaDelCurso(momento);
+      assert.ok(linea.includes("HOY"), "debe decir que es hoy");
+      assert.ok(linea.includes(`${course.pricePresencial} Bs EN LA PUERTA`), "debe dar el precio en puerta");
+      assert.ok(!linea.includes(`${course.pricePreventa} Bs`), "no debe ofrecer la preventa");
+
+      const reply = renderCourseDayDoorReply(momento) ?? "";
+      assert.ok(reply.includes(`${course.pricePresencial} Bs en la puerta`), "la respuesta fija lleva el precio en puerta");
+      assert.ok(reply.includes(getCourseLocation(course, momento).mapsUrl), "la respuesta fija lleva la ubicación");
+    }
   });
 
   test(`${course.name}: ya empezado, se informa pero no se vende`, () => {
@@ -104,10 +136,12 @@ for (const course of COURSES) {
   });
 }
 
-test("con un único curso ya empezado, no hay nada que cobrar", () => {
+test("con un único curso por delante, el QR sale hasta la víspera y ni el día del curso ni ya empezado", () => {
   const ultimo = Math.max(...COURSES.map((c) => new Date(c.startsAt).getTime()));
-  assert.equal(hasSellableCourse(new Date(ultimo + 30 * 60_000)), false);
-  assert.equal(hasSellableCourse(new Date(ultimo - 60 * 60_000)), true);
+  assert.equal(hasSellableCourse(new Date(ultimo - 24 * 60 * 60_000)), true, "la víspera");
+  assert.equal(hasSellableCourse(new Date(ultimo - 60 * 60_000)), false, "una hora antes, el mismo día");
+  assert.equal(hasSellableCourse(new Date(ultimo + 30 * 60_000)), false, "ya empezado");
+  assert.equal(renderCourseDayDoorReply(new Date(ultimo + 30 * 60_000)), null, "ya empezado no se cobra ni en la puerta");
 });
 
 test("sin ninguna fecha cargada, el bot dice que no hay fecha confirmada", () => {

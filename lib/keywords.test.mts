@@ -320,6 +320,11 @@ test("el curso de edición en CapCut no pasa por este detector", () => {
   assert.equal(detectEditingRequest("hola, quiero información"), null);
 });
 
+test("'edición persuasiva' es el curso de CapCut aunque no diga curso", () => {
+  assert.equal(detectEditingRequest("quiero info de la edición persuasiva"), null);
+  assert.equal(COURSE_KEYWORDS.test(normalizeForMatch("info de la edición persuasiva")), true);
+});
+
 // --- Vocabulario del negocio contra el silencio por "fuera de tema" --------
 
 test("una consulta del negocio nunca se silencia como fuera de tema", () => {

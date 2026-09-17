@@ -14,6 +14,7 @@ import {
   listReportableCourses,
   renderCourseEnrollments,
 } from "./course-enrollments.ts";
+import { COURSES } from "./courses.ts";
 import type { Course } from "./courses.ts";
 import type { PaymentEntry } from "./payments-report.ts";
 import { chunkTelegramBlocks } from "./telegram.ts";
@@ -178,9 +179,14 @@ test("sin curso anterior cercano, la ventana es de 35 días", () => {
 });
 
 test("el botón ofrece cursos próximos o dictados en las últimas 2 semanas", () => {
-  const courses = listReportableCourses(new Date("2026-09-15T12:00:00-04:00"));
-  assert.ok(courses.some((c) => c.id === "creacion_contenido"));
-  assert.ok(!courses.some((c) => c.id === "capcut_pro"));
+  // Sobre cada curso REAL del catálogo, con su propia fecha: sigue valiendo cuando cambian.
+  const DIA = 24 * 3600_000;
+  for (const course of COURSES) {
+    const inicio = new Date(course.startsAt).getTime();
+    assert.ok(listReportableCourses(new Date(inicio - DIA)).includes(course), `${course.name}: próximo`);
+    assert.ok(listReportableCourses(new Date(inicio + 13 * DIA)).includes(course), `${course.name}: hace 13 días`);
+    assert.ok(!listReportableCourses(new Date(inicio + 15 * DIA)).includes(course), `${course.name}: hace 15 días`);
+  }
 });
 
 // --- Mensajes de Telegram ---------------------------------------------------

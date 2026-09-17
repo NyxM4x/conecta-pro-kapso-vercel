@@ -36,8 +36,10 @@ function containsExactNumber(text: string, values: number[]): boolean {
 // "Anuncio" NO está a propósito: casi siempre es "vi su anuncio", que no dice de qué línea.
 const SERVICE_PACKAGES_KEYWORDS =
   /\b(PAQUETE|PAQUETES|GRABACION|GRABACIONES|EDICION|SERVICIO|SERVICIOS|VIDEOS|PRODUCCION|CONTENIDO|DRON|PUBLICIDAD|PUBLICIDADES|PUBLICITAR|PUBLICITARIO|PUBLICITARIOS|PUBLICITARIA|PUBLICITARIAS|MARKETING|MERCADEO|PROMOCIONAR|PROMOCIONEN|PROMOCIONE|COMMUNITY|SPOT|SPOTS|MANEJO\s+DE\s+(MIS\s+|LAS\s+)?REDES|MANEJEN\s+(MIS|LAS)\s+REDES|ADMINISTR\w*\s+(DE\s+)?(MIS\s+|LAS\s+)?REDES)\b/;
+// PERSUASIVA: el curso de CapCut se anuncia como "Edición Persuasiva", y sin esta palabra
+// "info de la edición persuasiva" caía en la pregunta de paquetes o solo edición.
 const COURSE_KEYWORDS =
-  /\b(CURSO|CURSOS|TALLER|TALLERES|CAPACITACION|CAPACITARME|FORMACION|APRENDER|CAPCUT|CLASE|CLASES)\b/;
+  /\b(CURSO|CURSOS|TALLER|TALLERES|CAPACITACION|CAPACITARME|FORMACION|APRENDER|CAPCUT|CLASE|CLASES|PERSUASIVA)\b/;
 // Todo lo que gira en torno a la OFICINA: ubicación, horario, visitas y reuniones. Ya no
 // existe un flujo de "cita" con día y hora (ver mentionsOfficeVisit), pero estas palabras
 // siguen sirviendo para separar la oficina del lugar de los cursos.
