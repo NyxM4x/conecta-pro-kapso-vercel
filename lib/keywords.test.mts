@@ -20,6 +20,8 @@ import {
   normalizeForMatch,
   COURSE_KEYWORDS,
   SERVICE_PACKAGES_KEYWORDS,
+  detectCoursePaymentRequest,
+  mentionsCourse,
 } from "./keywords.ts";
 
 let passed = 0;
@@ -350,6 +352,76 @@ test("reclutamiento, charla y difusiones largas no fuerzan respuesta", () => {
   const difusion =
     "🐾 Hola somos HuelliHogar, queremos contarte de nuestros servicios de guardería para tu mascota con juegos, baño, corte de pelo, transporte puerta a puerta, veterinario de confianza y muchas sorpresas más para que tu perrito la pase increíble mientras tú trabajas tranquilo todo el día";
   assert.equal(hasBusinessVocabulary(difusion), false);
+});
+
+// --- Pedido de pago de un curso (red del QR) ---------------------------------
+//
+// Mensajes reales de septiembre 2026 que no recibieron el QR.
+
+test("pide el QR con todas las letras → qr_request", () => {
+  for (const mensaje of [
+    "Me pasa su QR por favor",
+    "Si esta bien me pasa su qr",
+    "Claro que si me puede facilitar su QR x favor",
+    "Qr por favor",
+    "El qr porfavor",
+    "Mande Qr",
+    "Páseme QR para los cursos de edición de video",
+    "pásame el QR",
+    "QR",
+    "Buenas\nel qr?",
+    "no me llegó el QR",
+  ]) {
+    assert.equal(detectCoursePaymentRequest(mensaje), "qr_request", mensaje);
+  }
+});
+
+test("quiere pagar o reservar → pay_intent", () => {
+  for (const mensaje of [
+    "Quiero comprar mi entrada",
+    "quiero pagar mi entrada",
+    "quiero pagar mi boleto",
+    "quiero pagar mi curso",
+    "quiero reservar mi curso",
+    "reservar mi curso",
+    "Quiero dos cupo para el curso",
+    "Me quiero inscribir",
+    "quiero inscribirme",
+    "Quiero pagar",
+    "cómo hago para pagar la preventa",
+    "¿cómo pago?",
+    "quiero asegurar mi cupo",
+  ]) {
+    assert.equal(detectCoursePaymentRequest(mensaje), "pay_intent", mensaje);
+  }
+});
+
+test("ya pagó, paga en la puerta o solo pregunta → sin pedido", () => {
+  for (const mensaje of [
+    "ya pagué mi entrada",
+    "Buen di yo pague no estoy en el curso",
+    "te mando el comprobante",
+    "ya te mandé el qr pagado",
+    "voy a pagar en la puerta",
+    "¿aceptan QR?",
+    "¿Se puede pagar por qr?",
+    "¿cuánto cuesta el curso?",
+    "me interesa el paquete de 12 videos",
+  ]) {
+    assert.equal(detectCoursePaymentRequest(mensaje), null, mensaje);
+  }
+});
+
+test("'pásame el QR para que te pague' sigue siendo un pedido", () => {
+  assert.equal(detectCoursePaymentRequest("pásame el QR para que te pague"), "qr_request");
+});
+
+test("mentionsCourse: el curso o la compra de su entrada", () => {
+  assert.equal(mentionsCourse("Quiero comprar mi entrada"), true);
+  assert.equal(mentionsCourse("Me interesa curso"), true);
+  assert.equal(mentionsCourse("Quiero dos cupo"), true);
+  assert.equal(mentionsCourse("me interesa el paquete pro"), false);
+  assert.equal(mentionsCourse("quiero publicidad para mi negocio"), false);
 });
 
 console.log(`${passed} pruebas OK`);

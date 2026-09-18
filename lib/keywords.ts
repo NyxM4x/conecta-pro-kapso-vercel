@@ -249,6 +249,85 @@ function detectEditingRequest(text: string): EditingRequest | null {
   return "ambiguous";
 }
 
+// COMPRA DE UN CURSO.
+//
+// Palabras que solo aparecen cuando alguien quiere pagar un curso: la entrada, el boleto,
+// el cupo, la inscripción, la preventa. Los paquetes no tienen nada de eso (se cierran con
+// el formulario y un asesor), así que un mensaje con estas palabras o con las del curso
+// nunca debe recibir el formulario de datos de empresa. En septiembre 2026, "quiero comprar
+// mi entrada", "quiero dos cupo para el curso" o "me interesa curso" lo recibieron.
+const COURSE_PURCHASE_KEYWORDS =
+  /\b(ENTRADA|ENTRADAS|BOLETO|BOLETOS|TICKET|TICKETS|CUPO|CUPOS|INSCRIPCION|INSCRIPCIONES|INSCRIBIR\w*|INSCRIBO|INSCRIBE|INSCRITO|INSCRITA|PREVENTA)\b/;
+
+// ¿El mensaje habla de un curso o de comprar su entrada?
+function mentionsCourse(text: string): boolean {
+  if (!text) return false;
+  const normalized = normalizeForMatch(text);
+  return COURSE_KEYWORDS.test(normalized) || COURSE_PURCHASE_KEYWORDS.test(normalized);
+}
+
+// PEDIDO DE PAGO DE UN CURSO (red determinista del QR).
+//
+// Dos niveles, porque no piden lo mismo:
+//   - "qr_request": pide el QR con todas las letras ("me pasa su QR", "el qr porfavor",
+//     "mande QR", "no me llegó el QR"). El QR sale aunque ya se le haya enviado antes.
+//   - "pay_intent": quiere pagar o reservar ("quiero pagar mi entrada", "reservar mi
+//     curso", "me quiero inscribir"). El QR sale si no lo recibió hace poco; si lo tiene
+//     arriba en el chat, el bot se lo recuerda en vez de mandarlo otra vez.
+type CoursePaymentRequest = "qr_request" | "pay_intent";
+
+const QR_REQUEST_VERBS =
+  "PASA|PASAS|PASE|PASEME|PASAME|PASAR|PASARME|PASARIA|PASARIAS|MANDA|MANDAS|MANDE|MANDEME|MANDAME|MANDAR|MANDARME|MANDARIA|ENVIA|ENVIAS|ENVIE|ENVIEME|ENVIAME|ENVIAR|ENVIARME|ENVIARIA|FACILITA|FACILITAS|FACILITE|FACILITEME|FACILITAME|FACILITAR|FACILITARME|REGALA|REGALAME|REGALE|REGALEME|COMPARTE|COMPARTEME|COMPARTIME|COMPARTA|COMPARTAME|COMPARTIR|COMPARTIRME|DAME|DEME|QUIERO|QUISIERA|NECESITO";
+
+const QR_REQUEST_REGEX = new RegExp(
+  // "pásame el QR", "me pasa su QR", "mande Qr", "quiero pagar con QR"
+  `\\b(${QR_REQUEST_VERBS})\\b(?:\\s+\\S+){0,3}?\\s+(CODIGO\\s+)?QR\\b` +
+    // "me da su QR", "me puede dar el QR"
+    `|\\bME\\s+(DA|DAS|DE|PUEDE\\s+DAR|PUEDES\\s+DAR|PODRIA\\s+DAR)\\b(?:\\s+\\S+){0,2}?\\s+QR\\b` +
+    // "Qr por favor", "El qr porfavor"
+    `|\\bQR\\s+(POR\\s*FAVOR|PORFA\\w*|PLIS|PLS|PLEASE)\\b` +
+    // "no me llegó el QR", "no me carga el QR"
+    `|\\bNO\\s+(ME\\s+)?(LLEGO|APARECE|CARGA|ABRE|SALE|VEO)\\b(?:\\s+\\S+){0,2}?\\s+QR\\b` +
+    // Un mensaje (o una línea de la ráfaga) que es solo "QR" o "el QR?"
+    `|^\\W*(EL\\s+|SU\\s+|UN\\s+)?QR\\W*$`,
+  "m",
+);
+
+// Lo que se compra al pagar un curso.
+const COURSE_TICKET_NOUNS =
+  "ENTRADA|ENTRADAS|BOLETO|BOLETOS|TICKET|TICKETS|CUPO|CUPOS|LUGAR|LUGARES|CURSO|CURSOS|INSCRIPCION|PREVENTA|CLASE|CLASES|TALLER";
+
+const PAY_INTENT_REGEX = new RegExp(
+  // "pagar mi entrada", "comprar dos entradas", "reservar mi curso", "asegurar mi cupo"
+  `\\b(PAGAR|COMPRAR|RESERVAR|ADQUIRIR|ASEGURAR|SEPARAR|APARTAR)\\s+((MI|MIS|LA|LAS|EL|LOS|UN|UNA|UNOS|UNAS|DOS|TRES|\\d+)\\s+)?(${COURSE_TICKET_NOUNS})\\b` +
+    // "quiero pagar", "cómo hago para inscribirme", "quisiera reservar"
+    `|\\b(QUIERO|QUISIERA|QUERIA|DESEO|NECESITO|COMO\\s+HAGO\\s+PARA|COMO\\s+PUEDO|DONDE\\s+PUEDO)\\s+(PAGAR|INSCRIBIRME|ANOTARME|RESERVAR)\\b` +
+    // "me quiero inscribir", "quiero inscribirme"
+    `|\\b(ME\\s+QUIERO|QUIERO|QUISIERA|QUERIA|DESEO)\\s+(INSCRIBIR|ANOTAR)\\w*` +
+    // "quiero dos cupos", "quiero mi entrada", "quiero el cupo"
+    `|\\bQUIERO\\s+((UN|UNA|MI|MIS|EL|LA|DOS|TRES|\\d+)\\s+)?(CUPO|CUPOS|LUGAR|LUGARES|ENTRADA|ENTRADAS|BOLETO|BOLETOS)\\b` +
+    // "cómo pago", "dónde pago", "me inscribo", "anótame", "quiero la preventa"
+    `|\\b(COMO|DONDE)\\s+(PAGO|RESERVO|APARTO|COMPRO|ME\\s+INSCRIBO)\\b|\\bME\\s+INSCRIBO\\b|\\bANOTAME\\b|\\bQUIERO\\s+LA\\s+PREVENTA\\b`,
+);
+
+// Ya pagó o va a pagar en la puerta: no hay QR que mandar. "Pagué" va con sujeto ("ya
+// pagué", "yo pagué") porque "pásame el QR para que te pague" SÍ es un pedido.
+const PAYMENT_REQUEST_EXCLUSIONS =
+  /\bCOMPROBANTE\b|\b(DEPOSITE|TRANSFERI)\b|\b(YA|YO)\s+(TE\s+|LE\s+|LES\s+)?(PAGUE|CANCELE)\b|\bYA\s+(TE\s+|LE\s+|LES\s+)?(MANDE|ENVIE|PASE)\b|\bEN\s+(LA\s+)?PUERTA\b/;
+
+// ¿El cliente pide pagar un curso? null = no lo pide (o ya pagó, o pagará en la puerta).
+// No decide la LÍNEA: en una conversación de paquetes el webhook descarta un "quiero pagar"
+// genérico, que ahí se refiere al paquete.
+function detectCoursePaymentRequest(text: string): CoursePaymentRequest | null {
+  if (!text) return null;
+  const normalized = normalizeForMatch(text).trim();
+
+  if (PAYMENT_REQUEST_EXCLUSIONS.test(normalized)) return null;
+  if (QR_REQUEST_REGEX.test(normalized)) return "qr_request";
+  if (PAY_INTENT_REGEX.test(normalized)) return "pay_intent";
+  return null;
+}
+
 // VOCABULARIO DEL NEGOCIO (red contra el silencio por "fuera de tema").
 //
 // El modelo marca off_topic y el bot guarda silencio total. En un mes, 71 de esos 159
@@ -290,5 +369,8 @@ export {
   mentionsRecruitment,
   detectEditingRequest,
   hasBusinessVocabulary,
+  COURSE_PURCHASE_KEYWORDS,
+  mentionsCourse,
+  detectCoursePaymentRequest,
 };
-export type { EditingRequest, OfficeVisitKind };
+export type { CoursePaymentRequest, EditingRequest, OfficeVisitKind };

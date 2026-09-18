@@ -155,14 +155,19 @@ function resolvePromoIntents(params: {
 // Dos políticas para no repetir material que el cliente ya recibió:
 //
 //   a) Dedup PERMANENTE (por defecto): una vez enviado a ese teléfono, nunca más.
-//      Sirve para material que no cambia (QR de pago, video de ubicación).
+//      Sirve para material que no cambia (video de ubicación).
 //   b) Dedup por VENTANA: el material vuelve a salir recién pasadas N horas del último
 //      envío. Es el caso del flyer de paquetes, cuyos precios cambian: quien vuelve a
 //      escribir al día siguiente o a la semana debe ver el flyer nuevo, pero quien sigue
 //      la misma conversación (respondiendo el formulario, preguntando por un paquete) no
 //      debe recibir las mismas imágenes cada dos mensajes.
+//      El QR de pago también: con dedup permanente, quien lo había recibido alguna vez
+//      (por otro curso, o días atrás sin llegar a pagar) no volvía a recibirlo nunca. El
+//      bot le escribía "te paso el QR" y no llegaba nada (15 casos en septiembre 2026).
+//      Dentro de la hora lo tiene arriba en el chat y el bot se lo recuerda.
 const MEDIA_RESEND_WINDOW_HOURS: Readonly<Record<string, number>> = {
   service_packages: 24,
+  payment_qr: 1,
 };
 
 type MediaResendReason =

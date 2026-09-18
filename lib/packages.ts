@@ -24,13 +24,50 @@ type VideoPackage = {
   // dron venía gratis en el paquete más chico. Un dato afirmativo aquí es lo que evita
   // que se lo vuelva a inventar.
   drone: boolean;
+  // Lo que el flyer dice que incluye, copiado tal cual de las imágenes que recibe el
+  // cliente. Desde que el texto con los paquetes dejó de enviarse, las imágenes son lo
+  // único que el cliente ve: el bot tiene que saber lo mismo que muestran para responder
+  // sin contradecirlas.
+  includes: string[];
 };
+
+// Lo que traen los tres paquetes según el flyer.
+const BASE_INCLUDES = ["estrategia de contenido", "guiones", "grabación", "edición"];
 
 // ⚠️ EDITAR AQUÍ (y solo aquí) cuando cambie la oferta. Ordenado de menor a mayor.
 const VIDEO_PACKAGES: VideoPackage[] = [
-  { name: "Básico", videos: 6, price: 2500, drone: false },
-  { name: "Normal", videos: 12, price: 3500, drone: false },
-  { name: "Pro", videos: 18, price: 5500, drone: true },
+  {
+    name: "Básico",
+    videos: 6,
+    price: 2500,
+    drone: false,
+    includes: [...BASE_INCLUDES, "manejo de la cuenta de TikTok"],
+  },
+  {
+    name: "Normal",
+    videos: 12,
+    price: 3500,
+    drone: false,
+    includes: [...BASE_INCLUDES, "manejo de la cuenta de TikTok"],
+  },
+  {
+    name: "Pro",
+    videos: 18,
+    price: 5500,
+    drone: true,
+    includes: [
+      "estrategia de contenido",
+      "guiones",
+      "grabación",
+      "edición profesional",
+      "manejo de Facebook, Instagram y TikTok",
+      "campañas en Ads con Bs 500 de presupuesto publicitario",
+      "tomas con dron",
+      "edición con inteligencia artificial",
+      "resultados garantizados",
+      "prioridad en grabaciones",
+    ],
+  },
 ];
 
 // Cantidades exactas del catálogo (hoy 6, 12 y 18).
@@ -105,6 +142,14 @@ function renderPackageNameMap(): string {
 // "6 videos = 2500, 12 videos = 3500, 18 videos = 5500"
 function renderPackagePriceMap(): string {
   return VIDEO_PACKAGES.map((pkg) => `${pkg.videos} videos = ${pkg.price}`).join(", ");
+}
+
+// Una línea por paquete con lo que incluye según el flyer, para el SYSTEM_PROMPT:
+//   • Básico (6 videos, 2500 Bs): estrategia de contenido, guiones, …
+function renderPackageIncludes(indent = ""): string {
+  return VIDEO_PACKAGES.map(
+    (pkg) => `${indent}• ${pkg.name} (${pkg.videos} videos, ${pkg.price} Bs): ${pkg.includes.join(", ")}.`,
+  ).join("\n");
 }
 
 // ── DRON Y OTROS EXTRAS ──────────────────────────────────────────────────────
@@ -189,8 +234,17 @@ function detectDroneRequest(text: string): boolean {
   return true;
 }
 
-// Nombres de paquete como palabra completa: "PRO" no debe saltar dentro de "CONECTAPRO".
-const PACKAGE_NAME_MATCH_REGEX = new RegExp(`\\b(${PACKAGE_NAMES.join("|")})\\b`);
+// "CapCut Pro" es el curso de Edición Persuasiva (y la versión paga de la app), no el
+// paquete Pro. Sin esta exclusión, cada mensaje del bot sobre el curso contaba como
+// "paquetes presentados": el QR dejaba de salir y un "quiero comprar mi entrada" recibía el
+// formulario de datos de empresa (casos reales, 17 y 18 sep 2026).
+const NOT_AFTER_CAPCUT = "(?<!CAP\\s?CUT\\s{1,3})";
+
+// Nombres de paquete como palabra completa: "PRO" no debe saltar dentro de "CONECTAPRO"
+// ni en "CAPCUT PRO". Se aplica sobre texto ya pasado por normalizeForMatch.
+const PACKAGE_NAME_MATCH_REGEX = new RegExp(
+  `${NOT_AFTER_CAPCUT}\\b(${PACKAGE_NAMES.join("|")})\\b`,
+);
 
 // ¿El mensaje identifica un paquete del catálogo por su NOMBRE o por su PRECIO exacto?
 function mentionsCatalogPackage(text: string): boolean {
@@ -209,7 +263,7 @@ function findPackageByName(text: string): VideoPackage | null {
   const normalized = normalizeForMatch(text);
   return (
     VIDEO_PACKAGES.find((pkg) =>
-      new RegExp(`\\b${normalizeForMatch(pkg.name)}\\b`).test(normalized),
+      new RegExp(`${NOT_AFTER_CAPCUT}\\b${normalizeForMatch(pkg.name)}\\b`).test(normalized),
     ) ?? null
   );
 }
@@ -307,6 +361,7 @@ export {
   PACKAGE_SIZES,
   PACKAGE_PRICES,
   PACKAGE_NAMES,
+  PACKAGE_NAME_MATCH_REGEX,
   PACKAGES_WITH_DRONE,
   PACKAGES_WITHOUT_DRONE,
   MIN_PACKAGE_VIDEOS,
@@ -326,6 +381,7 @@ export {
   renderPackageCatalog,
   renderPackageNameMap,
   renderPackagePriceMap,
+  renderPackageIncludes,
   renderQuantityExamples,
   classifyVideoQuantity,
   detectRequestedVideoCount,

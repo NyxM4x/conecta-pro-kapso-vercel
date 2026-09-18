@@ -37,18 +37,17 @@ import {
   VIDEO_PACKAGES,
   PACKAGE_SIZES,
   PACKAGE_PRICES,
-  PACKAGE_NAMES,
+  PACKAGE_NAME_MATCH_REGEX,
   MIN_PACKAGE_VIDEOS,
   MAX_PACKAGE_VIDEOS,
   classifyVideoQuantity,
   detectDroneRequest,
   detectRequestedVideoCount,
   findPackageByName,
-  renderDroneClientLine,
   renderDroneRule,
   renderPackagesWithDrone,
   renderPackageCatalog,
-  renderPackageFlyerLines,
+  renderPackageIncludes,
   renderPackageNameExamples,
   renderPackageNamesList,
   renderPackageNameMap,
@@ -71,7 +70,10 @@ import {
   mentionsRecruitment,
   detectEditingRequest,
   hasBusinessVocabulary,
+  mentionsCourse,
+  detectCoursePaymentRequest,
 } from "../../../../lib/keywords";
+import type { CoursePaymentRequest } from "../../../../lib/keywords";
 
 type IncomingMessage = {
   from: string;
@@ -122,6 +124,11 @@ const MEDIA_SEND_ORDER: MediaIntent[] = [
   "payment_qr",
 ];
 
+// Materiales que salen ANTES del texto de la respuesta. Las 2 imágenes de los paquetes
+// muestran precios, videos y lo que incluye cada uno; el texto que las sigue ("¿Cómo
+// trabajamos...?", el formulario) ya no repite el catálogo. El resto sale después.
+const MEDIA_BEFORE_REPLY: MediaIntent[] = ["service_packages"];
+
 // Materiales que pertenecen a la misma LÍNEA de negocio. La promo temporal de video no
 // es una cuarta línea: es material de la LÍNEA B, así que abre y hereda las reglas de
 // service_packages (continuidad de contexto, cambio de línea) en vez de esquivarlas.
@@ -166,6 +173,83 @@ const LEAD_INTAKE_FIELDS = `📌 Nombre:
 📌 Instagram o redes sociales:
 📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
 📌 ¿Tienes alguna referencia de contenido que te guste? (Opcional)`;
+
+// Introducción del formulario de leads cuando el cliente ya mostró interés en un paquete.
+const LEAD_INTAKE_INTRO = `¡Perfecto! 🙌 Necesitamos estos datos para que un asesor pueda darte una atención personalizada, estudiando el contenido para ti 📋`;
+
+// Respuesta a la consulta general de paquetes (FLUJO B). Sale DESPUÉS de las 2 imágenes de
+// los paquetes, que ya muestran precios, cantidades y lo que incluye cada uno: por eso este
+// texto no repite el catálogo (ver MEDIA_BEFORE_REPLY). Texto del cliente, sin cambios
+// salvo las negritas de WhatsApp. El backend lo normaliza a esta versión exacta si el
+// modelo lo copia con cambios (ver applyExactHowWeWorkText).
+const HOW_WE_WORK_INFO = `*¿Cómo trabajamos con nuestros clientes?*
+
+En nuestra agencia de marketing trabajamos con una metodología organizada y estratégica para garantizar contenido constante, profesional y con mejores resultados en TikTok.
+
+*1. Forma de pago*
+
+Para iniciar el trabajo solicitamos el 50% de adelanto y el 50% restante al finalizar el servicio acordado.
+Esto nos permite organizar la planificación, producción y edición de contenido de manera eficiente.
+
+*2. Días de grabación*
+
+Realizamos grabaciones una vez por semana.
+En cada sesión grabamos un mínimo de 4 videos, aunque en muchas ocasiones logramos grabar más contenido dependiendo de la organización y disponibilidad.
+
+La sesión tiene una duración aproximada de 2 a 3 horas, tiempo en el que trabajamos de forma estratégica para aprovechar al máximo cada grabación.
+
+*3. Guiones y planificación*
+
+Nosotros asistimos con los guiones previamente preparados, ideas estructuradas y contenido pensado específicamente para la marca y el tipo de cliente que queremos atraer.
+
+Nuestro objetivo es que el día de grabación sea dinámico, organizado y productivo.
+
+*4. Importancia de la organización*
+
+Es muy importante que el cliente pueda priorizar el horario de grabación y ayudarnos con la organización previa.
+
+Con la experiencia que tenemos trabajando con diferentes negocios, sabemos que muchas veces ocurren situaciones como:
+
+- Productos no disponibles
+- Personal ocupado
+- Atención a clientes durante la grabación
+- Falta de preparación del espacio
+
+Por eso, antes de cada sesión realizamos una coordinación previa para prever todos estos detalles y así evitar retrasos o pérdida de tiempo.
+
+*5. Publicación del contenido*
+
+El paquete incluye que nosotros mismos realizamos la publicación de los videos en TikTok.
+
+Esto es importante porque analizamos:
+
+- Horarios estratégicos
+- Rendimiento del contenido
+- Optimización de publicaciones
+- Puntos clave para maximizar resultados
+
+Además, trabajamos con herramientas como TikTok Apps, que nos ayudan a impulsar el alcance y llegar a más personas de manera más efectiva.
+
+*6. Comunicación y revisión de videos*
+
+Creamos un grupo de trabajo con cada cliente para mantener una comunicación rápida y organizada.
+
+En ese grupo:
+
+- Enviamos los videos grabados
+- Compartimos avances
+- Mandamos los videos antes de publicar
+- Revisamos posibles correcciones
+
+Si el cliente desea realizar algún ajuste, lo corregimos antes de subir el contenido.
+
+*Nuestro objetivo*
+
+Más que solo grabar videos, buscamos convertirnos en un equipo estratégico para la marca, creando contenido constante, organizado y enfocado en generar resultados reales.`;
+
+// Primera línea de HOW_WE_WORK_INFO, ya normalizada: marca que el texto salió en la
+// conversación (ver detectPackagesPresented y applyExactHowWeWorkText).
+const HOW_WE_WORK_MARKER = "COMO TRABAJAMOS CON NUESTROS CLIENTES";
 
 // Campos del formulario de la LÍNEA C (agente de IA).
 const AI_AGENT_INTAKE_FIELDS = `📌 Nombre:
@@ -353,18 +437,46 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   nombre (${renderPackageNameExamples()}), está eligiendo ese paquete → es intención clara de
   contratar (enviar el formulario de datos).
 - Incluye producción profesional (grabación + edición) orientada a redes sociales (TikTok, Instagram).
+- ⚠️ LOS PAQUETES YA NO SE EXPLICAN EN TEXTO POR DEFECTO: al presentar los paquetes, el sistema
+  envía 2 imágenes (flyers) con los precios, la cantidad de videos y lo que incluye cada uno, y
+  después tu texto de "¿Cómo trabajamos con nuestros clientes?" (FLUJO B consulta general). Pero
+  TÚ SIEMPRE CONOCES estos datos: si el cliente pregunta cuánto cuesta un paquete, cuántos videos
+  trae, cuál tiene dron, qué incluye o cuál le conviene, respóndelo en texto con los datos de esta
+  sección, sin mandarlo a "ver la imagen".
+- QUÉ MUESTRA CADA FLYER (esto es lo que el cliente ve; responde igual que el flyer):
+${renderPackageIncludes("  ")}
+  El manejo de redes que figura en el flyer es: TikTok en el Básico y el Normal; Facebook,
+  Instagram y TikTok en el Pro. Si un cliente del Básico o del Normal pregunta por Instagram o
+  Facebook, no lo niegues: di que un asesor le confirma el alcance exacto.
+  Las campañas en Ads con Bs 500 de presupuesto publicitario vienen en el Pro. En el Básico y el
+  Normal no figuran: si las pide, un asesor le cotiza cómo sumarlas.
+  "Resultados garantizados" es una línea del flyer del Pro: puedes mencionarla, pero NUNCA
+  prometas una cifra de ventas, seguidores o vistas.
+- CÓMO TRABAJAMOS (datos confirmados, son los del texto "¿Cómo trabajamos con nuestros clientes?"):
+  • Forma de pago: 50% de adelanto para iniciar y 50% al finalizar el servicio acordado.
+  • Grabación una vez por semana; mínimo 4 videos por sesión (muchas veces más, según la
+    organización y disponibilidad); cada sesión dura de 2 a 3 horas.
+  • Llegamos con los guiones preparados, ideas estructuradas y contenido pensado para la marca y
+    el tipo de cliente que quiere atraer.
+  • Antes de cada sesión hay una coordinación previa: el cliente prioriza el horario de grabación
+    y deja listo lo necesario (productos disponibles, personal, espacio preparado).
+  • Nosotros publicamos los videos en TikTok, analizando horarios estratégicos, rendimiento,
+    optimización y puntos clave, con herramientas que ayudan a impulsar el alcance.
+  • Grupo de trabajo con cada cliente: ahí van los videos grabados, los avances y los videos
+    antes de publicar; si pide un ajuste, se corrige antes de subirlo.
 - PUBLICIDAD, MARKETING, MANEJO DE REDES Y COMMUNITY MANAGER = ESTA LÍNEA. Los clientes casi nunca
   dicen "paquete de grabación": piden "publicidad para mi negocio", "¿cuánto cobran por
   publicidad?", "servicios de marketing", "planes de publicidad", "que me promocionen mi negocio",
   "manejo de redes sociales", "un community manager", "que me manejen las redes". TODO eso es
   interés en los paquetes: respóndelo con el FLUJO B (marca intents.service_packages = true), NUNCA
   lo trates como fuera de tema ni lo dejes sin respuesta.
-  Lo que SÍ puedes afirmar del manejo de redes: trabajamos INSTAGRAM, FACEBOOK y TIKTOK. Llegamos
-  con guiones e ideas, grabamos, editamos y publicamos los videos en esas redes cuidando horarios
-  y rendimiento, con un grupo de trabajo para revisar avances. Cualquier otro detalle (responder
-  comentarios o mensajes, pauta o anuncios pagados, diseño, otras redes) NO está confirmado: no lo
-  afirmes ni lo niegues — di que un asesor le confirma el alcance exacto cuando lo contacte, y
-  sigue llevándolo a elegir un paquete / dejar sus datos. NO marques advisor_handoff por esto.
+  Lo que SÍ puedes afirmar del manejo de redes: trabajamos INSTAGRAM, FACEBOOK y TIKTOK (qué redes
+  trae cada paquete está en "QUÉ MUESTRA CADA FLYER"). Llegamos con guiones e ideas, grabamos,
+  editamos y publicamos los videos cuidando horarios y rendimiento, con un grupo de trabajo para
+  revisar avances. Cualquier otro detalle (responder comentarios o mensajes, diseño, otras redes,
+  pauta fuera de lo que dice el flyer del Pro) NO está confirmado: no lo afirmes ni lo niegues —
+  di que un asesor le confirma el alcance exacto cuando lo contacte, y sigue llevándolo a elegir
+  un paquete / dejar sus datos. NO marques advisor_handoff por esto.
 - ⚠️ QUÉ INCLUYE CADA PAQUETE — DATO CERRADO, NO SE DEDUCE:
   ${renderDroneRule()}
   Esta línea es la ÚNICA fuente de verdad sobre el dron. NUNCA digas que un paquete lo
@@ -382,10 +494,10 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
     esa modificación.
   Inventar aquí no es un detalle: el cliente se queda con una promesa que el asesor
   después tiene que romper delante de él.
-- Los precios SÍ pueden recitarse en texto (son estos tres, fijos), pero solo cuando el cliente
-  pida información en letras o no le haya quedado claro tras enviarle los flyers — el flyer ya
-  los muestra, así que por defecto se envían las imágenes y solo se detalla en texto si lo pide
-  o queda confuso. Cualquier duda adicional (plazos, forma de pago exacta) la confirma el asesor.
+- Los precios SÍ pueden recitarse en texto (son estos tres, fijos) cuando el cliente pregunta por
+  ellos, los pide en letras o no le quedó claro tras ver los flyers. Por defecto NO los repites al
+  presentar los paquetes: ya van en las imágenes. Cualquier duda que no esté en esta sección
+  (plazos de entrega, fechas de inicio) la confirma el asesor.
 - DISPARADORES POR PRECIO: los montos ${renderPackagePrices()} (Bs, al mes) son los precios
   conocidos de los paquetes (${renderPackagePriceMap()}). Si el cliente menciona uno de esos
   montos (ej. "vengo del anuncio de los ${PACKAGE_PRICES[0]}"), viene interesado en paquetes →
@@ -744,25 +856,28 @@ GUÍA POR SITUACIÓN
   contratar todavía. Si solo dicen "edición" sin aclarar si quieren que grabemos, usa primero el
   flujo "CLIENTE DICE 'EDICIÓN' SIN ACLARAR QUÉ NECESITA".
 
-  Responde ÚNICA y EXACTAMENTE con este texto, sin modificarlo:
+  ORDEN DE LOS MENSAJES: el sistema envía PRIMERO las 2 imágenes de los paquetes (precios,
+  videos y qué incluye cada uno) y DESPUÉS tu respuesta. Tu respuesta NO repite los paquetes ni
+  los precios: es ÚNICA y EXACTAMENTE este texto, sin modificarlo, sin agregar saludos ni
+  preguntas antes o después:
 
-  ¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales 🎬
-
-${renderPackageFlyerLines("  ")}
-
-  Todos con producción profesional orientada a redes sociales como TikTok e Instagram. ${renderDroneClientLine()}
-
-  Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.
+${HOW_WE_WORK_INFO.replace(/^/gm, "  ")}
 
   - Marca intents.service_packages = true.
+  - Si el mensaje del cliente además trae una PREGUNTA CONCRETA que ese texto no responde (por
+    ejemplo si el Básico tiene dron, o si publican en Instagram), agrega al final UNA línea corta
+    que la responda con los datos de la LÍNEA B.
+  - Si en esta conversación YA enviaste ese texto ("¿Cómo trabajamos con nuestros clientes?"), NO
+    lo repitas: responde en pocas líneas la duda concreta del cliente con los datos de la LÍNEA B
+    (precios, videos, qué incluye, dron, forma de pago, grabación, publicación).
 
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (intención clara de contratar)
   Aplica cuando dice "quiero contratar", "quiero el paquete de X videos", "cuándo empezamos",
   "cómo contrato", "quiero empezar", "quiero los servicios de grabación y edición" (NO los cursos,
   NO la promo vencida de edición por 50 Bs).
 
-  Incluye el formulario de leads EXACTAMENTE como aparece abajo, con intro antes
-  (ej. "¡Con gusto! Para coordinar todo, necesito algunos datos 📋"):
+  Incluye el formulario de leads EXACTAMENTE como aparece abajo, con esta intro antes:
+  "${LEAD_INTAKE_INTRO}"
 
   DISPARADORES DE INTENCIÓN CLARA (además de "quiero contratar"): una respuesta afirmativa
   que ELIGE un paquete tras haber ofrecido elegir cuenta como intención clara de contratar y
@@ -891,30 +1006,14 @@ ${LEAD_INTAKE_FIELDS.replace(/^/gm, "  ")}
   "¿quién publica los videos?", "¿tienen un grupo de WhatsApp con el cliente?", "¿revisamos los
   videos antes de publicar?").
 
-  Responde con este contenido (adapta el tono/formato a WhatsApp — frases cortas, sin encabezados
-  numerados largos, resumiendo en bloques con emojis — pero mantén TODOS los datos concretos, no
-  los omitas ni los inventes de más):
-
-  ¡Buena pregunta! 😊 Así trabajamos en Conecta Pro:
-
-  💳 *Forma de pago:* 50% de adelanto para iniciar y 50% al finalizar el servicio acordado.
-
-  🎥 *Grabación:* una vez por semana, mínimo 4 videos por sesión (a veces más), con una duración de 2 a 3 horas por sesión.
-
-  📝 *Guiones:* llegamos con guiones e ideas ya preparadas, pensadas para tu marca y tu público.
-
-  📅 *Organización:* es clave que priorices el horario de grabación y nos ayudes con la coordinación previa (producto disponible, personal, espacio listo) para aprovechar bien la sesión.
-
-  📲 *Publicación:* nosotros publicamos los videos en tus redes (Instagram, Facebook y TikTok), cuidando horarios y rendimiento para maximizar resultados.
-
-  💬 *Comunicación:* armamos un grupo de trabajo contigo para enviar avances, videos antes de publicar y hacer ajustes si hace falta.
-
-  Más que grabar videos, buscamos ser tu equipo estratégico de contenido 🚀 ¿Te gustaría ver los paquetes disponibles?
-
+  - Si todavía NO le enviaste el texto "¿Cómo trabajamos con nuestros clientes?" en esta
+    conversación, esta pregunta ES la consulta general del FLUJO B: responde con ese texto exacto
+    y marca intents.service_packages = true (el sistema manda antes las 2 imágenes).
+  - Si YA se lo enviaste, NO lo repitas entero: responde en 1 a 3 líneas la parte que preguntó,
+    con los datos de "CÓMO TRABAJAMOS" de la LÍNEA B (ej. "¿cuántas veces graban?" → una vez por
+    semana, mínimo 4 videos por sesión, de 2 a 3 horas). Ahí NO marques intents.service_packages.
   - Si el cliente responde con interés tras esta explicación, sigue el flujo normal de paquetes
-    (Flujo B consulta general o formulario, según corresponda).
-  - Marca intents.service_packages = true (esta información es parte de la línea de paquetes de
-    producción).
+    (formulario de datos si hay intención de contratar).
   - NO uses este flujo para el agente de IA (LÍNEA C) ni para cursos — es exclusivo de los
     paquetes de video.
 
@@ -1574,7 +1673,7 @@ REGLA DE ORO — SEPARACIÓN DE FLUJOS:
 // Texto EXACTO del formulario de intake de leads (mismo contenido que el bloque
 // "intención clara de contratar" del SYSTEM_PROMPT). Se centraliza aquí para que la
 // red de seguridad determinista pueda enviar el mismo formulario si el LLM lo omite.
-const LEAD_INTAKE_FORM = `¡Con gusto! Para coordinar todo, necesito algunos datos 📋
+const LEAD_INTAKE_FORM = `${LEAD_INTAKE_INTRO}
 
 ${LEAD_INTAKE_FIELDS}`;
 
@@ -1692,6 +1791,17 @@ Cuando completes la transferencia, envíame por este chat:
 
 Con eso el equipo valida el pago y te confirmamos tu cupo 😊`;
 
+// Mismo paso del pago cuando el QR salió hace menos de 1 hora y no se reenvía: prometer
+// "te paso el QR" sin que llegue nada era el reclamo (ver MEDIA_RESEND_WINDOW_HOURS).
+const RESERVATION_QR_ABOVE_REPLY = `¡Genial que quieras sumarte! 🙌 El QR de pago está arriba en este chat 👆
+
+Cuando completes la transferencia, envíame por este chat:
+📌 La foto o PDF de tu comprobante
+📌 Tu nombre completo (verifica que esté bien escrito)
+📌 Tu número de celular
+
+Con eso el equipo valida el pago y te confirmamos tu cupo 😊`;
+
 // CIERRE DEL LEAD. Es el último mensaje que el cliente recibe del bot: a partir de aquí
 // la conversación queda en manos del asesor y el bot se apaga (ver
 // pauseBotForHumanHandoff). Por eso el acuse es obligatorio y va SIEMPRE antes del
@@ -1713,16 +1823,26 @@ const PRIOR_AGREEMENT_REPLY = `¡Gracias por avisar! 😊 Le paso ahora mismo tu
 
 Te escribe por aquí en un momento 🙌`;
 
-// Texto EXACTO del Flujo B — consulta general de paquetes (mismo contenido que el
-// SYSTEM_PROMPT). Centralizado para que la red de seguridad pueda enviarlo textual
-// cuando el LLM devuelve el saludo genérico pese a haber intención de paquetes.
-const SERVICE_PACKAGES_INFO = `¡Claro! En Conecta Pro ofrecemos paquetes de grabación y edición de video para negocios y marcas personales 🎬
+// El texto de "¿Cómo trabajamos...?" es largo y el modelo lo copia a mano: puede cambiar
+// una palabra, perder una negrita o cortarlo. Si la respuesta lo trae, se reemplaza ese
+// bloque por la versión exacta, conservando lo que el modelo haya agregado antes o después
+// (por ejemplo la línea que responde una pregunta concreta del cliente).
+// El título con sus signos de pregunta: así se distingue el texto de una mención al pasar.
+const HOW_WE_WORK_TITLE_REGEX =
+  /\**\s*¿\s*c[oó]mo\s+trabajamos\s+con\s+nuestros\s+clientes\s*\?\s*\**/i;
+const HOW_WE_WORK_BLOCK_REGEX = new RegExp(
+  `${HOW_WE_WORK_TITLE_REGEX.source}[\\s\\S]*?resultados\\s+reales\\.?\\**`,
+  "i",
+);
 
-${renderPackageFlyerLines()}
-
-Todos con producción profesional orientada a redes sociales como TikTok e Instagram. ${renderDroneClientLine()}
-
-Si deseas elegir un paquete avísanos para pedirte tus datos y así un asesor te contactará y te dará toda la información que necesites.`;
+function applyExactHowWeWorkText(reply: string): string {
+  if (!reply || !HOW_WE_WORK_TITLE_REGEX.test(reply)) return reply;
+  if (HOW_WE_WORK_BLOCK_REGEX.test(reply)) {
+    return reply.replace(HOW_WE_WORK_BLOCK_REGEX, HOW_WE_WORK_INFO);
+  }
+  // Tiene el título pero lo cortó antes del final: sale completo desde el título.
+  return `${reply.slice(0, reply.search(HOW_WE_WORK_TITLE_REGEX))}${HOW_WE_WORK_INFO}`;
+}
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -3891,9 +4011,9 @@ function detectGeneralPurchaseIntent(
 
 // Nombres propios de los paquetes tal como salen en el flyer. Como el cliente solo puede
 // conocerlos DESPUÉS de ver el flyer, mencionar uno equivale a elegir un paquete →
-// intención clara de contratar. Llegan ya normalizados (sin tilde, en mayúsculas) desde
-// lib/packages.ts.
-const PACKAGE_NAME_REGEX = new RegExp(`\\b(${PACKAGE_NAMES.join("|")})\\b`);
+// intención clara de contratar. Vive en lib/packages.ts, que excluye "CapCut Pro": ese es
+// el curso, no el paquete Pro.
+const PACKAGE_NAME_REGEX = PACKAGE_NAME_MATCH_REGEX;
 
 // Detecta si el mensaje del cliente es una elección afirmativa de un paquete
 // válido (6, 12 o 18), excluyendo preguntas de precio y montos en Bs (2500/3500/5500 no
@@ -3935,11 +4055,14 @@ function replyContainsIntakeForm(reply: string): boolean {
 // ¿El asistente ya PRESENTÓ los paquetes de producción en esta conversación?
 // Es el contexto que habilita las selecciones por referencia ("ese", "el primero").
 // Antes esto dependía solo de que se hubiera enviado el flyer como imagen; pero el
-// bot también presenta los paquetes por TEXTO (SERVICE_PACKAGES_INFO), y en ese caso
-// el cliente elige igual. Se mira el historial ya cargado en memoria: sin queries ni
-// llamadas extra a OpenAI.
+// bot también responde precios y paquetes por TEXTO, y en ese caso el cliente elige
+// igual. Se mira el historial ya cargado en memoria: sin queries ni llamadas extra a
+// OpenAI.
 // Importante: exige contexto de PAQUETES (no de cursos), para que "el primero" o
-// "el básico" en una conversación de cursos NO dispare el formulario.
+// "el básico" en una conversación de cursos NO dispare el formulario. Un mensaje del bot
+// sobre un curso no cuenta aunque nombre "Edición Persuasiva en CapCut Pro" o una fecha
+// que coincide con una cantidad de paquete ("domingo 18"): contaba, y desde el curso de
+// CapCut Pro (sep 2026) apagaba el QR y mandaba el formulario a quien quería su entrada.
 function detectPackagesPresented(
   history: HistoryMessage[],
   flyerAlreadySent: boolean,
@@ -3953,6 +4076,10 @@ function detectPackagesPresented(
 
       // El marcador del flyer de paquetes también cuenta como presentación.
       if (normalized.includes("MEDIA_SENT:SERVICE_PACKAGES")) return true;
+      // El texto de "¿Cómo trabajamos...?" sale junto con los flyers de paquetes.
+      if (normalized.includes(HOW_WE_WORK_MARKER)) return true;
+
+      if (COURSE_KEYWORDS.test(normalized) && !/\bPAQUETES?\b/.test(normalized)) return false;
 
       const talksAboutPackages = SERVICE_PACKAGES_KEYWORDS.test(normalized);
       const showsTheOffer =
@@ -3969,29 +4096,55 @@ function detectPackagesPresented(
 // Nombre, empresa, rubro...) a un cliente que solo había hablado de cursos, porque leyó
 // "en ese estaba interesado" (sobre un curso) como si eligiera un paquete. El prompt ya
 // aclara que el formulario es exclusivo de paquetes, pero esa regla es interpretable —
-// esta función es la guarda dura: si la conversación es de cursos y NUNCA se presentaron
-// paquetes, el formulario no debe salir pase lo que pase el LLM.
+// esta función es la guarda dura: si la conversación está en cursos, el formulario no debe
+// salir pase lo que pase el LLM (salvo que el cliente pida paquetes de forma explícita).
+//
+// Decide el ÚLTIMO mensaje del bot que habla de una sola línea: quien vio los paquetes y
+// después preguntó por el curso está en el curso. Antes bastaba con haber recibido alguna
+// vez el flyer de paquetes (se mira por teléfono, en cualquier conversación) para perder el
+// contexto de cursos, y un "no sé si tendrían enchufe, yo edito en laptop" sobre el curso
+// recibía el formulario de datos de empresa (18 sep 2026).
 function detectCourseContext(
   history: HistoryMessage[],
   flyerCourseAlreadySent: boolean,
   packagesPresented: boolean,
 ): boolean {
-  if (packagesPresented) return false;
-  if (flyerCourseAlreadySent) return true;
+  const assistantMessages = history.filter((message) => message.role === "assistant");
 
-  return history
-    .filter((message) => message.role === "assistant")
-    .some((message) => {
-      const normalized = normalizeForMatch(message.content);
-      if (normalized.includes("MEDIA_SENT:COURSE_FLYER")) return true;
-      // El saludo y las preguntas de orientación nombran las TRES líneas ("cursos
-      // presenciales, servicios de grabación y agentes de IA"): eso es un menú, no una
-      // conversación de cursos. Contarlo bloqueaba el formulario a clientes de paquetes
-      // que respondían al saludo ("costos de marketing para mi negocio").
-      const listsAllLines =
-        SERVICE_PACKAGES_KEYWORDS.test(normalized) && AI_AGENT_KEYWORDS.test(normalized);
-      return COURSE_KEYWORDS.test(normalized) && !listsAllLines;
-    });
+  for (let i = assistantMessages.length - 1; i >= 0; i--) {
+    const line = classifyAssistantLine(assistantMessages[i].content);
+    if (line) return line === "course";
+  }
+
+  if (packagesPresented) return false;
+  return flyerCourseAlreadySent;
+}
+
+// ¿De qué línea habla este mensaje del bot? null = de ninguna en particular (saludo,
+// agradecimiento, pedido de contexto).
+function classifyAssistantLine(content: string): "course" | "packages" | null {
+  const normalized = normalizeForMatch(content);
+
+  // El saludo y las preguntas de orientación nombran las TRES líneas ("cursos
+  // presenciales, servicios de grabación y agentes de IA"): eso es un menú, no una
+  // conversación de cursos. Contarlo bloqueaba el formulario a clientes de paquetes
+  // que respondían al saludo ("costos de marketing para mi negocio").
+  if (SERVICE_PACKAGES_KEYWORDS.test(normalized) && AI_AGENT_KEYWORDS.test(normalized)) {
+    return null;
+  }
+
+  // "Si decides elegir un paquete, aquí estoy" no presenta nada: hace falta el formulario,
+  // el texto de cómo trabajamos, o "paquete" junto a un nombre, un precio o "videos".
+  const presentsPackages =
+    normalized.includes(HOW_WE_WORK_MARKER) ||
+    replyContainsIntakeForm(content) ||
+    (/\bPAQUETES?\b/.test(normalized) &&
+      (PACKAGE_NAME_REGEX.test(normalized) ||
+        containsExactNumber(normalized, PACKAGE_PRICES) ||
+        /\bVIDEOS\b/.test(normalized)));
+  if (presentsPackages) return "packages";
+
+  return COURSE_KEYWORDS.test(normalized) ? "course" : null;
 }
 
 // ¿El asistente ya le hizo la pregunta de edición ambigua (paquete completo o solo
@@ -4046,54 +4199,87 @@ function detectPaymentOfferPending(history: HistoryMessage[]): boolean {
     });
 }
 
-// Intención explícita de pagar/reservar un curso, autosuficiente (no necesita
-// contexto previo del asistente).
-const EXPLICIT_ENROLL_INTENT_REGEX =
-  /\b(QUIERO RESERVAR|QUIERO EL CUPO|QUIERO MI CUPO|RESERVAR MI CUPO|RESERVAR EL CUPO|APARTAR MI LUGAR|APARTAR EL LUGAR|COMO APARTO|COMO RESERVO|QUIERO INSCRIBIRME|ME INSCRIBO|QUIERO PAGAR|COMO PAGO|DONDE PAGO|PASAME EL QR|MANDAME EL QR|ENVIAME EL QR|QUIERO LA PREVENTA|QUIERO ANOTARME|ANOTAME)\b/;
+// Por qué se fuerza el QR en este turno. Solo "qr_request" (el cliente pidió el QR con
+// todas las letras) lo manda aunque lo haya recibido hace un rato; los otros dos respetan
+// la ventana de 1 hora: si el QR está arriba en el chat, el bot se lo recuerda.
+type ForcedQrReason = CoursePaymentRequest | "offer_accepted";
 
 // Red de seguridad determinista para el QR de pago de cursos, análoga a
-// shouldForceIntakeForm para paquetes. Cubre dos casos: (1) el cliente pide pagar o
-// reservar de forma explícita, y (2) responde afirmativo a una oferta de pago que el
-// propio bot acaba de hacer, en contexto de curso — el caso real del bug.
+// shouldForceIntakeForm para paquetes. Cubre tres casos: (1) el cliente pide el QR,
+// (2) quiere pagar o reservar ("quiero pagar mi entrada", "reservar mi curso"), y (3)
+// responde afirmativo a una oferta de pago que el propio bot acaba de hacer.
 //
 // IMPORTANTE: la intención explícita se evalúa ANTES de cualquier guarda de pregunta.
 // PRICE_QUESTION_REGEX incluye un "?" suelto y bloquearía "¿cómo pago?" o "¿me pasas
 // el QR?", que son intenciones reales de inscripción, no preguntas informativas.
 function shouldForcePaymentQr(params: {
+  // Lo que el cliente escribió desde la última respuesta del bot.
   text: string;
   history: HistoryMessage[];
   courseContext: boolean;
   packagesPresented: boolean;
-  qrAlreadySent: boolean;
+  // El QR salió hace menos de 1 hora (MEDIA_RESEND_WINDOW_HOURS.payment_qr).
+  qrSentRecently: boolean;
   // false cuando no hay ningún curso a la venta (p. ej. el único ya empezó).
   courseSellable: boolean;
-}): boolean {
-  // payment_qr es EXCLUSIVO de cursos (ver prompt). Si la conversación ya presentó
-  // paquetes de producción, NUNCA se fuerza el QR — un "cómo pago" ahí se refiere al
-  // formulario/asesor de paquetes, no a un curso. Evita forzar el QR por error en
-  // una conversación de paquetes solo porque el cliente usó una palabra genérica de
-  // pago ("quiero pagar", "cómo pago").
-  if (
-    params.qrAlreadySent ||
-    !params.courseSellable ||
-    params.packagesPresented ||
-    !params.text
-  ) {
-    return false;
+}): ForcedQrReason | null {
+  if (!params.courseSellable || !params.text) return null;
+
+  // "Ahora quiero el paquete de 12" después de hablar del curso pide un paquete.
+  if (hasStrongPackageSignal(params.text)) return null;
+
+  // payment_qr es EXCLUSIVO de cursos (ver prompt). En una conversación de paquetes,
+  // "quiero pagar" o "me pasas el QR" se refieren al adelanto del paquete, que coordina el
+  // asesor: solo cuenta si el mensaje nombra el curso o su entrada ("quiero pagar mi
+  // entrada del curso"). Los paquetes nunca tienen entradas ni cupos.
+  if (params.packagesPresented && !params.courseContext && !mentionsCourse(params.text)) {
+    return null;
   }
 
-  const normalized = normalizeForMatch(params.text);
-
-  // packagesPresented ya se descartó arriba, así que una intención explícita de
-  // pagar/reservar aquí solo puede referirse a un curso (paquetes usa otro
-  // vocabulario: "contratar", "el paquete de X videos").
-  if (EXPLICIT_ENROLL_INTENT_REGEX.test(normalized)) return true;
+  const request = detectCoursePaymentRequest(params.text);
+  if (request === "qr_request") return request;
+  if (request === "pay_intent") return params.qrSentRecently ? null : request;
 
   // Afirmativo seco tras una oferta de pago del asistente, en conversación de curso.
-  if (!params.courseContext && !COURSE_KEYWORDS.test(normalized)) return false;
-  if (!detectPaymentOfferPending(params.history)) return false;
+  const normalized = normalizeForMatch(params.text);
+  if (params.qrSentRecently) return null;
+  if (!params.courseContext && !COURSE_KEYWORDS.test(normalized)) return null;
+  if (!detectPaymentOfferPending(params.history)) return null;
 
-  return AFFIRMATIVE_CHOICE_REGEX.test(normalized);
+  return acceptsPaymentOffer(params.text) ? "offer_accepted" : null;
+}
+
+// Un "sí" a la oferta del QR es corto y afirmativo desde la primera palabra ("si", "dale",
+// "sí porfa", "ya quiero"). Con AFFIRMATIVE_CHOICE_REGEX, que busca en cualquier parte,
+// "¿a qué hora son las clases?" o "no sé si tendrían enchufe" aceptaban el QR.
+const PAYMENT_OFFER_ACCEPTANCE_REGEX =
+  /^\W*(SI+|SIP|DALE|OK|OKEY|OKAY|YA|CLARO|BUENO|LISTO|PERFECTO|DE UNA|POR FAVOR|PORFA\w*|QUIERO|LO QUIERO|ME INTERESA|DAME|VA|VAMOS)\b/;
+
+function acceptsPaymentOffer(text: string): boolean {
+  const lines = normalizeForMatch(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.some((line) => line.includes("?"))) return false;
+
+  return lines.some(
+    (line) => line.split(/\s+/).length <= 6 && PAYMENT_OFFER_ACCEPTANCE_REGEX.test(line),
+  );
+}
+
+// Todo lo que el cliente escribió desde la última respuesta del bot. Cuando escribe en
+// ráfaga ("si quiero entrar" / "el qr porfavor" / "¿puedo llevar mi laptop?"), cada
+// mensaje llega en su propio webhook y solo responde el último: mirando solo ese, el
+// pedido del QR del mensaje del medio se perdía.
+function getUnansweredClientText(history: HistoryMessage[], batchText: string): string {
+  const lastAssistantIndex = history.map((message) => message.role).lastIndexOf("assistant");
+  const pending = history
+    .slice(lastAssistantIndex + 1)
+    .filter((message) => message.role === "user")
+    .map((message) => message.content);
+
+  return pending.length > 0 ? pending.join("\n") : batchText;
 }
 
 // Señal INEQUÍVOCA de que el cliente quiere contratar paquetes de producción. Es lo
@@ -4139,12 +4325,22 @@ function hasStrongPackageSignal(text: string): boolean {
   if (!text) return false;
   const normalized = normalizeForMatch(text);
 
-  return (
+  if (
     /\bPAQUETE(S)?\b/.test(normalized) ||
     PACKAGE_NAME_REGEX.test(normalized) ||
-    containsExactNumber(normalized, PACKAGE_SIZES) ||
     containsExactNumber(normalized, PACKAGE_PRICES)
-  );
+  ) {
+    return true;
+  }
+
+  // Si el mensaje habla de un curso, un 6, 12 o 18 suelto suele ser una fecha ("el curso
+  // del 18"): solo cuenta como paquete si viene con la palabra "videos".
+  if (mentionsCourse(text)) {
+    const count = detectRequestedVideoCount(text);
+    return count !== null && PACKAGE_SIZES.includes(count);
+  }
+
+  return containsExactNumber(normalized, PACKAGE_SIZES);
 }
 
 // Selección de un paquete por parte del cliente. Dos niveles de confianza:
@@ -4275,11 +4471,16 @@ function detectExplicitIntent(text: string): DetectedIntent | null {
   const editing = detectEditingRequest(text);
   if (editing === "ambiguous" && !mentionsExpiredEditPromo(text)) return "editing_ambiguous";
 
+  // Antes que las señales de paquetes: "quiero dos cupos para el curso del 18" o "quiero
+  // comprar mi entrada" piden un curso, aunque traigan un número o un "quiero".
+  const strongPackageSignal = hasStrongPackageSignal(text);
+  if (mentionsCourse(text) && !strongPackageSignal) return "course";
+
   if (
     detectPackagePriceMention(text) ||
     detectPackageChoice(text) ||
     detectPackageNameChoice(text) ||
-    hasStrongPackageSignal(text)
+    strongPackageSignal
   ) {
     return "service_packages";
   }
@@ -4297,6 +4498,30 @@ function detectExplicitIntent(text: string): DetectedIntent | null {
 const EXPLICIT_PAYMENT_PHRASES =
   /\b(COMPROBANTE|YA PAGUE|REALICE EL PAGO|HICE EL PAGO|PAGO REALIZADO|YA CANCELE|YA DEPOSITE|DEPOSITE|YA TRANSFERI|TRANSFERI)\b/;
 const VAGUE_SEND_PHRASES = /\b(YA MANDE|YA PASE|YA ENVIE)\b/;
+
+// ¿Ya salió el texto "¿Cómo trabajamos con nuestros clientes?" en esta conversación? El
+// modelo solo ve los últimos 12 mensajes; esto le avisa aunque el texto haya quedado atrás,
+// para que no lo repita entero cada vez que el cliente pregunta algo de los paquetes.
+async function hasHowWeWorkBeenSent(conversationId?: string): Promise<boolean> {
+  if (!conversationId) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", "%trabajamos con nuestros clientes%")
+    .limit(1);
+
+  if (error) {
+    console.error("supabase check how-we-work sent failed", error);
+    return false;
+  }
+
+  return (data ?? []).length > 0;
+}
 
 async function hasIntakeFormBeenSent(conversationId?: string): Promise<boolean> {
   if (!conversationId) return false;
@@ -5411,6 +5636,8 @@ export async function POST(request: Request) {
     flowState,
     manualHumanMediaSent,
     packagesLastSentAt,
+    qrLastSentAt,
+    howWeWorkSent,
   ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
@@ -5431,6 +5658,9 @@ export async function POST(request: Request) {
     // Último envío del flyer de paquetes: define si este turno vuelve a mandarlo o
     // responde solo en texto (ventana de 24h, ver sendMediaForIntent).
     getMediaIntentLastSentAt(lastMessage.from, "service_packages"),
+    // Último envío del QR: con menos de 1 hora el cliente lo tiene arriba en el chat.
+    getMediaIntentLastSentAt(lastMessage.from, "payment_qr"),
+    hasHowWeWorkBeenSent(lastMessage.conversationId),
   ]);
 
   // Promo del live (PROMO[monto]/PROMOCION[monto], con tolerancia a typos): primero
@@ -5446,6 +5676,14 @@ export async function POST(request: Request) {
     lastSentAt: packagesLastSentAt,
     now: turnNow,
   });
+  const qrSentRecently = !shouldResendMedia({
+    intent: "payment_qr",
+    lastSentAt: qrLastSentAt,
+    now: turnNow,
+  }).send;
+  const minutesSinceQr = qrLastSentAt
+    ? Math.max(0, Math.round((turnNow.getTime() - qrLastSentAt.getTime()) / 60_000))
+    : null;
 
   // Desambiguación con las PROMOS TEMPORALES de video (lib/promos.ts): esas también se
   // piden diciendo "promo" + su precio, y sin este filtro un "promo 1000" de la promo de
@@ -5513,6 +5751,28 @@ export async function POST(request: Request) {
     packagesPresented,
   );
 
+  // Lo que el cliente escribió desde la última respuesta del bot (puede venir en varios
+  // webhooks si escribió en ráfaga).
+  const unansweredClientText = getUnansweredClientText(history, batchText);
+
+  // Red determinista del QR. Se calcula ANTES de generar el turno para que el texto del
+  // modelo diga lo mismo que va a pasar: que el QR sale ahora, o que ya lo tiene arriba.
+  const forcedQrReason = shouldForcePaymentQr({
+    text: unansweredClientText,
+    history,
+    courseContext,
+    packagesPresented,
+    qrSentRecently,
+    courseSellable,
+  });
+
+  // ¿Este turno es de CURSOS? La conversación ya está anclada en cursos, o el cliente nombra
+  // el curso o la compra de su entrada. Un turno así nunca recibe el formulario de datos de
+  // empresa (lo recibieron "quiero comprar mi entrada" y "me interesa curso", sep 2026).
+  const courseTurn =
+    (courseContext || mentionsCourse(unansweredClientText)) &&
+    !hasStrongPackageSignal(unansweredClientText);
+
   // Estado real (ground truth del backend) de qué ya se envió a este teléfono.
   // Reemplaza la inferencia del LLM sobre el historial de texto.
   const contextParts: string[] = [
@@ -5532,6 +5792,15 @@ export async function POST(request: Request) {
       `- service_packages: ${mediaStatus.service_packages ? "YA enviado antes" : "NUNCA enviado"}`,
       `- service_packages_promo: ${mediaStatus.service_packages_promo ? "YA enviado antes" : "NUNCA enviado"}`,
       `- ai_agent_flyer: ${mediaStatus.ai_agent_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
+      // QR de pago: dentro de la hora no vuelve a salir (salvo que lo pida). Sin este aviso
+      // el modelo escribía "te paso el QR 👇" y no llegaba nada.
+      qrSentRecently && minutesSinceQr !== null && forcedQrReason === "qr_request"
+        ? `- payment_qr: enviado hace ${minutesSinceQr} min, pero el cliente lo está pidiendo de nuevo: el sistema lo REENVÍA en este turno. Marca intents.payment_qr = true.`
+        : qrSentRecently && minutesSinceQr !== null
+        ? `- payment_qr: YA enviado hace ${minutesSinceQr} min — el cliente lo tiene arriba en el chat y en este turno NO vuelve a salir. Si quiere pagar, dile que el QR está arriba 👆 y pídele el comprobante + nombre completo + celular. NO escribas "te paso el QR" ni "aquí tienes el QR". Solo si pide explícitamente que se lo reenvíes (no le llegó, no lo encuentra) marca explicit_resend_request = true junto con intents.payment_qr = true.`
+        : qrLastSentAt
+          ? "- payment_qr: se le envió hace más de 1 hora. Si quiere pagar o reservar un curso a la venta, marca intents.payment_qr = true y el QR vuelve a salir."
+          : "- payment_qr: NUNCA enviado.",
       "Confía en este estado (no en lo que infieras del historial de mensajes) para saber si algo ya se envió.",
       ...(mediaStatus.course_flyer
         ? ["Como course_flyer YA fue enviado: no anuncies los flyers de cursos como si fuera la primera vez. Asume que ya se compartieron, salvo que el usuario los pida explícitamente de nuevo."]
@@ -5545,6 +5814,9 @@ export async function POST(request: Request) {
       ...(mediaStatus.service_packages_promo
         ? ["Como service_packages_promo YA fue enviado: la imagen de la promo temporal ya la tiene. No la presentes como novedad ni repitas todo su detalle; continúa la conversación desde ahí, salvo que el usuario la pida explícitamente de nuevo."]
         : []),
+      ...(howWeWorkSent
+        ? ['El texto "¿Cómo trabajamos con nuestros clientes?" YA se envió en esta conversación: NO lo repitas entero. Si pregunta algo de los paquetes o de cómo trabajamos, responde en pocas líneas con los datos de la LÍNEA B.']
+        : []),
       ...(mediaStatus.ai_agent_flyer
         ? ["Como ai_agent_flyer YA fue enviado: no presentes el agente de IA como si fuera la primera vez ni repitas el texto completo del FLUJO C. Continúa la conversación desde donde quedó (juntar sus datos para la llamada del asesor), salvo que el usuario pida el flyer explícitamente de nuevo."]
         : []),
@@ -5557,6 +5829,14 @@ export async function POST(request: Request) {
   if (promoDetected) {
     contextParts.push(
       `PROMO DEL LIVE: este cliente viene de una transmisión en vivo y escribió la palabra clave de la promo con el monto anunciado: ${promoAmount} Bs. Ese es el precio promocional del CURSO para él. Confírmaselo usando ese número exacto (no des otro precio, no lo redondees, no menciones el precio normal del curso) y envíale el QR de pago marcando intents.payment_qr=true. Salúdalo reconociendo que viene del live, en 2 o 3 líneas como máximo.`,
+    );
+  }
+
+  // El cliente quiere pagar un curso a la venta: el QR sale en este turno. Antes el modelo
+  // a veces preguntaba "¿a qué curso te refieres?" y el QR no salía.
+  if (forcedQrReason && !promoDetected) {
+    contextParts.push(
+      "El cliente QUIERE PAGAR o reservar un curso (o pidió el QR): el sistema le envía el QR de pago en este turno. Marca intents.payment_qr = true, responde afirmando el siguiente paso en 2 o 3 líneas y pídele que, tras pagar, envíe por este chat el comprobante + nombre completo + número de celular. El QR es el mismo para todos los cursos: si hay más de uno a la venta y no dijo cuál, NO lo frenes para preguntar; en la misma respuesta pregúntale a cuál se inscribe. NUNCA le pidas el formulario de datos de empresa.",
     );
   }
 
@@ -5764,6 +6044,8 @@ export async function POST(request: Request) {
     // "El básico, con edición" ya eligió un paquete: no hay nada que preguntar.
     !hasStrongPackageSignal(lastMessage.text) &&
     !courseContext &&
+    // "Quería inscribirme al curso" + "De edición" en dos mensajes pide el curso de CapCut.
+    !mentionsCourse(unansweredClientText) &&
     !mediaStatus.ai_agent_flyer &&
     !intakeFormSent &&
     !detectEditingClarifyAsked(history) &&
@@ -5784,7 +6066,7 @@ export async function POST(request: Request) {
   if (!hasAssistantHistory && detectedIntent) {
     const intentDirective: Record<DetectedIntent, string> = {
       service_packages:
-        `El cliente YA expresó intención de paquetes de producción en su mensaje (menciona un precio del catálogo (${renderPackagePrices()}), una cantidad de paquete (${renderPackageSizes()}), o palabras como paquetes/grabación/videos/publicidad/marketing/manejo de redes). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (párrafo de paquetes) y marca intents.service_packages=true.`,
+        `El cliente YA expresó intención de paquetes de producción en su mensaje (menciona un precio del catálogo (${renderPackagePrices()}), una cantidad de paquete (${renderPackageSizes()}), o palabras como paquetes/grabación/videos/publicidad/marketing/manejo de redes). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (el texto de "¿Cómo trabajamos con nuestros clientes?"; las 2 imágenes de los paquetes las envía el sistema antes) y marca intents.service_packages=true.`,
       course:
         "El cliente YA preguntó por cursos en su mensaje. NO es un saludo puro: marca is_greeting=false, responde con el FLUJO A (cursos) y marca intents.course_flyer=true.",
       office:
@@ -5955,18 +6237,21 @@ export async function POST(request: Request) {
     });
 
     const stillSilent = retry.off_topic || !retry.should_reply;
+    // Último recurso: paquetes si habló de publicidad/servicios y todavía no recibió la
+    // presentación (repetir el texto largo sería peor que el menú); si no, el menú.
+    const fallbackToPackages =
+      SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(batchText)) &&
+      !mentionsCourse(batchText) &&
+      !howWeWorkSent;
     turn = stillSilent
       ? {
           ...retry,
           off_topic: false,
           should_reply: true,
-          // Último recurso: paquetes si habló de publicidad/servicios; si no, el menú.
-          reply: SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(batchText))
-            ? SERVICE_PACKAGES_INFO
-            : FALLBACK_ASSISTANT_TURN.reply,
+          reply: fallbackToPackages ? HOW_WE_WORK_INFO : FALLBACK_ASSISTANT_TURN.reply,
           intents: {
             ...FALLBACK_ASSISTANT_TURN.intents,
-            service_packages: SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(batchText)),
+            service_packages: fallbackToPackages,
           },
         }
       : retry;
@@ -6121,6 +6406,10 @@ export async function POST(request: Request) {
     !packageAddonIsNew &&
     // Quien quiere visitarnos recibe su propia versión del formulario (ver más abajo).
     !officeVisitRequested &&
+    // Un turno de cursos nunca: "quiero comprar mi entrada", "me interesa curso" o un "sí"
+    // a la oferta del QR recibían el formulario de datos de empresa.
+    !courseTurn &&
+    !forcedQrReason &&
     shouldForceIntakeForm(lastMessage.text, history, mediaStatus.service_packages)
   ) {
     console.log("intake form forced by safety net (package choice detected)", {
@@ -6212,41 +6501,49 @@ export async function POST(request: Request) {
     });
   }
 
-  // Red de seguridad determinista del QR de cursos: cubre la intención explícita de
-  // pagar/reservar y el afirmativo seco tras una oferta de pago del propio bot — el
-  // caso real donde el cliente dijo "sí" a "¿te reservo el cupo?" y el LLM no marcó
-  // el intent. Ver shouldForcePaymentQr.
-  if (
-    turn.should_reply &&
-    !turn.intents.payment_qr &&
-    shouldForcePaymentQr({
-      text: lastMessage.text,
-      history,
-      courseContext,
-      packagesPresented,
-      qrAlreadySent: mediaStatus.payment_qr,
-      courseSellable,
-    })
-  ) {
+  // Red de seguridad determinista del QR de cursos (forcedQrReason, calculada antes de
+  // generar el turno): el cliente pidió el QR, quiere pagar o reservar ("quiero pagar mi
+  // entrada"), o dijo "sí" a una oferta de pago del propio bot — casos en que el LLM no
+  // siempre marca el intent. Un pedido explícito del QR lo reenvía aunque lo haya recibido
+  // hace un rato (forceQrResend); lo demás respeta la ventana de 1 hora.
+  let forceQrResend = false;
+
+  // ¿El QR sale de verdad en este turno? Dentro de la hora solo sale si se reenvía a pedido.
+  // Las respuestas fijas que lo anuncian dependen de esto para no prometer en falso.
+  const qrGoesOutThisTurn = () =>
+    turn.intents.payment_qr &&
+    courseSellable &&
+    (!qrSentRecently || forceQrResend || turn.explicit_resend_request);
+
+  if (turn.should_reply && forcedQrReason) {
+    const markedByModel = turn.intents.payment_qr;
+
     turn.intents.payment_qr = true;
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;
+    forceQrResend = forcedQrReason === "qr_request";
 
-    console.log("payment_qr forced by safety net (enroll intent detected)", {
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-    });
+    if (!markedByModel || forceQrResend) {
+      console.log("payment_qr forced by safety net", {
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        reason: forcedQrReason,
+      });
 
-    await logSystemEvent({
-      level: "info",
-      eventType: "payment_qr_forced_by_safety_net",
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-      contactPhone: lastMessage.from,
-      metadata: {
-        client_message: lastMessage.text.slice(0, 200),
-      },
-    });
+      await logSystemEvent({
+        level: "info",
+        eventType: "payment_qr_forced_by_safety_net",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          reason: forcedQrReason,
+          marked_by_model: markedByModel,
+          qr_sent_recently: qrSentRecently,
+          client_message: unansweredClientText.slice(0, 200),
+        },
+      });
+    }
   }
 
   // CURSO EN MARCHA O DÍA DEL CURSO: ya no hay QR. Si lo único vigente es un curso que ya
@@ -6285,8 +6582,10 @@ export async function POST(request: Request) {
   // haya marcado — salvo que el cliente pida paquetes de forma explícita en este mensaje.
   // Tampoco para quien quiere visitarnos desde una conversación de cursos: esa visita es
   // de tipo "course" y no lleva el formulario de negocio (ver VISITA A LA OFICINA).
+  // courseTurn cubre además el mensaje que nombra el curso o su entrada aunque la
+  // conversación venga de paquetes ("me interesa curso" tras ver los flyers de paquetes).
   if (
-    courseContext &&
+    courseTurn &&
     !explicitPackageIntent &&
     (turn.service_intake_requested || replyContainsIntakeForm(turn.reply))
   ) {
@@ -6301,9 +6600,16 @@ export async function POST(request: Request) {
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;
 
-    // Si el formulario ya venía dentro de la respuesta, se reemplaza por una pregunta
-    // abierta — nunca se le queda al cliente pidiendo datos de empresa por un curso.
-    if (replacedCourseForm) turn.reply = COURSE_FORM_BLOCKED_REPLY;
+    // Si el formulario ya venía dentro de la respuesta, se reemplaza — nunca se le queda al
+    // cliente pidiendo datos de empresa por un curso. Si en este turno sale el QR, el
+    // reemplazo es el paso del pago; si no, una pregunta abierta.
+    if (replacedCourseForm) {
+      turn.reply = !(turn.intents.payment_qr && courseSellable)
+        ? COURSE_FORM_BLOCKED_REPLY
+        : qrGoesOutThisTurn()
+          ? RESERVATION_REQUIRES_PAYMENT_REPLY
+          : RESERVATION_QR_ABOVE_REPLY;
+    }
 
     await logSystemEvent({
       level: "info",
@@ -6333,14 +6639,16 @@ export async function POST(request: Request) {
 
     // Con el curso ya en marcha no hay cupo que cobrar: se informa, no se vende. El día del
     // curso, antes de empezar, el cupo se paga en la puerta.
-    turn.reply = courseSellable
-      ? RESERVATION_REQUIRES_PAYMENT_REPLY
-      : courseInProgress || !courseDayDoorReply
-        ? COURSE_IN_PROGRESS_NO_SALE_REPLY
-        : courseDayDoorReply;
     turn.intents.payment_qr = courseSellable;
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;
+    turn.reply = courseSellable
+      ? qrGoesOutThisTurn()
+        ? RESERVATION_REQUIRES_PAYMENT_REPLY
+        : RESERVATION_QR_ABOVE_REPLY
+      : courseInProgress || !courseDayDoorReply
+        ? COURSE_IN_PROGRESS_NO_SALE_REPLY
+        : courseDayDoorReply;
 
     await logSystemEvent({
       level: "info",
@@ -6577,7 +6885,7 @@ export async function POST(request: Request) {
     });
 
     turn.is_greeting = false;
-    turn.reply = SERVICE_PACKAGES_INFO;
+    turn.reply = HOW_WE_WORK_INFO;
     turn.intents.service_packages = true;
 
     await logSystemEvent({
@@ -6651,7 +6959,22 @@ export async function POST(request: Request) {
     turn.service_intake_requested = false;
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;
-    if (replaceReply) turn.reply = COURSE_PAYER_DATA_REPLY;
+
+    // "Nuestro equipo valida tu pago" solo si hay un pago que validar. Sin comprobante, el
+    // cliente todavía tiene que pagar: se le indica el QR (un "sí" a "¿te paso el QR?"
+    // recibía "ya tenemos tus datos, validamos tu pago", 18 sep 2026).
+    const paymentOnRecord = paymentAcknowledged || telegramPaymentSent || receiptDetected;
+    if (replaceReply && paymentOnRecord) {
+      turn.reply = COURSE_PAYER_DATA_REPLY;
+    } else if (replaceReply && !courseSellable) {
+      turn.reply = COURSE_FORM_BLOCKED_REPLY;
+    } else if (replaceReply) {
+      // El QR sale ahora, salvo que lo haya recibido hace menos de 1 hora (lo tiene arriba).
+      turn.intents.payment_qr = true;
+      turn.reply = qrGoesOutThisTurn()
+        ? RESERVATION_REQUIRES_PAYMENT_REPLY
+        : RESERVATION_QR_ABOVE_REPLY;
+    }
 
     await logSystemEvent({
       level: "info",
@@ -7016,7 +7339,8 @@ export async function POST(request: Request) {
     return new Response("reply silenced, accumulating lead data", { status: 200 });
   }
 
-  const replyText = turn.reply;
+  // El texto de "¿Cómo trabajamos...?" sale siempre en su versión exacta.
+  const replyText = applyExactHowWeWorkText(turn.reply);
 
   // Guardia anti-loop bot-contra-bot: si las últimas 3 respuestas ya enviadas en
   // esta conversación son idénticas a la que se está por enviar ahora, es señal
@@ -7068,44 +7392,6 @@ export async function POST(request: Request) {
     return new Response("newer inbound message exists, skipping stale reply", {
       status: 200,
     });
-  }
-
-  try {
-    await kapso.messages.sendText({
-      phoneNumberId,
-      to: lastMessage.from,
-      body: replyText,
-    });
-
-    console.log("Kapso SDK text sent successfully");
-
-    await logSystemEvent({
-      level: "info",
-      eventType: "reply_sent",
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-      contactPhone: lastMessage.from,
-      metadata: {
-        duration_ms: Date.now() - generationStartedAt,
-      },
-    });
-  } catch (error) {
-    console.error("kapso sendText failed", error);
-
-    await logSystemEvent({
-      level: "critical",
-      eventType: "kapso_send_text_failed",
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-      contactPhone: lastMessage.from,
-      statusCode: 502,
-      errorMessage: getErrorMessage(error),
-      metadata: {
-        response_not_sent: true,
-      },
-    });
-
-    return new Response("send failed", { status: 502 });
   }
 
   const mediaConversationId =
@@ -7274,7 +7560,82 @@ export async function POST(request: Request) {
     for (const intent of intentsToSend) forcedIntents.add(intent);
   }
 
+  // QR pedido con todas las letras: sale aunque lo haya recibido hace menos de 1 hora.
+  if (forceQrResend && intentsToSend.has("payment_qr")) forcedIntents.add("payment_qr");
+
   const sentIntents: MediaIntent[] = [];
+
+  const sendIntentMedia = async (intent: MediaIntent) => {
+    const mediaResult = await sendMediaForIntent({
+      intent,
+      conversationId: mediaConversationId,
+      phone: lastMessage.from,
+      phoneNumberId,
+      force: forcedIntents.has(intent),
+    });
+
+    if (mediaResult.status === "sent") {
+      sentIntents.push(intent);
+    } else if (mediaResult.status === "no_assets" || mediaResult.status === "send_failed") {
+      await notifyMediaFailureToTelegram({
+        intent,
+        phone: lastMessage.from,
+        conversationId: mediaConversationId,
+        reason: mediaResult.status,
+      });
+    }
+  };
+
+  // Material que va ANTES del texto: las imágenes de los paquetes. El texto que las sigue
+  // ("¿Cómo trabajamos...?" o el formulario) ya no repite los precios. Si fallan, el texto
+  // sale igual: sin respuesta sería peor.
+  for (const intent of MEDIA_BEFORE_REPLY) {
+    if (!intentsToSend.has(intent)) continue;
+    try {
+      await sendIntentMedia(intent);
+    } catch (error) {
+      console.error("media before reply failed", intent, error);
+    }
+  }
+
+  try {
+    await kapso.messages.sendText({
+      phoneNumberId,
+      to: lastMessage.from,
+      body: replyText,
+    });
+
+    console.log("Kapso SDK text sent successfully");
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "reply_sent",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        duration_ms: Date.now() - generationStartedAt,
+      },
+    });
+  } catch (error) {
+    console.error("kapso sendText failed", error);
+
+    await logSystemEvent({
+      level: "critical",
+      eventType: "kapso_send_text_failed",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      statusCode: 502,
+      errorMessage: getErrorMessage(error),
+      metadata: {
+        response_not_sent: true,
+        media_sent_before_reply: sentIntents,
+      },
+    });
+
+    return new Response("send failed", { status: 502 });
+  }
 
   try {
     await saveOutboundMessage({
@@ -7336,26 +7697,8 @@ export async function POST(request: Request) {
     }
 
     for (const intent of MEDIA_SEND_ORDER) {
-      if (!intentsToSend.has(intent)) continue;
-
-      const mediaResult = await sendMediaForIntent({
-        intent,
-        conversationId: mediaConversationId,
-        phone: lastMessage.from,
-        phoneNumberId,
-        force: forcedIntents.has(intent),
-      });
-
-      if (mediaResult.status === "sent") {
-        sentIntents.push(intent);
-      } else if (mediaResult.status === "no_assets" || mediaResult.status === "send_failed") {
-        await notifyMediaFailureToTelegram({
-          intent,
-          phone: lastMessage.from,
-          conversationId: mediaConversationId,
-          reason: mediaResult.status,
-        });
-      }
+      if (!intentsToSend.has(intent) || MEDIA_BEFORE_REPLY.includes(intent)) continue;
+      await sendIntentMedia(intent);
     }
 
     // Lead: el cliente envió sus datos de contratación, o pidió que un asesor lo

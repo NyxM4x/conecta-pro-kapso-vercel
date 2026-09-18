@@ -16,6 +16,7 @@ import {
   MAX_PACKAGE_VIDEOS,
   MIN_PACKAGE_VIDEOS,
   PACKAGE_NAMES,
+  PACKAGE_NAME_MATCH_REGEX,
   PACKAGE_PRICES,
   PACKAGE_SIZES,
   PACKAGES_WITH_DRONE,
@@ -30,9 +31,11 @@ import {
   renderDroneRule,
   renderPackageCatalog,
   renderPackageFlyerLines,
+  renderPackageIncludes,
   renderPackageSizes,
   renderQuantityExamples,
 } from "./packages.ts";
+import { normalizeForMatch } from "./keywords.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -305,6 +308,38 @@ test("una cantidad MAYOR sigue detectándose aunque se nombre un paquete", () =>
 test("sin paquete nombrado, una cantidad chica se sigue detectando", () => {
   assert.equal(detectRequestedVideoCount("solo quiero 1 video"), 1);
   assert.equal(classifyVideoQuantity(1), "below_min");
+});
+
+// --- "CapCut Pro" es el curso, no el paquete Pro ------------------------------
+//
+// Desde el curso "Edición Persuasiva en CapCut Pro" (sep 2026), cada mensaje del bot sobre
+// el curso contaba como paquetes presentados: el QR dejaba de salir y "quiero comprar mi
+// entrada" recibía el formulario de datos de empresa.
+
+test("'CapCut Pro' no es el paquete Pro", () => {
+  const curso = normalizeForMatch("Curso de Edición Persuasiva en CapCut Pro");
+  assert.equal(PACKAGE_NAME_MATCH_REGEX.test(curso), false);
+  assert.equal(PACKAGE_NAME_MATCH_REGEX.test(normalizeForMatch("el curso de cap cut pro")), false);
+  assert.equal(mentionsCatalogPackage("tener CapCut Pro activo"), false);
+  assert.equal(findPackageByName("quiero el curso de capcut pro"), null);
+});
+
+test("el paquete Pro se sigue reconociendo por su nombre", () => {
+  assert.equal(PACKAGE_NAME_MATCH_REGEX.test(normalizeForMatch("me interesa el pro")), true);
+  assert.equal(findPackageByName("El pro mensual")?.name, "Pro");
+  assert.equal(findPackageByName("el básico")?.name, "Básico");
+  // Ni dentro de "ConectaPro".
+  assert.equal(PACKAGE_NAME_MATCH_REGEX.test(normalizeForMatch("ConectaPro")), false);
+});
+
+test("lo que muestra cada flyer: el dron y los Ads solo en el paquete que los trae", () => {
+  const lineas = renderPackageIncludes().split("\n");
+  assert.equal(lineas.length, VIDEO_PACKAGES.length);
+  for (const pkg of VIDEO_PACKAGES) {
+    const linea = lineas.find((l) => l.startsWith(`• ${pkg.name} (`)) ?? "";
+    assert.equal(/\bdron\b/i.test(linea), pkg.drone, pkg.name);
+  }
+  assert.ok(lineas.every((l) => /guiones/.test(l)));
 });
 
 // --- Resultado ---------------------------------------------------------------

@@ -294,8 +294,28 @@ test("force (reenvío pedido explícitamente) ignora la ventana", () => {
   assert.equal(decision.reason, "forced");
 });
 
+test("QR de pago: vuelve a salir pasada 1 hora, no antes", () => {
+  // Recién enviado: lo tiene arriba en el chat.
+  const reciente = shouldResendMedia({
+    intent: "payment_qr",
+    lastSentAt: horasAntes(0.25),
+    now: AHORA,
+  });
+  assert.equal(reciente.send, false);
+  assert.equal(reciente.reason, "within_window");
+
+  // Lo recibió por otro curso días atrás: hoy quiere pagar y lo recibe de nuevo.
+  const otroCurso = shouldResendMedia({
+    intent: "payment_qr",
+    lastSentAt: horasAntes(24 * 4),
+    now: AHORA,
+  });
+  assert.equal(otroCurso.send, true);
+  assert.equal(otroCurso.reason, "window_expired");
+});
+
 test("intents sin ventana conservan el dedup permanente", () => {
-  for (const intent of ["payment_qr", "course_flyer", PROMO, "ai_agent_flyer"]) {
+  for (const intent of ["course_flyer", PROMO, "ai_agent_flyer"]) {
     assert.equal(MEDIA_RESEND_WINDOW_HOURS[intent], undefined, intent);
     const decision = shouldResendMedia({
       intent,
