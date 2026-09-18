@@ -27,6 +27,7 @@ import {
   getDoorSaleCourses,
   getCourseLocation,
   hasSellableCourse,
+  isPresaleClosed,
   hasActiveLocationOverride,
   renderCourseContext,
   renderCourseDayDoorReply,
@@ -58,6 +59,10 @@ for (const course of COURSES) {
   const inicio = new Date(course.startsAt).getTime();
   const vispera = new Date(inicio - 24 * 60 * 60_000);
   const minutoAntes = new Date(inicio - 60_000);
+  // El corte de la preventa: 15:50 para un curso a las 16:00.
+  const cierrePreventa = new Date(inicio - 10 * 60_000);
+  const justoAntesDelCierre = new Date(cierrePreventa.getTime() - 60_000); // 15:49
+  const mananaDelDia = new Date(inicio - 6 * 60 * 60_000); // 10:00 del día del curso
   const recienEmpezado = new Date(inicio + 10 * 60_000);
   const casiTermina = new Date(inicio + 89 * 60_000); // 17:29 para un curso a las 16:00
   const terminoVentana = new Date(inicio + 90 * 60_000); // 17:30
@@ -76,16 +81,28 @@ for (const course of COURSES) {
 
   test(`${course.name}: la preventa se cobra con QR hasta el último minuto de la víspera`, () => {
     // 23:59 del sábado en Bolivia ya es domingo en UTC: el día se cuenta en hora de Bolivia.
-    assert.ok(!getDoorSaleCourses(finDeLaVispera).includes(course), "todavía no es el día del curso");
+    assert.ok(!getDoorSaleCourses(finDeLaVispera).includes(course), "todavía no cerró la preventa");
     assert.ok(lineaDelCurso(finDeLaVispera).includes(`${course.pricePreventa} Bs preventa`));
+  });
+
+  test(`${course.name}: el día del curso el QR sigue saliendo hasta 10 minutos antes`, () => {
+    // El caso que motivó el cambio: escribe a las 10:00 del domingo y quiere pagar con QR.
+    for (const momento of [medianocheDelDia, mananaDelDia, justoAntesDelCierre]) {
+      assert.ok(!isPresaleClosed(course, momento), "la preventa sigue abierta");
+      assert.ok(!getDoorSaleCourses(momento).includes(course), "todavía no es solo-puerta");
+
+      const linea = lineaDelCurso(momento);
+      assert.ok(linea.includes(`${course.pricePreventa} Bs preventa`), "debe ofrecer la preventa");
+    }
   });
 
   test(`${course.name}: se sigue anunciando hasta la hora de inicio`, () => {
     assert.ok(getActiveCourses(minutoAntes).includes(course));
   });
 
-  test(`${course.name}: el día del curso no hay QR, solo se paga en la puerta`, () => {
-    for (const momento of [medianocheDelDia, minutoAntes]) {
+  test(`${course.name}: pasado el corte de 10 minutos no hay QR, solo se paga en la puerta`, () => {
+    for (const momento of [cierrePreventa, minutoAntes]) {
+      assert.ok(isPresaleClosed(course, momento), "la preventa debe estar cerrada");
       assert.ok(getActiveCourses(momento).includes(course), "debe seguir anunciándose");
       assert.ok(getDoorSaleCourses(momento).includes(course), "debe cobrarse en la puerta");
 
@@ -136,10 +153,13 @@ for (const course of COURSES) {
   });
 }
 
-test("con un único curso por delante, el QR sale hasta la víspera y ni el día del curso ni ya empezado", () => {
+test("con un único curso por delante, el QR sale hasta 10 minutos antes de empezar", () => {
   const ultimo = Math.max(...COURSES.map((c) => new Date(c.startsAt).getTime()));
   assert.equal(hasSellableCourse(new Date(ultimo - 24 * 60 * 60_000)), true, "la víspera");
-  assert.equal(hasSellableCourse(new Date(ultimo - 60 * 60_000)), false, "una hora antes, el mismo día");
+  assert.equal(hasSellableCourse(new Date(ultimo - 60 * 60_000)), true, "una hora antes, el mismo día");
+  assert.equal(hasSellableCourse(new Date(ultimo - 11 * 60_000)), true, "11 minutos antes");
+  assert.equal(hasSellableCourse(new Date(ultimo - 10 * 60_000)), false, "justo en el corte");
+  assert.equal(hasSellableCourse(new Date(ultimo - 60_000)), false, "un minuto antes");
   assert.equal(hasSellableCourse(new Date(ultimo + 30 * 60_000)), false, "ya empezado");
   assert.equal(renderCourseDayDoorReply(new Date(ultimo + 30 * 60_000)), null, "ya empezado no se cobra ni en la puerta");
 });

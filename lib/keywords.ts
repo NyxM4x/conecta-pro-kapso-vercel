@@ -335,6 +335,49 @@ function detectCoursePaymentRequest(text: string): CoursePaymentRequest | null {
 // "más información", "¿qué servicio brindan?"). Si el mensaje trae vocabulario del
 // negocio, NO se acepta el silencio. Quedan fuera los mensajes largos (difusiones y
 // publicidad de otros negocios que llegan al número) y los de reclutamiento.
+// ── CIERRE SECO: "ya, gracias" ───────────────────────────────────────────────
+//
+// Un cliente que cierra con "ya, gracias" recibía el saludo completo de bienvenida
+// ("¡Hola! Somos ConectaPro... tenemos cursos, servicios y agentes de IA"): el modelo lo
+// leía como un primer contacto sin intención concreta. Pasó 9 veces en 3 semanas
+// (verificado en la base, sep 2026) y es un mensaje de Meta pagado para volver a
+// presentarse a alguien que se está despidiendo.
+//
+// El detector es a propósito ESTRECHO: exige un agradecimiento explícito y que TODO lo
+// demás del mensaje sean muletillas de cierre. "Gracias, ¿pueden venir hasta el trópico?"
+// tiene que seguir recibiendo su respuesta real, así que cualquier palabra fuera de la
+// lista —o un signo de pregunta— lo descarta.
+const THANKS_WORDS = /^(GRACIAS|GRACIA|GRACIAAA*S?|GRASIAS|GRACS|THANKS|THANK|THX)$/;
+
+// Muletillas que pueden acompañar al agradecimiento sin cambiar que es un cierre.
+const CLOSING_FILLER_WORDS = new Set([
+  "YA", "OK", "OKA", "OKI", "OKEY", "OKAY", "LISTO", "LISTA", "BUENO", "BUENA",
+  "PERFECTO", "PERFECTA", "EXCELENTE", "GENIAL", "VALE", "DALE", "AH", "AHH", "AYA",
+  "AYAA", "AA", "MUCHAS", "MUCHISIMAS", "MIL", "DE", "NADA", "MUY", "AMABLE", "IGUALMENTE",
+  "SALUDOS", "BENDICIONES", "CHAU", "ADIOS", "HASTA", "LUEGO", "PRONTO", "SI", "SIP",
+  "ENTIENDO", "ENTENDIDO", "CLARO", "TODO", "POR", "SU", "TU", "LA", "EL", "INFO",
+  "INFORMACION", "AYUDA", "ATENCION", "TIEMPO", "APOYO",
+]);
+
+// ¿El mensaje es EXCLUSIVAMENTE un agradecimiento o despedida? Se usa para que el cierre
+// de conversación no se confunda nunca con un primer contacto.
+function isClosingThanksOnly(text: string): boolean {
+  if (!text || text.includes("?") || text.includes("¿")) return false;
+
+  const words = normalizeForMatch(text)
+    // Fuera puntuación y emojis: solo importan las palabras.
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0 || words.length > 8) return false;
+  if (!words.some((word) => THANKS_WORDS.test(word))) return false;
+
+  return words.every(
+    (word) => THANKS_WORDS.test(word) || CLOSING_FILLER_WORDS.has(word),
+  );
+}
+
 const BUSINESS_VOCABULARY =
   /\b(PUBLICIDAD|PUBLICITAR|PUBLICITARIO|MARKETING|MERCADEO|PROMOCIONAR|PROMOCIONEN|COMMUNITY|REDES\s+SOCIALES|SERVICIO|SERVICIOS|PAQUETE|PAQUETES|PLANES|PRECIO|PRECIOS|COSTO|COSTOS|COBRAN|COBRA|COTIZACION|COTIZAR|INFORMACION|INFORMACIONES|INFO|DETALLES|CURSO|CURSOS|CLASE|CLASES|TALLER|INSCRIBIR\w*|CUPO|EDICION|EDITAR|EDITEN|GRABACION|GRABAR|VIDEO|VIDEOS|CONTENIDO|UBICACION|DIRECCION|OFICINA|VISITARLOS|AGENTE|CHATBOT|QR|PAGO|PAGUE|PAGADO|COMPROBANTE|DEPOSITE|TRANSFERI|CANCELE|CANCELACION|CONECTA\s*PRO|ASESOR)\b/;
 
@@ -369,6 +412,7 @@ export {
   mentionsRecruitment,
   detectEditingRequest,
   hasBusinessVocabulary,
+  isClosingThanksOnly,
   COURSE_PURCHASE_KEYWORDS,
   mentionsCourse,
   detectCoursePaymentRequest,

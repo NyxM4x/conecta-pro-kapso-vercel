@@ -16,6 +16,8 @@ import {
   hasActiveLocationOverride,
   hasSellableCourse,
   getInProgressCourses,
+  getDoorSaleCourses,
+  formatCourseDate,
   renderCourseDayDoorReply,
 } from "../../../../lib/courses";
 import { MAPS_OFICINA } from "../../../../lib/locations";
@@ -47,7 +49,10 @@ import {
   renderDroneRule,
   renderPackagesWithDrone,
   renderPackageCatalog,
+  joinList,
   renderPackageIncludes,
+  SOCIAL_NETWORKS,
+  renderSocialNetworksRule,
   renderPackageNameExamples,
   renderPackageNamesList,
   renderPackageNameMap,
@@ -70,6 +75,7 @@ import {
   mentionsRecruitment,
   detectEditingRequest,
   hasBusinessVocabulary,
+  isClosingThanksOnly,
   mentionsCourse,
   detectCoursePaymentRequest,
 } from "../../../../lib/keywords";
@@ -228,7 +234,7 @@ Esto es importante porque analizamos:
 - Optimización de publicaciones
 - Puntos clave para maximizar resultados
 
-Además, trabajamos con herramientas como TikTok Apps, que nos ayudan a impulsar el alcance y llegar a más personas de manera más efectiva.
+Además, trabajamos con herramientas como TikTok Ads, que nos ayudan a impulsar el alcance y llegar a más personas de manera más efectiva.
 
 *6. Comunicación y revisión de videos*
 
@@ -245,7 +251,9 @@ Si el cliente desea realizar algún ajuste, lo corregimos antes de subir el cont
 
 *Nuestro objetivo*
 
-Más que solo grabar videos, buscamos convertirnos en un equipo estratégico para la marca, creando contenido constante, organizado y enfocado en generar resultados reales.`;
+Más que solo grabar videos, buscamos convertirnos en un equipo estratégico para la marca, creando contenido constante, organizado y enfocado en generar resultados reales.
+
+Si deseas elegir un paquete, avísanos y te tomamos los datos para que un asesor se comunique contigo 😊`;
 
 // Primera línea de HOW_WE_WORK_INFO, ya normalizada: marca que el texto salió en la
 // conversación (ver detectPackagesPresented y applyExactHowWeWorkText).
@@ -293,6 +301,11 @@ La cotización es personalizada, porque depende de tu negocio. Los precios que v
 Un asesor te llama por WhatsApp para conocer cómo atiendes hoy los mensajes de tu negocio y explicarte cómo se aplicaría el agente en tu caso 📞 Para que te llame con todo listo, déjame estos datos 📋
 
 ${AI_AGENT_INTAKE_FIELDS}`;
+
+// Cierre seco de conversación ("ya, gracias"). Centralizado para que la red de seguridad
+// anti-saludo pueda enviarlo textual cuando el LLM confunde el cierre con un primer
+// contacto (ver isClosingThanksOnly).
+const THANKS_CLOSING_REPLY = `¡De nada! 😊 Si decides elegir un paquete o tienes más preguntas, aquí estoy para ayudarte. ¡Éxito con tu emprendimiento! 🎬`;
 
 // EDICIÓN AMBIGUA: pregunta antes de mandar paquetes o el número del editor.
 const EDITING_CLARIFY_REPLY = `¡Claro! 😊 Para orientarte bien, cuéntame qué necesitas:
@@ -445,9 +458,7 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   sección, sin mandarlo a "ver la imagen".
 - QUÉ MUESTRA CADA FLYER (esto es lo que el cliente ve; responde igual que el flyer):
 ${renderPackageIncludes("  ")}
-  El manejo de redes que figura en el flyer es: TikTok en el Básico y el Normal; Facebook,
-  Instagram y TikTok en el Pro. Si un cliente del Básico o del Normal pregunta por Instagram o
-  Facebook, no lo niegues: di que un asesor le confirma el alcance exacto.
+  ${renderSocialNetworksRule()}
   Las campañas en Ads con Bs 500 de presupuesto publicitario vienen en el Pro. En el Básico y el
   Normal no figuran: si las pide, un asesor le cotiza cómo sumarlas.
   "Resultados garantizados" es una línea del flyer del Pro: puedes mencionarla, pero NUNCA
@@ -470,8 +481,8 @@ ${renderPackageIncludes("  ")}
   "manejo de redes sociales", "un community manager", "que me manejen las redes". TODO eso es
   interés en los paquetes: respóndelo con el FLUJO B (marca intents.service_packages = true), NUNCA
   lo trates como fuera de tema ni lo dejes sin respuesta.
-  Lo que SÍ puedes afirmar del manejo de redes: trabajamos INSTAGRAM, FACEBOOK y TIKTOK (qué redes
-  trae cada paquete está en "QUÉ MUESTRA CADA FLYER"). Llegamos con guiones e ideas, grabamos,
+  Lo que SÍ puedes afirmar del manejo de redes: trabajamos ${joinList(SOCIAL_NETWORKS, "y")} en
+  CUALQUIER paquete. Llegamos con guiones e ideas, grabamos,
   editamos y publicamos los videos cuidando horarios y rendimiento, con un grupo de trabajo para
   revisar avances. Cualquier otro detalle (responder comentarios o mensajes, diseño, otras redes,
   pauta fuera de lo que dice el flyer del Pro) NO está confirmado: no lo afirmes ni lo niegues —
@@ -713,11 +724,14 @@ GUÍA POR SITUACIÓN
     recién lee (o está llegando tarde). Dile que el curso se está llevando a cabo ahora mismo y dale
     lo que necesite: la ubicación de ESE curso, que es hoy y a qué hora empezó. NO vendas: sin QR,
     sin precios, sin preventa. NUNCA le digas que la fecha ya pasó ni que no hay fecha.
-  - EL DÍA DEL CURSO, ANTES DE QUE EMPIECE: si el contexto adicional marca un curso como "HOY", la
-    preventa ya cerró y ese día NO hay QR (intents.payment_qr = false). A quien quiera sumarse
-    dile que puede pagar el precio en puerta de ese curso EN LA PUERTA, con la hora de inicio y la
-    ubicación de ESE curso. Quien dice que ya pagó no paga nada más: confírmale la hora y la
-    ubicación.
+  - EL DÍA DEL CURSO, ANTES DE QUE EMPIECE: que un curso sea "HOY" NO significa que la preventa
+    haya cerrado. El día del curso el QR SIGUE saliendo hasta 10 minutos antes de la hora de
+    inicio: si el contexto adicional muestra el precio de preventa para ese curso, véndelo con
+    normalidad (intents.payment_qr = true cuando pida pagar). Solo cuando el contexto diga
+    explícitamente "La preventa YA CERRÓ" ese curso deja de tener QR (intents.payment_qr = false):
+    ahí, a quien quiera sumarse dile que puede pagar el precio en puerta EN LA PUERTA, con la hora
+    de inicio y la ubicación de ESE curso. Quien dice que ya pagó no paga nada más: confírmale la
+    hora y la ubicación.
   - Pregunta GENERAL de cursos (sin decir cuál): menciona los que tengan FECHA VIGENTE según el
     contexto adicional ("CURSOS — FECHAS Y PRECIOS VIGENTES"), con su fecha tal cual viene ahí. Si
     solo hay uno vigente, menciona solo ese (NO ofrezcas uno sin fecha vigente). Si no hay ninguno
@@ -766,9 +780,10 @@ GUÍA POR SITUACIÓN
     preventa (ej. "aprovecha la preventa"), sin inventar cupos ni decir que "el precio sube" (son
     dos modalidades de pago, no un cambio de precio).
   - Pregunta "¿hasta cuándo dura la preventa?" o similar: responde que la preventa se paga con QR
-    hasta la víspera del curso (el día exacto viene en el contexto adicional); el mismo día del
-    curso ya no hay QR y aplica el precio en puerta, pagando en la puerta. NUNCA inventes una
-    fecha de corte distinta a la del contexto ni menciones cantidad de cupos.
+    hasta 10 minutos antes de que empiece el curso — incluido el mismo día del curso (el día y la
+    hora exactos del corte vienen en el contexto adicional); pasado ese corte ya no hay QR y
+    aplica el precio en puerta, pagando en la puerta. NUNCA inventes una fecha de corte distinta a
+    la del contexto ni menciones cantidad de cupos.
   - Pregunta por modalidad VIRTUAL/online (ej. "¿hay curso virtual?", "¿lo puedo tomar online?",
     "¿tienen versión virtual?"): aclara con amabilidad que el curso es ÚNICAMENTE PRESENCIAL y
     que NUNCA habrá una fecha en modalidad virtual, ni ahora ni en el futuro. No prometas avisar
@@ -1392,7 +1407,7 @@ ${AI_AGENT_INTAKE_FIELDS.replace(/^/gm, "    ")}
   agradecimiento o cierre de conversación (ej. "gracias", "ok gracias", "listo, gracias", "muchas
   gracias") y no contiene ninguna otra pregunta, comentario, dato, ubicación o intención nueva:
 
-  "¡De nada! 😊 Si decides elegir un paquete o tienes más preguntas, aquí estoy para ayudarte. ¡Éxito con tu emprendimiento! 🎬"
+  "${THANKS_CLOSING_REPLY}"
 
   REGLAS ESTRICTAS (evitar gasto innecesario de mensajes/tokens):
   - Si el mensaje del cliente, aunque incluya la palabra "gracias", TAMBIÉN trae una pregunta,
@@ -1448,7 +1463,9 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   todavía, preguntas informativas sobre métodos de pago ("¿aceptan QR?", "¿cómo funciona la
   preventa?"), y SIEMPRE false para paquetes de producción (esos usan el formulario de leads, no
   el QR). FALSE también si el único curso con información es uno que SE ESTÁ DICTANDO AHORA
-  MISMO (ese ya no se vende) o uno marcado como HOY (el día del curso solo se paga en la puerta).
+  MISMO (ese ya no se vende) o uno cuyo contexto diga "La preventa YA CERRÓ" (faltan menos de 10
+  minutos para que empiece: solo se paga en la puerta). Que el curso sea HOY no basta para poner
+  FALSE — el día del curso se sigue cobrando con QR hasta ese corte.
 
 - REGLA ABSOLUTA DEL CUPO DE UN CURSO — el cupo se reserva ÚNICA Y EXCLUSIVAMENTE cuando el
   cliente paga y envía el comprobante. NUNCA, bajo ninguna circunstancia, digas ni des a entender
@@ -1830,8 +1847,12 @@ Te escribe por aquí en un momento 🙌`;
 // El título con sus signos de pregunta: así se distingue el texto de una mención al pasar.
 const HOW_WE_WORK_TITLE_REGEX =
   /\**\s*¿\s*c[oó]mo\s+trabajamos\s+con\s+nuestros\s+clientes\s*\?\s*\**/i;
+// El final del bloque es "resultados reales.", pero desde que el texto termina con la
+// línea de cierre ("Si deseas elegir un paquete, avísanos...") hay que tragársela también
+// cuando el modelo la copió: si el bloque cortara antes, el reemplazo insertaría el texto
+// exacto —que ya trae su cierre— y el cierre del modelo quedaría repetido debajo.
 const HOW_WE_WORK_BLOCK_REGEX = new RegExp(
-  `${HOW_WE_WORK_TITLE_REGEX.source}[\\s\\S]*?resultados\\s+reales\\.?\\**`,
+  `${HOW_WE_WORK_TITLE_REGEX.source}[\\s\\S]*?resultados\\s+reales\\.?\\**(?:\\s*\\**\\s*si\\s+(?:deseas|quieres|decides)[^\\n]*)?`,
   "i",
 );
 
@@ -4691,6 +4712,11 @@ const OFFICE_VISIT_MARKER = "[OFFICE_VISIT_REQUESTED]";
 // que el aviso al asesor sale en el mismo turno (una sola vez por conversación).
 const COURSE_OFFICE_VISIT_ALERT_MARKER = "[TELEGRAM_COURSE_OFFICE_VISIT_SENT]";
 
+// Alguien quiso pagar el curso cuando la preventa ya había cerrado (faltan menos de 10
+// minutos para empezar). El bot ya no manda el QR, pero es una venta a punto de perderse:
+// el equipo tiene esos minutos para pasarle el QR a mano o cobrarle en la puerta.
+const PRESALE_CLOSED_QR_ALERT_MARKER = "[TELEGRAM_PRESALE_CLOSED_QR_SENT]";
+
 async function notifyCourseOfficeVisitToTelegram(params: {
   phone: string;
   conversationId?: string;
@@ -4718,6 +4744,42 @@ async function notifyCourseOfficeVisitToTelegram(params: {
       phone: params.phone,
       content: `${COURSE_OFFICE_VISIT_ALERT_MARKER} aviso de visita por curso enviado a Telegram`,
       rawPayload: { type: "telegram_notification", event: "course_office_visit" },
+    });
+  }
+}
+
+// Aviso al equipo cuando el corte de la preventa deja a un cliente sin QR. Va una sola
+// vez por conversación: si insiste, el equipo ya fue avisado y está el chat abierto.
+async function notifyPresaleClosedQrToTelegram(params: {
+  phone: string;
+  conversationId?: string;
+  clientMessage: string;
+  summary?: string;
+  courseName: string;
+  startsAtLabel: string;
+  pricePresencial: number;
+}): Promise<void> {
+  if (await hasTelegramMarkerBeenSent(params.conversationId, PRESALE_CLOSED_QR_ALERT_MARKER)) {
+    return;
+  }
+
+  const notified = await sendTelegramNotification(
+    buildTelegramBody({
+      headline: "⏰ <b>Quiere pagar y la preventa ya cerró — Curso</b>",
+      phone: params.phone,
+      clientMessage: params.clientMessage,
+      summary: params.summary,
+      contextLabel: `${params.courseName} — empieza ${params.startsAtLabel}`,
+      note: `💸 El bot NO le mandó el QR (el corte es 10 min antes de empezar). Pásaselo a mano si le da el tiempo, o cóbrale ${params.pricePresencial} Bs en la puerta.`,
+    }),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: `${PRESALE_CLOSED_QR_ALERT_MARKER} aviso de preventa cerrada enviado a Telegram`,
+      rawPayload: { type: "telegram_notification", event: "presale_closed_qr" },
     });
   }
 }
@@ -5724,6 +5786,10 @@ export async function POST(request: Request) {
   const courseSellable = hasSellableCourse(turnNow);
   const courseInProgress = getInProgressCourses(turnNow).length > 0;
   const courseDayDoorReply = renderCourseDayDoorReply(turnNow);
+  // Curso que empieza en minutos y ya no se cobra con QR. Existe solo dentro de la
+  // ventana del corte (10 min antes del inicio): es el que el equipo todavía puede
+  // rescatar a mano, así que es el que se nombra en el aviso de Telegram.
+  const [doorSaleCourse] = getDoorSaleCourses(turnNow);
 
   // Cliente que viene por el video de la promo de edición a 50 Bs (ya vencida).
   const mentionsEditPromo50 = mentionsExpiredEditPromo(lastMessage.text);
@@ -6546,10 +6612,45 @@ export async function POST(request: Request) {
     }
   }
 
-  // CURSO EN MARCHA O DÍA DEL CURSO: ya no hay QR. Si lo único vigente es un curso que ya
-  // empezó o que es hoy, el QR no sale aunque el modelo o una red lo hayan marcado. Una
-  // respuesta que ofrece el cupo se reemplaza por la que informa que el curso se está
-  // dictando, o, si todavía no empezó, por la que invita a pagar en la puerta.
+  // PREVENTA CERRADA: quiso pagar y el QR ya no sale. Se avisa al equipo aunque el LLM
+  // haya obedecido y NO haya marcado payment_qr — por eso mira también lo que el cliente
+  // escribió: el aviso tiene que salir por el pedido del cliente, no por lo que el modelo
+  // decidió hacer con él. Son minutos para pasarle el QR a mano o cobrarle en la puerta.
+  if (
+    turn.should_reply &&
+    doorSaleCourse &&
+    !turn.payment_confirmation &&
+    (turn.intents.payment_qr || detectCoursePaymentRequest(unansweredClientText) !== null)
+  ) {
+    await notifyPresaleClosedQrToTelegram({
+      phone: lastMessage.from,
+      conversationId: lastMessage.conversationId,
+      clientMessage: lastMessage.text,
+      summary: turn.conversation_summary,
+      courseName: doorSaleCourse.name,
+      startsAtLabel: formatCourseDate(doorSaleCourse.startsAt),
+      pricePresencial: doorSaleCourse.pricePresencial,
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "presale_closed_payment_attempt",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        course: doorSaleCourse.id,
+        llm_marked_qr: turn.intents.payment_qr,
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
+  }
+
+  // CURSO EN MARCHA O PREVENTA CERRADA: ya no hay QR. Si lo único vigente es un curso que
+  // ya empezó o al que le faltan menos de 10 minutos, el QR no sale aunque el modelo o una
+  // red lo hayan marcado. Una respuesta que ofrece el cupo se reemplaza por la que informa
+  // que el curso se está dictando, o, si todavía no empezó, por la que invita a pagar en
+  // la puerta.
   if (!courseSellable && turn.intents.payment_qr) {
     turn.intents.payment_qr = false;
 
@@ -6865,6 +6966,33 @@ export async function POST(request: Request) {
         },
       });
     }
+  }
+
+  // Red de seguridad anti-saludo — CIERRE SECO. Un "ya, gracias" no es un primer
+  // contacto: el LLM lo leía como saludo sin intención concreta y devolvía la bienvenida
+  // entera a alguien que se estaba despidiendo (9 veces en 3 semanas, sep 2026). Va
+  // ANTES que las otras redes porque no depende de que haya o no historial: el caso real
+  // aparece tanto al cerrar una conversación como al reabrirla con un agradecimiento
+  // tardío. Responde el cierre que el prompt ya define para este caso.
+  if (turn.should_reply && turn.is_greeting && isClosingThanksOnly(unansweredClientText)) {
+    console.log("generic greeting suppressed by safety net (closing thanks)", {
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+    });
+
+    turn.is_greeting = false;
+    turn.reply = THANKS_CLOSING_REPLY;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "greeting_suppressed_closing_thanks",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        client_message: lastMessage.text.slice(0, 200),
+      },
+    });
   }
 
   // Red de seguridad anti-saludo: si pese a la directiva el LLM devolvió el saludo

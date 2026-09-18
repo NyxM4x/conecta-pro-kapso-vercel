@@ -5,8 +5,9 @@
 // Aquí son datos, y cada curso pasa solo por tres estados según la hora actual:
 //
 //   1. PRÓXIMO  (hasta la hora de inicio): se anuncia, se informa y se vende. La preventa
-//      se cobra con QR hasta la víspera; EL DÍA DEL CURSO ya no sale el QR y solo se
-//      puede pagar el precio en puerta, en la puerta (ver isCourseDay).
+//      se cobra con QR hasta PRESALE_CLOSES_MINUTES_BEFORE_START antes de empezar —
+//      incluido el día del curso—; pasado ese corte el QR ya no sale y solo se puede
+//      pagar el precio en puerta, en la puerta (ver isPresaleClosed).
 //   2. EN CURSO (desde el inicio hasta COURSE_INFO_MINUTES_AFTER_START después): ya NO
 //      se vende, pero se sigue dando su información — ubicación, que es hoy, horario.
 //      Existe por un caso real: el día del curso, alumnos que YA habían pagado
@@ -29,6 +30,14 @@ const BOLIVIA_TZ = "America/La_Paz";
 // las 16:00, 90 minutos cubren hasta las 17:30: quien llega tarde o recién lee el día del
 // curso todavía recibe la ubicación.
 const COURSE_INFO_MINUTES_AFTER_START = 90;
+
+// Cuánto ANTES de la hora de inicio cierra la preventa con QR. Antes el corte era la
+// medianoche del día del curso: quien escribía a las 10 de la mañana del domingo ya no
+// podía pagar con QR aunque faltaran seis horas, y se perdían inscripciones de un día
+// que es justo el de más movimiento. Ahora el QR sigue saliendo hasta 10 minutos antes
+// (con cursos a las 16:00, hasta las 15:50); pasado ese minuto el bot deja de mandarlo
+// y avisa al equipo por Telegram para que lo pasen a mano o le cobren en la puerta.
+const PRESALE_CLOSES_MINUTES_BEFORE_START = 10;
 
 // Ubicación EXCEPCIONAL para una fecha puntual de un curso. Existe para no tener que
 // escribir la excepción dentro del prompt, donde sobreviviría al evento y obligaría al
@@ -92,6 +101,9 @@ const COURSES: Course[] = [
 const startTime = (course: Course) => new Date(course.startsAt).getTime();
 const infoEndTime = (course: Course) =>
   startTime(course) + COURSE_INFO_MINUTES_AFTER_START * 60_000;
+// Instante exacto en que deja de salir el QR.
+const presaleEndTime = (course: Course) =>
+  startTime(course) - PRESALE_CLOSES_MINUTES_BEFORE_START * 60_000;
 
 function getCourseStatus(course: Course, now: Date): CourseStatus {
   const t = now.getTime();
@@ -112,10 +124,18 @@ const boliviaDateKey = (date: Date) =>
     day: "2-digit",
   }).format(date);
 
-// ¿Hoy (en Bolivia) es el día del curso? Desde las 00:00 de ese día la preventa está
-// cerrada: quien no pagó ya no recibe el QR y solo puede pagar en la puerta.
+// ¿Hoy (en Bolivia) es el día del curso? Sirve para redactar ("HOY, a las 4:00 PM"), NO
+// para decidir si todavía se cobra: eso lo dice isPresaleClosed, porque el día del curso
+// la preventa sigue abierta hasta 10 minutos antes de empezar.
 function isCourseDay(course: Course, now: Date): boolean {
   return boliviaDateKey(now) === boliviaDateKey(new Date(course.startsAt));
+}
+
+// ¿Ya cerró la preventa con QR de este curso? A partir de este momento el bot no manda
+// más el QR: quien quiera sumarse paga en la puerta, o el equipo le pasa el QR a mano
+// (el webhook avisa por Telegram, ver notifyPresaleClosedQrToTelegram).
+function isPresaleClosed(course: Course, now: Date): boolean {
+  return now.getTime() >= presaleEndTime(course);
 }
 
 // Única fuente de la ubicación de un curso. Devuelve `note` solo cuando la excepción
@@ -152,16 +172,17 @@ function getExpiredCourses(now: Date): Course[] {
   return COURSES.filter((course) => getCourseStatus(course, now) === "finished");
 }
 
-// Cursos que son HOY y todavía no empiezan: se anuncian, pero solo se cobran en la puerta.
+// Cursos que todavía no empiezan pero cuya preventa ya cerró (los últimos 10 minutos
+// antes de la hora de inicio): se anuncian, pero solo se cobran en la puerta.
 function getDoorSaleCourses(now: Date): Course[] {
-  return getActiveCourses(now).filter((course) => isCourseDay(course, now));
+  return getActiveCourses(now).filter((course) => isPresaleClosed(course, now));
 }
 
-// ¿Hay algún curso que se pueda cobrar con QR ahora? Lo usa el webhook para no mandar el QR
-// de pago cuando lo único vigente es un curso que ya empezó o que es hoy (el día del curso
-// solo se paga en la puerta).
+// ¿Hay algún curso que se pueda cobrar con QR ahora? Lo usa el webhook para no mandar el
+// QR de pago cuando lo único vigente es un curso que ya empezó o al que le faltan menos
+// de PRESALE_CLOSES_MINUTES_BEFORE_START minutos (ahí solo se paga en la puerta).
 function hasSellableCourse(now: Date): boolean {
-  return getActiveCourses(now).some((course) => !isCourseDay(course, now));
+  return getActiveCourses(now).some((course) => !isPresaleClosed(course, now));
 }
 
 // ¿Algún curso que todavía se informa (próximo o en curso) se dicta en una ubicación
@@ -180,10 +201,13 @@ function formatCourseDate(iso: string): string {
   return `${formatBoliviaDay(date)}, ${formatBoliviaTime(date)}`;
 }
 
-// Último día de la preventa: la víspera del curso ("sábado 19 de septiembre"). Bolivia no
-// tiene horario de verano, así que restar 24 horas siempre cae en el día anterior.
+// Cierre de la preventa: el mismo día del curso, 10 minutos antes de empezar ("domingo
+// 20 de septiembre a las 3:50 PM"). Antes era la víspera y se decía solo el día; ahora
+// lleva la hora, porque el corte cae dentro del día del curso y sin la hora el cliente
+// no sabe hasta cuándo le sirve el QR.
 function formatPresaleDeadline(course: Course): string {
-  return formatBoliviaDay(new Date(startTime(course) - 24 * 60 * 60_000));
+  const deadline = new Date(presaleEndTime(course));
+  return `${formatBoliviaDay(deadline)} a las ${formatBoliviaTime(deadline)}`;
 }
 
 function formatBoliviaDay(date: Date): string {
@@ -274,10 +298,14 @@ function renderCourseContext(now: Date): string {
     lines.push("- Cursos CON FECHA VIGENTE (los ÚNICOS que puedes anunciar, ofrecer y cobrar):");
 
     for (const course of active) {
+      const dayLabel = isCourseDay(course, now)
+        ? `HOY, ${formatCourseDate(course.startsAt)}`
+        : formatCourseDate(course.startsAt);
+
       lines.push(
-        isCourseDay(course, now)
-          ? `  • ${course.name} — HOY, ${formatCourseDate(course.startsAt)}. La preventa YA CERRÓ (fue hasta ayer, ${formatPresaleDeadline(course)}): hoy NO envíes el QR (intents.payment_qr = false), NO ofrezcas preventa y NO des el precio de preventa. Quien todavía quiera sumarse puede pagar ${course.pricePresencial} Bs EN LA PUERTA del curso: díselo y dale la ubicación. Muchos que escriben hoy YA pagaron: si dice que ya pagó, no le cobres de nuevo, solo confírmale la hora y la ubicación.`
-          : `  • ${course.name} — ${formatCourseDate(course.startsAt)}. Precios: ${course.pricePreventa} Bs preventa (pagando con QR hasta el ${formatPresaleDeadline(course)}) / ${course.pricePresencial} Bs en puerta (pagando en la puerta el día del curso).`,
+        isPresaleClosed(course, now)
+          ? `  • ${course.name} — ${dayLabel}. La preventa YA CERRÓ (cerró hace minutos, ${formatPresaleDeadline(course)}, porque el curso está por empezar): NO envíes el QR (intents.payment_qr = false), NO ofrezcas preventa y NO des el precio de preventa. Quien todavía quiera sumarse puede pagar ${course.pricePresencial} Bs EN LA PUERTA del curso: díselo y dale la ubicación. Muchos que escriben hoy YA pagaron: si dice que ya pagó, no le cobres de nuevo, solo confírmale la hora y la ubicación.`
+          : `  • ${course.name} — ${dayLabel}. Precios: ${course.pricePreventa} Bs preventa (pagando con QR hasta el ${formatPresaleDeadline(course)}, o sea hasta 10 minutos antes de que empiece — el día del curso TAMBIÉN se puede pagar con QR mientras falte más de eso) / ${course.pricePresencial} Bs en puerta (pagando en la puerta el día del curso).`,
         ...renderLocationLines(course, now),
       );
     }
@@ -325,6 +353,7 @@ function renderCourseDayDoorReply(now: Date): string | null {
 export {
   COURSES,
   COURSE_INFO_MINUTES_AFTER_START,
+  PRESALE_CLOSES_MINUTES_BEFORE_START,
   getCourseStatus,
   getActiveCourses,
   getInProgressCourses,
@@ -332,6 +361,7 @@ export {
   getDoorSaleCourses,
   getCourseLocation,
   isCourseDay,
+  isPresaleClosed,
   hasSellableCourse,
   hasActiveLocationOverride,
   formatCourseDate,

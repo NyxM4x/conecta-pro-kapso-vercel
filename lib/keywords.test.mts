@@ -22,6 +22,7 @@ import {
   SERVICE_PACKAGES_KEYWORDS,
   detectCoursePaymentRequest,
   mentionsCourse,
+  isClosingThanksOnly,
 } from "./keywords.ts";
 
 let passed = 0;
@@ -422,6 +423,41 @@ test("mentionsCourse: el curso o la compra de su entrada", () => {
   assert.equal(mentionsCourse("Quiero dos cupo"), true);
   assert.equal(mentionsCourse("me interesa el paquete pro"), false);
   assert.equal(mentionsCourse("quiero publicidad para mi negocio"), false);
+});
+
+test("isClosingThanksOnly: un cierre seco no puede leerse como primer contacto", () => {
+  for (const mensaje of [
+    "ya, gracias",
+    "Ya gracias",
+    "ok gracias",
+    "listo, gracias",
+    "muchas gracias",
+    "muchas gracias por la información",
+    "aya gracias",
+    "gracias 🙏",
+    "Gracias!!",
+    "mil gracias, muy amable",
+    "ok listo gracias bendiciones",
+  ]) {
+    assert.equal(isClosingThanksOnly(mensaje), true, mensaje);
+  }
+});
+
+test("isClosingThanksOnly: si trae cualquier otra cosa, NO es un cierre", () => {
+  for (const mensaje of [
+    "gracias, ¿pueden venir hasta el trópico?",
+    "gracias pero yo soy del trópico",
+    "gracias, quiero el paquete de 12",
+    "gracias, me pasas el QR",
+    "hola",
+    "ya",
+    "ok",
+    "listo",
+    "gracias por el dato, cuándo es el curso",
+    "",
+  ]) {
+    assert.equal(isClosingThanksOnly(mensaje), false, mensaje);
+  }
 });
 
 console.log(`${passed} pruebas OK`);

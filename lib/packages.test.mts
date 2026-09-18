@@ -34,6 +34,7 @@ import {
   renderPackageIncludes,
   renderPackageSizes,
   renderQuantityExamples,
+  renderSocialNetworksRule,
 } from "./packages.ts";
 import { normalizeForMatch } from "./keywords.ts";
 
@@ -340,6 +341,21 @@ test("lo que muestra cada flyer: el dron y los Ads solo en el paquete que los tr
     assert.equal(/\bdron\b/i.test(linea), pkg.drone, pkg.name);
   }
   assert.ok(lineas.every((l) => /guiones/.test(l)));
+});
+
+test("las tres redes valen para cualquier paquete, aunque el flyer chico solo diga TikTok", () => {
+  const regla = renderSocialNetworksRule();
+
+  for (const red of ["Instagram", "Facebook", "TikTok"]) {
+    assert.ok(regla.includes(red), `debe nombrar ${red}`);
+  }
+  assert.ok(regla.includes("CUALQUIERA de los paquetes"), "debe valer para todos los paquetes");
+  assert.ok(regla.includes("SÍ"), "la respuesta al cliente es un sí");
+  // La frase vieja solo puede aparecer PROHIBIDA, nunca como respuesta a dar.
+  assert.ok(
+    regla.includes('NO respondas que "un asesor le confirma el alcance"'),
+    "debe prohibir explícitamente la derivación al asesor que se usaba antes",
+  );
 });
 
 // --- Resultado ---------------------------------------------------------------

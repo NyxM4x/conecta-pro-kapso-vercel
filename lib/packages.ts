@@ -146,6 +146,25 @@ function renderPackagePriceMap(): string {
 
 // Una línea por paquete con lo que incluye según el flyer, para el SYSTEM_PROMPT:
 //   • Básico (6 videos, 2500 Bs): estrategia de contenido, guiones, …
+// ── REDES DONDE PUBLICAMOS ───────────────────────────────────────────────────
+//
+// Los flyers del Básico y el Normal solo nombran TikTok, y el del Pro nombra las tres.
+// Eso hacía que el bot contestara "un asesor te confirma el alcance" a quien preguntaba
+// por Instagram o Facebook en los paquetes chicos — una duda de venta contestada con un
+// "no sé". La política comercial es que las tres redes se trabajan en CUALQUIER paquete,
+// así que esa respuesta ahora es un sí.
+//
+// Ojo: esto SUPERA lo que dicen los flyers, no los describe. Por eso vive acá y no en el
+// `includes` de cada paquete: `includes` es el espejo fiel de la imagen que el cliente
+// tiene abierta, y mezclarle un dato que la imagen no muestra volvería inútil su promesa
+// de "responde igual que el flyer".
+const SOCIAL_NETWORKS = ["Instagram", "Facebook", "TikTok"];
+
+// Lo que el bot puede afirmar sobre redes, derivado de la lista de arriba.
+function renderSocialNetworksRule(): string {
+  return `Publicamos en ${joinList(SOCIAL_NETWORKS, "y")} en CUALQUIERA de los paquetes, incluido el más chico. Si preguntan si manejamos Instagram o Facebook, la respuesta es SÍ, en cualquier paquete — aunque el flyer del ${VIDEO_PACKAGES[0].name} y el del ${VIDEO_PACKAGES[1].name} solo nombren TikTok. NO respondas que "un asesor le confirma el alcance": eso ya está confirmado.`;
+}
+
 function renderPackageIncludes(indent = ""): string {
   return VIDEO_PACKAGES.map(
     (pkg) => `${indent}• ${pkg.name} (${pkg.videos} videos, ${pkg.price} Bs): ${pkg.includes.join(", ")}.`,
@@ -382,6 +401,8 @@ export {
   renderPackageNameMap,
   renderPackagePriceMap,
   renderPackageIncludes,
+  SOCIAL_NETWORKS,
+  renderSocialNetworksRule,
   renderQuantityExamples,
   classifyVideoQuantity,
   detectRequestedVideoCount,
