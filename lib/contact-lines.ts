@@ -1,5 +1,5 @@
 // NOMBRE Y CELULAR que un cliente escribe por el chat ("Aleida Patricia Trujillo Rivera ⏎
-// Tel: 68652085"). Lo usan la lista de pagos (lib/course-enrollments.ts) y la alerta 💰
+// Tel: 68652085"). Lo usan la lista de pagos (lib/payments-ledger.ts) y la alerta 💰
 // (lib/payment-alerts.ts), que le pide esos datos al cliente después del comprobante.
 // Vive aparte para que esos dos módulos no se importen entre sí.
 
@@ -22,7 +22,7 @@ const NOT_A_NAME = new RegExp(
   `\\b(${[
     "HOLA", "BUENAS", "BUENOS", "BUEN", "DIA", "DIAS", "TARDES", "NOCHES", "GRACIAS", "GRAC", "OKI", "OK", "OKEY", "LISTO", "SALUDOS",
     "CURSO", "CURSOS", "CLASE", "CLASES", "CREACION", "CONTENIDO", "EDICION", "CAPCUT", "LIVE", "PROMO", "TALLER",
-    "QR", "PAGO", "PAGAR", "PAGUE", "PAGADO", "COMPROBANTE", "PRECIO", "DEVOLUCION", "CUPO", "CUPOS", "INSCRIBIR", "INSCRIPCION",
+    "QR", "PAGO", "PAGAR", "PAGUE", "PAGADO", "COMPROBANTE", "DEPOSITO", "DEPOSITE", "TRANSFERENCIA", "TRANSFERI", "ADELANTO", "ANTICIPO", "MONTO", "PRECIO", "DEVOLUCION", "CUPO", "CUPOS", "INSCRIBIR", "INSCRIPCION",
     "QUIERO", "QUISIERA", "QUERIA", "GUSTARIA", "SABER", "PUEDE", "PUEDO", "PUEDES", "PODRIA", "HACE", "HACER", "HICIERON", "ISIERON",
     "TENGO", "TIENE", "VOY", "VENGO", "VA", "ESTA", "ESTOY", "ESTAN", "ES", "SON", "ERA", "FUE", "SERA", "HAY",
     "ENVIO", "ENVIE", "MANDO", "MANDE", "PASO", "PASE", "LLEGO", "ESCRIBO", "ESPERO", "AVISA", "DIJE", "DICE", "SALE", "INTENTE",

@@ -1,5 +1,5 @@
-// Pruebas de la alerta 💰 etiquetada (lib/payment-alerts.ts) y de cómo /pagos usa la
-// etiqueta para poner cada pago en su lista.
+// Pruebas de la alerta 💰 etiquetada (lib/payment-alerts.ts): qué se le pide al cliente, cómo
+// se leen sus datos y cómo sale la alerta. La lista de /pagos tiene su propio test.
 //
 //   npm test            (usa el type-stripping nativo de Node, sin dependencias)
 //
@@ -19,8 +19,6 @@ import {
 import type { PaymentReason } from "./payment-alerts.ts";
 import { COURSES, detectMentionedCourses } from "./courses.ts";
 import type { Course } from "./courses.ts";
-import { buildCourseEnrollments, buildOtherPayments, renderCourseEnrollments } from "./course-enrollments.ts";
-import type { PaymentEntry } from "./payments-report.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -208,70 +206,6 @@ test("si no respondió en 20 min sale con el nombre de WhatsApp y lo avisa", () 
   assert.match(text, /no se sabe cuál/);
   assert.match(text, /Carla &lt;Z&gt; <i>\(nombre de WhatsApp\)<\/i>/);
   assert.match(text, /No mandó sus datos en 20 min/);
-});
-
-// --- /pagos usa la etiqueta ---------------------------------------------------------
-
-const payment = (overrides: Partial<PaymentEntry>): PaymentEntry => ({
-  category: "confirmed",
-  phone: "59170000001",
-  firstAt: "2026-10-01T15:00:00Z",
-  lastAt: "2026-10-01T15:00:00Z",
-  kinds: { images: 1, documents: 0, texts: 0 },
-  context: "🎓 Curso (se le envió el QR)",
-  alerted: true,
-  detail: "",
-  tag: null,
-  taggedNames: [],
-  taggedMotive: null,
-  ...overrides,
-});
-
-const capcutTag = { kind: "course" as const, courseId: "capcut_pro", courseName: CAPCUT.name, courseStartsAt: CAPCUT.startsAt };
-
-test("un pago etiquetado entra en SU curso aunque se haya pagado antes que terminara el otro", () => {
-  // Pagado el 01/10, antes del curso de contenido del 04/10: por fecha iría a ese curso.
-  const payments = [payment({ tag: capcutTag, taggedNames: ["Aleida Patricia Trujillo Rivera"] })];
-  const untaggedSinceIso = new Date("2026-10-04T17:30:00-04:00").toISOString();
-
-  const capcut = buildCourseEnrollments({ payments, texts: [], profileNames: new Map(), course: CAPCUT, untaggedSinceIso });
-  assert.equal(capcut.length, 1);
-  assert.equal(capcut[0].source, "tagged");
-  assert.deepEqual(capcut[0].names, ["Aleida Patricia Trujillo Rivera"]);
-
-  const contenido = buildCourseEnrollments({ payments, texts: [], profileNames: new Map(), course: CONTENIDO });
-  assert.equal(contenido.length, 0);
-});
-
-test("un pago sin etiqueta sigue yendo por fecha y se marca 📅", () => {
-  const enrollments = buildCourseEnrollments({ payments: [payment({})], texts: [], profileNames: new Map(), course: CONTENIDO });
-  assert.equal(enrollments.length, 1);
-  assert.equal(enrollments[0].source, "by_date");
-  assert.match(renderCourseEnrollments({ course: CONTENIDO, enrollments }).join("\n"), /📅 sin etiqueta/);
-});
-
-test("pagó un curso sin decir cuál: aparece en ambos, marcado", () => {
-  const tag = { kind: "course_unknown" as const, options: DOS_CURSOS.map(toCourseRef) };
-  for (const course of DOS_CURSOS) {
-    const enrollments = buildCourseEnrollments({ payments: [payment({ tag })], texts: [], profileNames: new Map(), course });
-    assert.equal(enrollments[0]?.source, "course_unknown", course.id);
-  }
-});
-
-test("los pagos de paquetes u otro motivo van a 'Paquetes y otros', no a un curso", () => {
-  const payments = [
-    payment({ phone: "1", tag: { kind: "packages" }, taggedNames: ["Juan Carlos Rojas Pérez"] }),
-    payment({ phone: "2", tag: { kind: "other" }, taggedMotive: "es por la asesoría" }),
-    payment({ phone: "3", tag: { kind: "unknown" } }),
-    payment({ phone: "4", tag: capcutTag }),
-  ];
-
-  const course = buildCourseEnrollments({ payments, texts: [], profileNames: new Map(), course: CAPCUT });
-  assert.deepEqual(course.map((e) => e.phone), ["4"]);
-
-  const others = buildOtherPayments({ payments, texts: [], profileNames: new Map() });
-  assert.deepEqual(others.map((p) => p.phone), ["1", "2", "3"]);
-  assert.equal(others[1].motive, "es por la asesoría");
 });
 
 console.log(`${passed} pruebas de alertas de pago OK`);

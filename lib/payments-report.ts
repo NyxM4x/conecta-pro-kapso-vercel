@@ -1,4 +1,4 @@
-// Detección de pagos a partir de la base de datos (la usa el botón "🎓 Inscritos del curso").
+// Detección de pagos a partir de la base de datos (la usa el botón "💰 Pagos", /pagos).
 //
 // Por qué existe: la alerta 💰 depende de que el bot etiquete bien cada comprobante, y en
 // un mes real se perdieron varios — el cliente mandaba la foto junto con un "Listo" o un
@@ -59,8 +59,8 @@ type PaymentEntry = {
   context: string;
   alerted: boolean;
   detail: string;
-  // Etiqueta que dejó la alerta 💰 (curso y cuál, paquete, otro). null = sin etiqueta: el
-  // pago se asigna por fecha y contexto, como antes.
+  // Etiqueta que dejó la alerta 💰 (curso y cuál, paquete, otro). null = sin etiqueta: la
+  // lista muestra el contexto detectado (pagos anteriores al etiquetado o sin alerta).
   tag?: PaymentTag | null;
   // Nombres y motivo que el cliente mandó para la alerta.
   taggedNames?: string[];

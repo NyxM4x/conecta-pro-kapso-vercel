@@ -1,10 +1,10 @@
-// Consultas de Supabase para los botones del grupo de Telegram (🎓 Inscritos del curso y
+// Consultas de Supabase para los botones del grupo de Telegram (💰 Pagos y
 // 🏢 Visitas por coordinar). Recibe el cliente ya creado para no acoplar este archivo a las
 // variables de entorno; toda la lógica de negocio vive en funciones puras aparte
-// (lib/payments-report.ts, lib/course-enrollments.ts, lib/office-visits.ts).
+// (lib/payments-report.ts, lib/payments-ledger.ts, lib/office-visits.ts).
 
 import type { InboundCandidate, OutboundMarker, VisionVerdict } from "./payments-report.ts";
-import type { ClientText } from "./course-enrollments.ts";
+import type { ClientText } from "./payments-ledger.ts";
 import type { OfficeVisitData } from "./office-visits.ts";
 
 // Cliente de Supabase (tipado laxo a propósito: evita importar supabase-js aquí).

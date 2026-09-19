@@ -14,8 +14,8 @@
 //      vez, con la etiqueta, el nombre, el celular y el link al chat. Si no responde, sale
 //      igual con su nombre de perfil de WhatsApp.
 //
-// La etiqueta queda guardada en el marcador [TELEGRAM_PAYMENT_SENT] (raw_payload.tag) y el
-// botón 💰 Pagos de Telegram la usa para poner cada pago en su lista.
+// La etiqueta queda guardada en el marcador [TELEGRAM_PAYMENT_SENT] (raw_payload.tag) y la
+// lista global de /pagos la muestra junto a cada comprobante (lib/payments-ledger.ts).
 
 import { extractContactLines } from "./contact-lines.ts";
 import { COURSES, detectMentionedCourses, formatCourseShortDate } from "./courses.ts";
