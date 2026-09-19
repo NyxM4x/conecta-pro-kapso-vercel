@@ -7,8 +7,9 @@
 //                       el link al chat (lib/payments-ledger.ts). Sirve para revisar chat por
 //                       chat que no falte ninguno. Rango exacto: "/pagos 10/09 18/09".
 //                       /inscritos, el nombre anterior, abre el mismo menú.
-//   🏢 Visitas por coordinar → quiénes pidieron venir a la oficina y a quién todavía no llamó
-//                              nadie (lib/office-visits.ts).
+//   📞 Llamadas y visitas (/llamadas o /visitas) → una sola lista de quienes pidieron que los
+//                              llamen o venir a la oficina, con los que nadie contactó primero
+//                              (lib/pending-contacts.ts).
 //   /id → responde el id del chat (sirve para configurar TELEGRAM_DEV_CHAT_ID).
 //
 // Seguridad: Telegram firma cada llamada con el header X-Telegram-Bot-Api-Secret-Token
@@ -20,8 +21,8 @@ import { callTelegramApi, chunkTelegramBlocks, sendTelegramMessage } from "../..
 import {
   loadClientTexts,
   loadContactNames,
-  loadOfficeVisitData,
   loadPaymentReportData,
+  loadPendingContactsData,
 } from "../../../../lib/telegram-reports-data";
 import { buildPaymentsReport } from "../../../../lib/payments-report";
 import {
@@ -35,17 +36,18 @@ import {
 } from "../../../../lib/payments-ledger";
 import type { LedgerRange } from "../../../../lib/payments-ledger";
 import {
-  OFFICE_VISIT_REPORT_DAYS,
-  buildOfficeVisits,
-  renderOfficeVisits,
-} from "../../../../lib/office-visits";
+  PENDING_CONTACTS_REPORT_DAYS,
+  buildPendingContacts,
+  renderPendingContacts,
+} from "../../../../lib/pending-contacts";
 
 export const maxDuration = 60;
 
 const MAIN_MENU = {
   inline_keyboard: [
     [{ text: "💰 Pagos", callback_data: "menu:pagos" }],
-    [{ text: "🏢 Visitas por coordinar", callback_data: "menu:visitas" }],
+    // callback_data sigue siendo "menu:visitas": los menús viejos del chat siguen andando.
+    [{ text: "📞 Llamadas y visitas", callback_data: "menu:visitas" }],
   ],
 };
 
@@ -54,7 +56,8 @@ const MAIN_MENU = {
 const BOT_COMMANDS = [
   { command: "menu", description: "Botones del equipo" },
   { command: "pagos", description: "Lista de comprobantes por rango de fechas" },
-  { command: "visitas", description: "Visitas a la oficina por coordinar" },
+  { command: "llamadas", description: "Llamadas y visitas por coordinar" },
+  { command: "visitas", description: "Llamadas y visitas por coordinar" },
 ];
 let commandsPublished = false;
 
@@ -123,17 +126,17 @@ async function sendPaymentsLedger(chatId: string | number, range: LedgerRange) {
   }
 }
 
-async function sendOfficeVisits(chatId: string | number) {
+async function sendPendingContacts(chatId: string | number) {
   try {
     const now = new Date();
-    const sinceIso = new Date(now.getTime() - OFFICE_VISIT_REPORT_DAYS * 24 * 3600_000).toISOString();
-    const data = await loadOfficeVisitData(getSupabaseClient(), sinceIso);
-    await sendBlocks(chatId, renderOfficeVisits({ visits: buildOfficeVisits(data), now }));
+    const sinceIso = new Date(now.getTime() - PENDING_CONTACTS_REPORT_DAYS * 24 * 3600_000).toISOString();
+    const data = await loadPendingContactsData(getSupabaseClient(), sinceIso);
+    await sendBlocks(chatId, renderPendingContacts({ contacts: buildPendingContacts(data), now }));
   } catch (error) {
-    console.error("office visits report failed", error);
+    console.error("pending contacts report failed", error);
     await sendTelegramMessage({
       chatId,
-      text: "⚠️ No se pudo armar la lista de visitas. Intenta de nuevo en un momento.",
+      text: "⚠️ No se pudo armar la lista de llamadas y visitas. Intenta de nuevo en un momento.",
     });
   }
 }
@@ -177,7 +180,7 @@ export async function POST(request: Request) {
       : null;
 
     if (range) await sendPaymentsLedger(chatId, range);
-    else if (data === "menu:visitas") await sendOfficeVisits(chatId);
+    else if (data === "menu:visitas") await sendPendingContacts(chatId);
     // Cualquier otro botón de pagos —incluidos los viejos por curso ("pagos:<curso>",
     // "inscritos:<curso>") que siguen en el chat— abre el menú de fechas.
     else if (data.startsWith("pagos") || data.startsWith("inscritos") || data.startsWith("menu:")) {
@@ -215,7 +218,7 @@ export async function POST(request: Request) {
           args ? "⚠️ No entendí esas fechas (máximo 62 días). Usa por ejemplo /pagos 10/09 18/09." : undefined,
         );
       }
-    } else if (command === "visitas") await sendOfficeVisits(message.chat.id);
+    } else if (command === "llamadas" || command === "visitas") await sendPendingContacts(message.chat.id);
     else if (command === "menu" || command === "start") {
       await sendTelegramMessage({
         chatId: message.chat.id,

@@ -1,11 +1,12 @@
 // Consultas de Supabase para los botones del grupo de Telegram (💰 Pagos y
-// 🏢 Visitas por coordinar). Recibe el cliente ya creado para no acoplar este archivo a las
+// 📞 Llamadas y visitas). Recibe el cliente ya creado para no acoplar este archivo a las
 // variables de entorno; toda la lógica de negocio vive en funciones puras aparte
-// (lib/payments-report.ts, lib/payments-ledger.ts, lib/office-visits.ts).
+// (lib/payments-report.ts, lib/payments-ledger.ts, lib/pending-contacts.ts).
 
 import type { InboundCandidate, OutboundMarker, VisionVerdict } from "./payments-report.ts";
 import type { ClientText } from "./payments-ledger.ts";
-import type { OfficeVisitData } from "./office-visits.ts";
+import { REQUEST_MARKERS, requestTypeOf } from "./pending-contacts.ts";
+import type { PendingContactsData } from "./pending-contacts.ts";
 
 // Cliente de Supabase (tipado laxo a propósito: evita importar supabase-js aquí).
 type SupabaseLike = { from: (table: string) => any };
@@ -177,27 +178,28 @@ async function loadContactNames(supabase: SupabaseLike, phones: string[]): Promi
   return names;
 }
 
-// Pedidos de visita a la oficina desde una fecha, con lo necesario para saber si alguien del
-// equipo ya le escribió y si dejó sus datos.
-async function loadOfficeVisitData(supabase: SupabaseLike, sinceIso: string): Promise<OfficeVisitData> {
-  const requests = await fetchAllPages<{
+// Pedidos de llamada y de visita a la oficina desde una fecha, con lo necesario para saber
+// si alguien del equipo ya le escribió y si dejó sus datos.
+async function loadPendingContactsData(supabase: SupabaseLike, sinceIso: string): Promise<PendingContactsData> {
+  const markers = await fetchAllPages<{
     kapso_conversation_id: string;
     contact_phone: string;
     content: string;
     created_at: string;
-    raw_payload: any;
+    kind: string | null;
+    trigger: string | null;
   }>(() =>
     supabase
       .from("kapso_messages")
-      .select("kapso_conversation_id, contact_phone, content, created_at, raw_payload")
+      .select("kapso_conversation_id, contact_phone, content, created_at, kind:raw_payload->>kind, trigger:raw_payload->>trigger")
       .eq("direction", "outbound")
       .gte("created_at", sinceIso)
-      .or(
-        "content.like.[OFFICE_VISIT_REQUESTED]%,content.like.[TELEGRAM_COURSE_OFFICE_VISIT_SENT]%,content.like.[TELEGRAM_APPOINTMENT_SENT]%",
-      )
+      .or(REQUEST_MARKERS.map((marker) => `content.like.${marker}%`).join(","))
       .order("created_at", { ascending: true }),
   );
 
+  // Los leads de quien solo llenó el formulario se descartan acá, antes de traer sus chats.
+  const requests = markers.filter((m) => requestTypeOf(m) !== null);
   const conversationIds = [...new Set(requests.map((r) => r.kapso_conversation_id).filter(Boolean))];
 
   const followups = await fetchInChunks<{
@@ -205,11 +207,12 @@ async function loadOfficeVisitData(supabase: SupabaseLike, sinceIso: string): Pr
     direction: string;
     content: string | null;
     created_at: string;
-    raw_payload: any;
+    source: string | null;
+    kind: string | null;
   }>(conversationIds, (slice) =>
     supabase
       .from("kapso_messages")
-      .select("kapso_conversation_id, direction, content, created_at, raw_payload")
+      .select("kapso_conversation_id, direction, content, created_at, source:raw_payload->>source, kind:raw_payload->>kind")
       .in("kapso_conversation_id", slice)
       .gte("created_at", sinceIso)
       .order("created_at", { ascending: true }),
@@ -224,17 +227,22 @@ async function loadOfficeVisitData(supabase: SupabaseLike, sinceIso: string): Pr
       phone: r.contact_phone,
       content: r.content,
       createdAt: r.created_at,
-      kind: r.raw_payload?.kind ?? null,
+      kind: r.kind ?? null,
+      trigger: r.trigger ?? null,
     })),
-    messages: followups.map((m) => ({
-      conversationId: m.kapso_conversation_id,
-      direction: m.direction === "inbound" ? "inbound" : "outbound",
-      content: String(m.content ?? ""),
-      createdAt: m.created_at,
-      byHuman: m.raw_payload?.source === "business_app_manual",
-    })),
+    messages: followups.map((m) => {
+      const content = String(m.content ?? "");
+      return {
+        conversationId: m.kapso_conversation_id,
+        direction: m.direction === "inbound" ? "inbound" : "outbound",
+        content,
+        createdAt: m.created_at,
+        byHuman: m.source === "business_app_manual",
+        leadKind: content.startsWith("[TELEGRAM_LEAD_SENT]") ? (m.kind ?? null) : null,
+      };
+    }),
     profileNames,
   };
 }
 
-export { loadPaymentReportData, loadClientTexts, loadContactNames, loadOfficeVisitData };
+export { loadPaymentReportData, loadClientTexts, loadContactNames, loadPendingContactsData };
