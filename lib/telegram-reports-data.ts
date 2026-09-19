@@ -103,10 +103,11 @@ async function loadPaymentReportData(
     contact_phone: string;
     content: string;
     created_at: string;
+    raw_payload: OutboundMarker["rawPayload"];
   }>(phones, (slice) =>
     supabase
       .from("kapso_messages")
-      .select("kapso_conversation_id, contact_phone, content, created_at")
+      .select("kapso_conversation_id, contact_phone, content, created_at, raw_payload")
       .eq("direction", "outbound")
       .in("contact_phone", slice)
       .or("content.like.[MEDIA_SENT%,content.like.[INTAKE_FORM_SENT%,content.like.[TELEGRAM_PAYMENT_SENT%"),
@@ -117,6 +118,8 @@ async function loadPaymentReportData(
     phone: row.contact_phone,
     content: row.content,
     createdAt: row.created_at,
+    // Solo la alerta 💰 lleva datos útiles (etiqueta, nombres); el resto se descarta.
+    rawPayload: row.content.startsWith("[TELEGRAM_PAYMENT_SENT") ? row.raw_payload : null,
   }));
 
   const visionRows = await fetchAllPages<{ kapso_message_id: string | null; metadata: any }>(() =>

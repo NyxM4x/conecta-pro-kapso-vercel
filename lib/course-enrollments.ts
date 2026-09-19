@@ -1,14 +1,16 @@
-// INSCRITOS DEL CURSO — botón "🎓 Inscritos del curso" del grupo de Telegram.
+// PAGOS — botón "💰 Pagos" (/pagos) del grupo de Telegram. Antes se llamaba "Inscritos".
 //
-// Reemplaza a la lista general de pagos: lo que el equipo necesitaba era saber quiénes
-// pagaron cada fecha del curso y con qué nombre agregarlos al grupo. Hoy eso se arma leyendo
-// chat por chat ("me pasa el nombre de la otra persona").
+// Lo que el equipo necesita es saber quiénes pagaron cada fecha del curso y con qué nombre
+// agregarlos al grupo, y aparte los pagos de paquetes y otros motivos.
 //
-// Cómo se arma, todo desde la base de datos y sin depender de que el bot haya etiquetado bien:
-//   1. Los pagos del rango de la fecha (ver lib/payments-report.ts), solo los de CURSO.
-//   2. Por cliente: pago confirmado (visión o alerta 💰) o por revisar (el bot no lo confirmó).
-//   3. El nombre completo y el celular que el alumno escribió alrededor del comprobante
-//      (pueden ser varios: "2 cupos"). Si no escribió nada, su nombre de perfil de WhatsApp.
+// Cómo se arma, todo desde la base de datos:
+//   1. Los pagos del rango de la fecha (ver lib/payments-report.ts).
+//   2. A qué curso corresponde cada uno: lo dice la ETIQUETA de su alerta 💰 (el cliente
+//      indicó el curso o el motivo, ver lib/payment-alerts.ts). Sin etiqueta —pagos viejos o
+//      sin alerta— se decide como antes, por contexto y por fecha, y se marca 📅.
+//   3. Por cliente: pago confirmado (visión o alerta 💰) o por revisar (el bot no lo confirmó).
+//   4. El nombre completo y el celular que el alumno mandó (en la alerta o alrededor del
+//      comprobante; pueden ser varios: "2 cupos"). Si no escribió nada, su perfil de WhatsApp.
 //
 // Funciones puras: el route handler consulta Supabase y les pasa las filas.
 
@@ -20,8 +22,17 @@ import {
 } from "./courses.ts";
 import type { Course } from "./courses.ts";
 import type { PaymentEntry } from "./payments-report.ts";
+import { renderTagLabel } from "./payment-alerts.ts";
+import type { PaymentTag } from "./payment-alerts.ts";
+import { extractContactLines } from "./contact-lines.ts";
 
 type ClientText = { phone: string; content: string; createdAt: string };
+
+// Cómo se decidió que el pago es de este curso.
+//   tagged         = la alerta lo etiquetó con este curso.
+//   course_unknown = pagó un curso pero no dijo cuál (había más de una fecha a la venta).
+//   by_date        = sin etiqueta: por contexto y fecha, como antes.
+type EnrollmentSource = "tagged" | "course_unknown" | "by_date";
 
 type Enrollment = {
   phone: string;
@@ -32,13 +43,19 @@ type Enrollment = {
   phones: string[];
   profileName: string | null;
   evidence: string;
+  source: EnrollmentSource;
 };
 
 // Pagos que se cuentan para una fecha: desde 35 días antes (la preventa) hasta 2 días después
 // (quien paga en la puerta y manda su nombre más tarde). Si otro curso se dictó dentro de esos
-// 35 días, la ventana arranca cuando terminó ese curso: sus pagos no son de esta fecha.
+// 35 días, los pagos SIN etiqueta de antes de que terminara son de ese curso; los etiquetados
+// con esta fecha cuentan igual (con dos fechas a la venta a la vez, la fecha del pago no dice
+// de qué curso es: ese era el error que la etiqueta corrige).
 const ENROLLMENT_DAYS_BEFORE = 35;
 const ENROLLMENT_DAYS_AFTER = 2;
+// Si el curso se reprogramó, la etiqueta guarda la fecha vieja: se acepta hasta esta
+// diferencia. Una edición nueva del mismo curso suele estar a más de un mes.
+const RESCHEDULE_TOLERANCE_DAYS = 14;
 // Cursos que se ofrecen en el botón: próximos, en marcha o dictados hace poco.
 const RECENT_COURSE_DAYS = 14;
 // Mensajes del alumno que se miran para buscar su nombre: los de la misma ráfaga del
@@ -49,10 +66,13 @@ const NAME_LOOKAHEAD_HOURS = 12;
 
 const DAY = 24 * 60 * 60_000;
 
+// sinceIso     = desde cuándo cuentan los pagos SIN etiqueta.
+// loadSinceIso = desde cuándo se leen los pagos (incluye los etiquetados de antes de que
+//                terminara el curso anterior).
 function getEnrollmentWindow(
   course: Course,
   catalog: Course[] = COURSES,
-): { sinceIso: string; untilIso: string } {
+): { sinceIso: string; untilIso: string; loadSinceIso: string } {
   const start = new Date(course.startsAt).getTime();
   const previousEnd = catalog
     .map((other) => new Date(other.startsAt).getTime() + COURSE_INFO_MINUTES_AFTER_START * 60_000)
@@ -62,7 +82,15 @@ function getEnrollmentWindow(
   return {
     sinceIso: new Date(Math.max(start - ENROLLMENT_DAYS_BEFORE * DAY, previousEnd)).toISOString(),
     untilIso: new Date(start + ENROLLMENT_DAYS_AFTER * DAY).toISOString(),
+    loadSinceIso: new Date(start - ENROLLMENT_DAYS_BEFORE * DAY).toISOString(),
   };
+}
+
+// ¿Esta etiqueta es de este curso? Mismo curso y misma fecha (o una reprogramación cercana).
+function tagMatchesCourse(tag: PaymentTag, course: Course): boolean {
+  if (tag.kind !== "course" || tag.courseId !== course.id) return false;
+  const diff = Math.abs(new Date(tag.courseStartsAt).getTime() - new Date(course.startsAt).getTime());
+  return diff <= RESCHEDULE_TOLERANCE_DAYS * DAY;
 }
 
 // Cursos para los que tiene sentido pedir la lista, del más reciente al más lejano.
@@ -96,85 +124,7 @@ function classifyCoursePayment(entry: PaymentEntry): "yes" | "no" | "maybe" {
   return "no";
 }
 
-// Celular boliviano: 8 dígitos que empiezan con 6 o 7, con o sin +591 y separadores.
-const BOLIVIAN_MOBILE = /(?:\+?\s*591[\s-]*)?\b([67](?:[\s-]?\d){7})\b/g;
-
-// Prefijos que la gente escribe antes del dato ("Nombre completo:", "Mi número es").
-const FIELD_PREFIX =
-  /^\s*(?:📌\s*)?(?:(?:MI\s+)?NOMBRE(?:\s+COMPLETO)?(?:\s+ES)?|NOMBRES?|SOY|(?:MI\s+)?(?:NUMERO|NRO|CELULAR|CEL|TELEFONO|TEL|WHATSAPP)(?:\s+DE\s+(?:CELULAR|TELEFONO))?(?:\s+ES)?)\s*[:.\-]?\s*/;
-
-// Palabras que delatan una frase de conversación, no un nombre: saludos, pronombres, verbos
-// y vocabulario del chat que aparecieron en los mensajes reales alrededor de los pagos.
-const NOT_A_NAME = new RegExp(
-  `\\b(${[
-    "HOLA", "BUENAS", "BUENOS", "BUEN", "DIA", "DIAS", "TARDES", "NOCHES", "GRACIAS", "GRAC", "OKI", "OK", "OKEY", "LISTO", "SALUDOS",
-    "CURSO", "CURSOS", "CLASE", "CLASES", "CREACION", "CONTENIDO", "EDICION", "CAPCUT", "LIVE", "PROMO", "TALLER",
-    "QR", "PAGO", "PAGAR", "PAGUE", "PAGADO", "COMPROBANTE", "PRECIO", "DEVOLUCION", "CUPO", "CUPOS", "INSCRIBIR", "INSCRIPCION",
-    "QUIERO", "QUISIERA", "QUERIA", "GUSTARIA", "SABER", "PUEDE", "PUEDO", "PUEDES", "PODRIA", "HACE", "HACER", "HICIERON", "ISIERON",
-    "TENGO", "TIENE", "VOY", "VENGO", "VA", "ESTA", "ESTOY", "ESTAN", "ES", "SON", "ERA", "FUE", "SERA", "HAY",
-    "ENVIO", "ENVIE", "MANDO", "MANDE", "PASO", "PASE", "LLEGO", "ESCRIBO", "ESPERO", "AVISA", "DIJE", "DICE", "SALE", "INTENTE",
-    "CONTACTO", "CONMIGO", "CONTIGO", "NADIE", "ALGUIEN", "TODO", "TODOS", "NADA", "MAS", "MENOS", "AHORRA", "AHORA", "AUN", "RECIEN",
-    "COMO", "CUANDO", "DONDE", "QUE", "QUIEN", "CUAL", "PORFA", "PORF", "FAVOR", "DISCULPE", "ESTIMADO", "ESTIMADA", "JOVEN", "SENORITA",
-    "AHI", "AQUI", "ALLA", "ESO", "ESE", "ESA", "ESTE", "SOLO", "TAMBIEN", "PERO", "YA", "SI", "NO", "TE", "SE", "ME", "NOS",
-    "EL", "MI", "MIS", "TU", "SU", "SUS", "USTED", "USTEDES", "YO", "PARA", "CON", "SIN", "UNA", "UN", "UNO", "POR", "EN", "AL", "LO", "LE",
-    "MANANA", "HOY", "AYER", "HORA", "HORAS", "LUGAR", "UBICACION", "GRUPO", "AGREGAR", "NOMBRE", "NUMERO", "CELULAR", "TELEFONO",
-    "HIJA", "HIJO", "AMIGA", "AMIGO", "OTRA", "OTRO", "PERSONA", "PERSONAS", "VIDEO", "VIDEOS", "IMAGEN", "RECIBIDA", "AUDIO", "DOCUMENTO",
-    "WHATSAPP", "WHASTAPP", "WPP", "FACEBOOK", "TIKTOK", "INSTAGRAM", "META", "PANTALLA", "FOTO", "CONTRASENA", "CONFIGURACION",
-    "PAQUETE", "PAQUETES", "MENSUALES", "GUION", "GRABAR", "ENTREVISTAS", "SUBIR", "OCULTARLO", "PORTAFOLIO", "ROJO", "ENVANO",
-    "DEBE", "DEBO", "SALIR", "ENTRAR", "INGRESAR", "CUENTA", "CODIGO", "CORREO", "LINK", "ENLACE", "CHINA",
-  ].join("|")})\\b`,
-);
-
-// Muletillas al inicio que no invalidan el nombre que sigue ("Si, Maria Estefani").
-const LEADING_FILLER = /^\s*(?:SI|OK|YA|LISTO|AQUI|AHI|ES|SOY)\b[\s,.:]*/;
-
-// Nombre y celular que aparecen en un mensaje. Un mensaje puede traer varios nombres, uno
-// por línea ("Joryelina Palma ⏎ Susana Galean").
-function extractContactLines(text: string): { names: string[]; phones: string[] } {
-  const names: string[] = [];
-  const phones: string[] = [];
-
-  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
-    let line = rawLine.trim();
-    if (!line) continue;
-
-    for (const match of line.matchAll(BOLIVIAN_MOBILE)) {
-      phones.push(match[1].replace(/\D/g, ""));
-    }
-
-    // Se trabaja sobre la versión normalizada para detectar, pero se muestra lo que escribió.
-    line = line.replace(BOLIVIAN_MOBILE, " ").replace(/\s+/g, " ").trim();
-    let normalized = normalize(line);
-
-    const prefix = normalized.match(FIELD_PREFIX);
-    if (prefix && prefix[0].length > 0) {
-      line = line.slice(prefix[0].length).trim();
-      normalized = normalize(line);
-    }
-
-    const filler = normalized.match(LEADING_FILLER);
-    if (filler && filler[0].length > 0) {
-      line = line.slice(filler[0].length).trim();
-      normalized = normalize(line);
-    }
-
-    // Un nombre: 2 a 6 palabras solo de letras, sin iniciales sueltas ("O la china", "Drjara d")
-    // salvo partículas (de, la, y), con al menos dos palabras de 3+ letras.
-    const tokens = normalized.split(/\s+/).filter(Boolean);
-    const particles = new Set(["DE", "DEL", "LA", "LAS", "LOS", "Y"]);
-    const looksLikeName =
-      tokens.length >= 2 &&
-      tokens.length <= 6 &&
-      tokens.every((token) => /^[A-Z]+$/.test(token)) &&
-      tokens.every((token) => token.length >= 2 || particles.has(token)) &&
-      tokens.filter((token) => token.length >= 3 && !particles.has(token)).length >= 2 &&
-      !NOT_A_NAME.test(normalized);
-
-    if (looksLikeName) names.push(line.replace(/[.,;]+$/, ""));
-  }
-
-  return { names, phones };
-}
+// El extractor de nombre y celular vive en lib/contact-lines.ts (lo usa también la alerta 💰).
 
 const unique = (values: string[]) => {
   const seen = new Set<string>();
@@ -186,39 +136,86 @@ const unique = (values: string[]) => {
   });
 };
 
+// Nombres y celulares de un cliente: los que mandó para la alerta 💰 y los que escribió
+// alrededor de sus pagos.
+function collectContactData(
+  phone: string,
+  entries: PaymentEntry[],
+  texts: ClientText[],
+): { names: string[]; phones: string[] } {
+  const from = new Date(entries[0].firstAt).getTime() - NAME_LOOKBACK_MINUTES * 60_000;
+  const until = new Date(entries[entries.length - 1].lastAt).getTime() + NAME_LOOKAHEAD_HOURS * 3600_000;
+
+  const names: string[] = entries.flatMap((e) => e.taggedNames ?? []);
+  const phones: string[] = [];
+  for (const text of texts) {
+    if (text.phone !== phone) continue;
+    const t = new Date(text.createdAt).getTime();
+    if (t < from || t > until) continue;
+    const found = extractContactLines(text.content);
+    names.push(...found.names);
+    phones.push(...found.phones);
+  }
+
+  return { names: unique(names), phones: [...new Set(phones)] };
+}
+
+// ¿Este pago va en la lista de este curso? Primero la etiqueta; sin etiqueta, como antes.
+function classifyForCourse(
+  entry: PaymentEntry,
+  course: Course | undefined,
+  untaggedSinceIso: string | undefined,
+): { kind: "yes" | "no" | "maybe"; source: EnrollmentSource } {
+  const tag = entry.tag ?? null;
+
+  if (tag?.kind === "course") {
+    return { kind: !course || tagMatchesCourse(tag, course) ? "yes" : "no", source: "tagged" };
+  }
+  // Paquete, otro motivo, o un pago que el cliente nunca dijo de qué era: van a "Paquetes y
+  // otros" (este último en su sección "Sin etiqueta"), no a un curso.
+  if (tag?.kind === "packages" || tag?.kind === "other" || tag?.kind === "unknown") {
+    return { kind: "no", source: "tagged" };
+  }
+
+  if (untaggedSinceIso && entry.firstAt < untaggedSinceIso) return { kind: "no", source: "by_date" };
+  // Pagó un curso sin decir cuál: entra en cada curso posible, marcado para revisar.
+  if (tag?.kind === "course_unknown") {
+    const isOption =
+      !course || tag.options.length === 0 || tag.options.some((option) => option.id === course.id);
+    return { kind: isOption ? "yes" : "no", source: "course_unknown" };
+  }
+  return { kind: classifyCoursePayment(entry), source: "by_date" };
+}
+
 function buildCourseEnrollments(params: {
   payments: PaymentEntry[];
   texts: ClientText[];
   profileNames: Map<string, string>;
+  // Con curso, la etiqueta de cada pago decide si entra; sin él, entra todo pago de curso.
+  course?: Course;
+  // Desde cuándo cuentan los pagos sin etiqueta (ver getEnrollmentWindow).
+  untaggedSinceIso?: string;
 }): Enrollment[] {
-  const byPhone = new Map<string, { entries: PaymentEntry[]; onlyMaybe: boolean }>();
+  const byPhone = new Map<
+    string,
+    { entries: PaymentEntry[]; onlyMaybe: boolean; sources: EnrollmentSource[] }
+  >();
   for (const entry of params.payments) {
-    const kind = classifyCoursePayment(entry);
+    const { kind, source } = classifyForCourse(entry, params.course, params.untaggedSinceIso);
     if (kind === "no") continue;
-    const current = byPhone.get(entry.phone) ?? { entries: [], onlyMaybe: true };
+    const current = byPhone.get(entry.phone) ?? { entries: [], onlyMaybe: true, sources: [] };
     current.entries.push(entry);
     current.onlyMaybe &&= kind === "maybe";
+    current.sources.push(source);
     byPhone.set(entry.phone, current);
   }
 
   const enrollments: Enrollment[] = [];
 
-  for (const [phone, { entries, onlyMaybe }] of byPhone) {
+  for (const [phone, { entries, onlyMaybe, sources }] of byPhone) {
     const sorted = [...entries].sort((a, b) => a.firstAt.localeCompare(b.firstAt));
     const confirmed = sorted.some((e) => e.category === "confirmed");
-    const from = new Date(sorted[0].firstAt).getTime() - NAME_LOOKBACK_MINUTES * 60_000;
-    const until = new Date(sorted[sorted.length - 1].lastAt).getTime() + NAME_LOOKAHEAD_HOURS * 3600_000;
-
-    const names: string[] = [];
-    const phones: string[] = [];
-    for (const text of params.texts) {
-      if (text.phone !== phone) continue;
-      const t = new Date(text.createdAt).getTime();
-      if (t < from || t > until) continue;
-      const found = extractContactLines(text.content);
-      names.push(...found.names);
-      phones.push(...found.phones);
-    }
+    const { names, phones } = collectContactData(phone, sorted, params.texts);
 
     // Pago dudoso sin ningún nombre de inscrito: no hay señal de que sea del curso.
     if (onlyMaybe && names.length === 0) continue;
@@ -230,14 +227,72 @@ function buildCourseEnrollments(params: {
       status: confirmed ? "confirmed" : "review",
       paidAt: evidenceEntry.firstAt,
       alerted: sorted.some((e) => e.alerted),
-      names: unique(names),
-      phones: [...new Set(phones)],
+      names,
+      phones,
       profileName: params.profileNames.get(phone) ?? null,
       evidence: evidenceEntry.detail,
+      source: sources.includes("tagged")
+        ? "tagged"
+        : sources.includes("course_unknown")
+          ? "course_unknown"
+          : "by_date",
     });
   }
 
   return enrollments.sort((a, b) => a.paidAt.localeCompare(b.paidAt));
+}
+
+// PAQUETES Y OTROS PAGOS — la otra mitad de /pagos: todo pago que no es de un curso.
+type OtherPayment = {
+  phone: string;
+  status: "confirmed" | "review";
+  paidAt: string;
+  alerted: boolean;
+  names: string[];
+  phones: string[];
+  profileName: string | null;
+  // Etiqueta de la alerta; null = sin etiqueta (se muestra el contexto que se detectó).
+  tag: PaymentTag | null;
+  motive: string | null;
+  context: string;
+  evidence: string;
+};
+
+const OTHER_PAYMENTS_DAYS = 30;
+
+function buildOtherPayments(params: {
+  payments: PaymentEntry[];
+  texts: ClientText[];
+  profileNames: Map<string, string>;
+}): OtherPayment[] {
+  const others = params.payments.filter((entry) => {
+    if (entry.category === "discarded" || entry.category === "unrelated") return false;
+    const tag = entry.tag ?? null;
+    if (tag) return tag.kind === "packages" || tag.kind === "other" || tag.kind === "unknown";
+    // Sin etiqueta solo entra lo confirmado (alerta o visión): los textos sueltos con "pago"
+    // en chats sin curso eran casi siempre preguntas o publicidad de otros negocios.
+    return entry.category === "confirmed" && classifyCoursePayment(entry) === "no";
+  });
+
+  return others
+    .map((entry) => {
+      const { names, phones } = collectContactData(entry.phone, [entry], params.texts);
+      return {
+        phone: entry.phone,
+        status: entry.category === "confirmed" ? ("confirmed" as const) : ("review" as const),
+        paidAt: entry.firstAt,
+        alerted: entry.alerted,
+        names,
+        phones,
+        profileName: params.profileNames.get(entry.phone) ?? null,
+        tag: entry.tag ?? null,
+        motive: entry.taggedMotive ?? null,
+        context: entry.context,
+        evidence: entry.detail,
+      };
+    })
+    // Los más recientes arriba: son 30 días y lo que importa es lo último que llegó.
+    .sort((a, b) => b.paidAt.localeCompare(a.paidAt));
 }
 
 const escapeHtml = (text: string) =>
@@ -267,22 +322,33 @@ function renderEnrollment(enrollment: Enrollment, index: number): string {
       : `<b>${index}.</b> 👤 <i>(no escribió su nombre${enrollment.profileName ? ` — perfil: ${escapeHtml(enrollment.profileName)}` : ""})</i>`,
     ...otherNames.map((name) => `     ➕ ${escapeHtml(name)}`),
     `     📱 ${[...new Set([localPhone, ...enrollment.phones])].join(" · ")} · <a href="https://wa.me/${digits}">abrir chat</a>`,
-    `     💰 ${formatBoliviaShort(enrollment.paidAt)}${enrollment.alerted ? " · 🔔 alerta" : ""}${enrollment.status === "review" && enrollment.evidence ? ` · ${escapeHtml(enrollment.evidence)}` : ""}`,
+    `     💰 ${formatBoliviaShort(enrollment.paidAt)}${enrollment.alerted ? " · 🔔 alerta" : ""}${SOURCE_MARK[enrollment.source]}${enrollment.status === "review" && enrollment.evidence ? ` · ${escapeHtml(enrollment.evidence)}` : ""}`,
   ];
 
   return lines.join("\n");
 }
 
+// Cómo se asignó el pago a este curso (ver EnrollmentSource). Con etiqueta no se marca nada.
+const SOURCE_MARK: Record<EnrollmentSource, string> = {
+  tagged: "",
+  course_unknown: " · ⚠️ no dijo de qué curso",
+  by_date: " · 📅 sin etiqueta",
+};
+
 function renderCourseEnrollments(params: { course: Course; enrollments: Enrollment[] }): string[] {
   const confirmed = params.enrollments.filter((e) => e.status === "confirmed");
   const review = params.enrollments.filter((e) => e.status === "review");
   const people = confirmed.reduce((total, e) => total + Math.max(1, e.names.length), 0);
+  const unsure = params.enrollments.filter((e) => e.source !== "tagged").length;
 
   const blocks = [
     [
-      `🎓 <b>Inscritos — ${escapeHtml(params.course.name)}</b>`,
+      `💰 <b>Pagos — ${escapeHtml(params.course.name)}</b>`,
       `📅 ${formatCourseDate(params.course.startsAt)}`,
       `✅ ${confirmed.length} con pago confirmado (~${people} personas) · ❓ ${review.length} por revisar`,
+      ...(unsure > 0
+        ? [`📅/⚠️ ${unsure} sin etiqueta de curso: se asignaron por la fecha del pago, revisa que sean de esta fecha.`]
+        : []),
     ].join("\n"),
   ];
 
@@ -303,11 +369,61 @@ function renderCourseEnrollments(params: { course: Course; enrollments: Enrollme
   return blocks;
 }
 
+function renderOtherPayment(payment: OtherPayment, index: number): string {
+  const digits = payment.phone.replace(/\D/g, "");
+  const localPhone = digits.startsWith("591") ? digits.slice(3) : digits;
+  const [firstName, ...otherNames] = payment.names;
+  const label = payment.tag ? renderTagLabel(payment.tag) : `${payment.context} · 📅 sin etiqueta`;
+
+  return [
+    firstName
+      ? `<b>${index}.</b> 👤 ${escapeHtml(firstName)}`
+      : `<b>${index}.</b> 👤 <i>(sin nombre${payment.profileName ? ` — perfil: ${escapeHtml(payment.profileName)}` : ""})</i>`,
+    ...otherNames.map((name) => `     ➕ ${escapeHtml(name)}`),
+    `     🏷️ ${escapeHtml(label)}`,
+    ...(payment.motive ? [`     📝 ${escapeHtml(payment.motive)}`] : []),
+    `     📱 ${[...new Set([localPhone, ...payment.phones])].join(" · ")} · <a href="https://wa.me/${digits}">abrir chat</a>`,
+    `     💰 ${formatBoliviaShort(payment.paidAt)}${payment.alerted ? " · 🔔 alerta" : ""}${payment.status === "review" && payment.evidence ? ` · ${escapeHtml(payment.evidence)}` : ""}`,
+  ].join("\n");
+}
+
+function renderOtherPayments(params: { payments: OtherPayment[] }): string[] {
+  // Pagos con motivo (paquete u otro) arriba; los que nadie sabe de qué son, al final.
+  const known = params.payments.filter((p) => p.tag && p.tag.kind !== "unknown");
+  const unknown = params.payments.filter((p) => !p.tag || p.tag.kind === "unknown");
+
+  const blocks = [
+    [
+      `🎬 <b>Paquetes y otros pagos</b> — últimos ${OTHER_PAYMENTS_DAYS} días`,
+      `🏷️ ${known.length} con motivo · ❔ ${unknown.length} sin etiqueta`,
+    ].join("\n"),
+  ];
+
+  if (known.length > 0) {
+    blocks.push("\n🏷️ <b>Con motivo</b>");
+    known.forEach((p, i) => blocks.push(renderOtherPayment(p, i + 1)));
+  }
+
+  if (unknown.length > 0) {
+    blocks.push("\n❔ <b>Sin etiqueta</b> — el cliente no dijo el motivo (o son de antes del etiquetado): revisa el chat");
+    unknown.forEach((p, i) => blocks.push(renderOtherPayment(p, i + 1)));
+  }
+
+  if (params.payments.length === 0) {
+    blocks.push("\nNo hay pagos de paquetes ni de otros motivos en este período.");
+  }
+
+  return blocks;
+}
+
 export {
+  OTHER_PAYMENTS_DAYS,
   getEnrollmentWindow,
   listReportableCourses,
   extractContactLines,
   buildCourseEnrollments,
   renderCourseEnrollments,
+  buildOtherPayments,
+  renderOtherPayments,
 };
-export type { ClientText, Enrollment };
+export type { ClientText, Enrollment, EnrollmentSource, OtherPayment };

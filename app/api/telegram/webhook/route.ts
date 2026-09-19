@@ -1,8 +1,11 @@
 // Webhook del bot de Telegram: botones del grupo del equipo.
 //
 //   /menu (o /start)  → muestra los botones.
-//   🎓 Inscritos del curso → elige la fecha del curso y recibe quiénes pagaron, con el nombre
-//                            y el celular para agregarlos al grupo (lib/course-enrollments.ts).
+//   💰 Pagos (/pagos) → elige la fecha del curso y recibe quiénes pagaron, con el nombre y el
+//                       celular para agregarlos al grupo; o "🎬 Paquetes y otros" para los
+//                       pagos que no son de un curso (lib/course-enrollments.ts). Cada pago va
+//                       en su lista según la etiqueta de su alerta 💰 (lib/payment-alerts.ts).
+//                       /inscritos, el nombre anterior, sigue funcionando.
 //   🏢 Visitas por coordinar → quiénes pidieron venir a la oficina y a quién todavía no llamó
 //                              nadie (lib/office-visits.ts).
 //   /id → responde el id del chat (sirve para configurar TELEGRAM_DEV_CHAT_ID).
@@ -21,10 +24,13 @@ import {
 } from "../../../../lib/telegram-reports-data";
 import { buildPaymentsReport } from "../../../../lib/payments-report";
 import {
+  OTHER_PAYMENTS_DAYS,
   buildCourseEnrollments,
+  buildOtherPayments,
   getEnrollmentWindow,
   listReportableCourses,
   renderCourseEnrollments,
+  renderOtherPayments,
 } from "../../../../lib/course-enrollments";
 import {
   OFFICE_VISIT_REPORT_DAYS,
@@ -37,7 +43,7 @@ export const maxDuration = 60;
 
 const MAIN_MENU = {
   inline_keyboard: [
-    [{ text: "🎓 Inscritos del curso", callback_data: "menu:inscritos" }],
+    [{ text: "💰 Pagos", callback_data: "menu:pagos" }],
     [{ text: "🏢 Visitas por coordinar", callback_data: "menu:visitas" }],
   ],
 };
@@ -46,7 +52,7 @@ const MAIN_MENU = {
 // servidor, así un cambio de botones no requiere volver a correr /api/telegram/setup.
 const BOT_COMMANDS = [
   { command: "menu", description: "Botones del equipo" },
-  { command: "inscritos", description: "Inscritos del curso (con nombre y celular)" },
+  { command: "pagos", description: "Pagos por curso, paquetes y otros" },
   { command: "visitas", description: "Visitas a la oficina por coordinar" },
 ];
 let commandsPublished = false;
@@ -67,32 +73,36 @@ async function sendBlocks(chatId: string | number, blocks: string[]) {
   }
 }
 
-// Paso 1 de inscritos: elegir la fecha (si hay una sola, se arma directo).
-async function sendCourseMenu(chatId: string | number) {
+// Paso 1 de pagos: elegir la fecha del curso, o los pagos de paquetes y otros.
+async function sendPaymentsMenu(chatId: string | number) {
   const courses = listReportableCourses(new Date());
-
-  if (courses.length === 0) {
-    await sendTelegramMessage({
-      chatId,
-      text: "🎓 No hay ningún curso próximo ni dictado en las últimas 2 semanas.",
-    });
-    return;
-  }
-
-  if (courses.length === 1) {
-    await sendCourseEnrollments(chatId, courses[0].id);
-    return;
-  }
 
   await sendTelegramMessage({
     chatId,
-    text: "🎓 <b>Inscritos del curso</b>\n¿De qué fecha?",
+    text: "💰 <b>Pagos</b>\n¿Qué lista quieres?",
     replyMarkup: {
-      inline_keyboard: courses.map((course) => [
-        { text: `${course.name} — ${formatCourseDate(course.startsAt)}`, callback_data: `inscritos:${course.id}` },
-      ]),
+      inline_keyboard: [
+        ...courses.map((course) => [
+          { text: `🎓 ${course.name} — ${formatCourseDate(course.startsAt)}`, callback_data: `pagos:${course.id}` },
+        ]),
+        [{ text: "🎬 Paquetes y otros pagos", callback_data: "pagos:otros" }],
+      ],
     },
   });
+}
+
+async function loadPaymentsWithContacts(sinceIso: string, untilIso: string) {
+  const supabase = getSupabaseClient();
+  const paymentData = await loadPaymentReportData(supabase, sinceIso, untilIso);
+  const payments = buildPaymentsReport(paymentData);
+  const phones = [...new Set(payments.map((p) => p.phone))];
+
+  const [texts, profileNames] = await Promise.all([
+    loadClientTexts(supabase, phones, sinceIso, untilIso),
+    loadContactNames(supabase, phones),
+  ]);
+
+  return { payments, texts, profileNames };
 }
 
 async function sendCourseEnrollments(chatId: string | number, courseId: string) {
@@ -103,24 +113,42 @@ async function sendCourseEnrollments(chatId: string | number, courseId: string) 
   }
 
   try {
-    const supabase = getSupabaseClient();
-    const { sinceIso, untilIso } = getEnrollmentWindow(course);
-    const paymentData = await loadPaymentReportData(supabase, sinceIso, untilIso);
-    const payments = buildPaymentsReport(paymentData);
-    const phones = [...new Set(payments.map((p) => p.phone))];
+    // Se leen también los pagos de antes de que terminara el curso anterior: los que el
+    // cliente etiquetó con ESTA fecha cuentan aunque se hayan pagado antes.
+    const { sinceIso, untilIso, loadSinceIso } = getEnrollmentWindow(course);
+    const { payments, texts, profileNames } = await loadPaymentsWithContacts(loadSinceIso, untilIso);
 
-    const [texts, profileNames] = await Promise.all([
-      loadClientTexts(supabase, phones, sinceIso, untilIso),
-      loadContactNames(supabase, phones),
-    ]);
-
-    const enrollments = buildCourseEnrollments({ payments, texts, profileNames });
+    const enrollments = buildCourseEnrollments({
+      payments,
+      texts,
+      profileNames,
+      course,
+      untaggedSinceIso: sinceIso,
+    });
     await sendBlocks(chatId, renderCourseEnrollments({ course, enrollments }));
   } catch (error) {
     console.error("course enrollments report failed", error);
     await sendTelegramMessage({
       chatId,
-      text: "⚠️ No se pudo armar la lista de inscritos. Intenta de nuevo en un momento.",
+      text: "⚠️ No se pudo armar la lista de pagos. Intenta de nuevo en un momento.",
+    });
+  }
+}
+
+async function sendOtherPayments(chatId: string | number) {
+  try {
+    const now = Date.now();
+    const sinceIso = new Date(now - OTHER_PAYMENTS_DAYS * 24 * 3600_000).toISOString();
+    const { payments, texts, profileNames } = await loadPaymentsWithContacts(
+      sinceIso,
+      new Date(now).toISOString(),
+    );
+    await sendBlocks(chatId, renderOtherPayments({ payments: buildOtherPayments({ payments, texts, profileNames }) }));
+  } catch (error) {
+    console.error("other payments report failed", error);
+    await sendTelegramMessage({
+      chatId,
+      text: "⚠️ No se pudo armar la lista de pagos. Intenta de nuevo en un momento.",
     });
   }
 }
@@ -174,8 +202,11 @@ export async function POST(request: Request) {
       text: "Armando la lista…",
     });
 
-    if (data === "menu:inscritos") await sendCourseMenu(chatId);
+    // "inscritos" = botones viejos que quedaron en el chat antes del cambio de nombre.
+    if (data === "menu:pagos" || data === "menu:inscritos") await sendPaymentsMenu(chatId);
     else if (data === "menu:visitas") await sendOfficeVisits(chatId);
+    else if (data === "pagos:otros") await sendOtherPayments(chatId);
+    else if (data.startsWith("pagos:")) await sendCourseEnrollments(chatId, data.slice("pagos:".length));
     else if (data.startsWith("inscritos:")) await sendCourseEnrollments(chatId, data.slice("inscritos:".length));
 
     return new Response("ok", { status: 200 });
@@ -197,9 +228,9 @@ export async function POST(request: Request) {
   }
 
   if (message && command && isAllowedChat(message.chat?.id)) {
-    if (command === "inscritos") await sendCourseMenu(message.chat.id);
+    if (command === "pagos" || command === "inscritos") await sendPaymentsMenu(message.chat.id);
     else if (command === "visitas") await sendOfficeVisits(message.chat.id);
-    else if (command === "menu" || command === "start" || command === "pagos") {
+    else if (command === "menu" || command === "start") {
       await sendTelegramMessage({
         chatId: message.chat.id,
         text: "📋 <b>Botones del equipo</b>",

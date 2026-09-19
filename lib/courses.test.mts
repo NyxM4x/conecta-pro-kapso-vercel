@@ -182,6 +182,7 @@ const CURSO_EN_OFICINA: Course = {
   startsAt: "2026-08-16T16:00:00-04:00",
   pricePreventa: 450,
   pricePresencial: 550,
+  aliases: ["PRUEBA"],
   locationOverride: {
     mapsUrl: MAPS_OFICINA,
     until: "2026-08-16T16:00:00-04:00",

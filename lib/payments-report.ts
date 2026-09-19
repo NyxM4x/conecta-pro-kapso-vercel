@@ -10,6 +10,8 @@
 //
 // Funciones puras: el route handler de Telegram consulta Supabase y les pasa las filas.
 
+import type { PaymentTag } from "./payment-alerts.ts";
+
 // Varias imágenes del mismo cliente en este lapso son un solo envío (ej. dos comprobantes
 // de dos inscritos, o la foto + el PDF).
 const SAME_SUBMISSION_MINUTES = 10;
@@ -29,6 +31,14 @@ type OutboundMarker = {
   phone: string;
   content: string;
   createdAt: string;
+  // La alerta 💰 guarda aquí la etiqueta del pago y los datos del cliente (ver
+  // lib/payment-alerts.ts). Las alertas anteriores a sep 2026 no la tienen.
+  rawPayload?: {
+    tag?: PaymentTag;
+    names?: string[];
+    phones?: string[];
+    motive?: string | null;
+  } | null;
 };
 
 type VisionVerdict = { isReceipt: boolean; reason: string };
@@ -49,6 +59,12 @@ type PaymentEntry = {
   context: string;
   alerted: boolean;
   detail: string;
+  // Etiqueta que dejó la alerta 💰 (curso y cuál, paquete, otro). null = sin etiqueta: el
+  // pago se asigna por fecha y contexto, como antes.
+  tag?: PaymentTag | null;
+  // Nombres y motivo que el cliente mandó para la alerta.
+  taggedNames?: string[];
+  taggedMotive?: string | null;
 };
 
 // Texto del cliente que AFIRMA haber pagado. En Bolivia "cancelar" es pagar ("ya cancelé").
@@ -98,15 +114,28 @@ function describeContext(markers: OutboundMarker[], phone: string, at: string): 
 // ¿Salió la alerta 💰 por este envío? Se acepta el marcador del propio mensaje o uno de la
 // misma conversación en los minutos siguientes: en una ráfaga la alerta puede quedar
 // asociada al texto que acompañaba a la foto.
-function wasAlerted(markers: OutboundMarker[], row: InboundCandidate): boolean {
+// La alerta puede salir hasta 20 minutos después del comprobante (espera los datos del
+// cliente, ver lib/payment-alerts.ts), así que la ventana de la misma conversación es esa.
+const ALERT_AFTER_RECEIPT_MINUTES = 25;
+
+function findAlertMarker(markers: OutboundMarker[], row: InboundCandidate): OutboundMarker | null {
   const t = new Date(row.createdAt).getTime();
-  return markers.some((m) => {
-    if (!m.content.startsWith("[TELEGRAM_PAYMENT_SENT")) return false;
-    if (m.content.includes(`:${row.messageId}]`)) return true;
-    if (!row.conversationId || m.conversationId !== row.conversationId) return false;
-    const dt = new Date(m.createdAt).getTime() - t;
-    return dt >= 0 && dt <= SAME_SUBMISSION_MINUTES * 60_000;
-  });
+  const alerts = markers.filter((m) => m.content.startsWith("[TELEGRAM_PAYMENT_SENT"));
+
+  const exact = alerts.find((m) => row.messageId && m.content.includes(`:${row.messageId}]`));
+  if (exact) return exact;
+
+  return (
+    alerts.find((m) => {
+      if (!row.conversationId || m.conversationId !== row.conversationId) return false;
+      const dt = new Date(m.createdAt).getTime() - t;
+      return dt >= 0 && dt <= ALERT_AFTER_RECEIPT_MINUTES * 60_000;
+    }) ?? null
+  );
+}
+
+function wasAlerted(markers: OutboundMarker[], row: InboundCandidate): boolean {
+  return findAlertMarker(markers, row) !== null;
 }
 
 function buildPaymentsReport(params: {
@@ -173,7 +202,9 @@ function buildPaymentsReport(params: {
       }
     }
 
-    const alerted = group.some((row) => wasAlerted(params.markers, row));
+    const alertMarker =
+      group.map((row) => findAlertMarker(params.markers, row)).find(Boolean) ?? null;
+    const alerted = alertMarker !== null;
     const onlyTexts = kinds.images + kinds.documents === 0;
     const context = describeContext(params.markers, first.phone, first.createdAt);
     const hasPaymentContext = !context.startsWith("❔ Sin contexto");
@@ -208,6 +239,9 @@ function buildPaymentsReport(params: {
       context,
       alerted,
       detail,
+      tag: alertMarker?.rawPayload?.tag ?? null,
+      taggedNames: alertMarker?.rawPayload?.names ?? [],
+      taggedMotive: alertMarker?.rawPayload?.motive ?? null,
     };
   });
 }

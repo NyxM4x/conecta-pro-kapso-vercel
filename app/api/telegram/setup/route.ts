@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   const commands = await callTelegramApi("setMyCommands", {
     commands: [
       { command: "menu", description: "Botones del equipo" },
-      { command: "inscritos", description: "Inscritos del curso (con nombre y celular)" },
+      { command: "pagos", description: "Pagos por curso, paquetes y otros" },
       { command: "visitas", description: "Visitas a la oficina por coordinar" },
     ],
   });

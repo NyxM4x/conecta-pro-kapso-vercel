@@ -74,6 +74,9 @@ type Course = {
   pricePresencial: number;
   // Ausente = el curso es en la ubicación habitual (MAPS_CURSOS).
   locationOverride?: CourseLocationOverride;
+  // Cómo lo nombran los clientes (sin tildes, en mayúsculas). Sirve para saber a qué curso
+  // corresponde un pago cuando hay más de una fecha a la venta (ver detectMentionedCourses).
+  aliases: string[];
 };
 
 type CourseStatus = "upcoming" | "in_progress" | "finished";
@@ -88,6 +91,7 @@ const COURSES: Course[] = [
     // próxima fecha que se cargue debe volver a 350 salvo que se decida lo contrario.
     pricePreventa: 300,
     pricePresencial: 450,
+    aliases: ["CREACION DE CONTENIDO", "CREACION", "CONTENIDO"],
   },
   {
     id: "capcut_pro",
@@ -95,6 +99,7 @@ const COURSES: Course[] = [
     startsAt: "2026-09-20T16:00:00-04:00",
     pricePreventa: 450,
     pricePresencial: 550,
+    aliases: ["CAPCUT", "CAP CUT", "EDICION", "EDITAR", "PERSUASIVA"],
   },
 ];
 
@@ -350,10 +355,45 @@ function renderCourseDayDoorReply(now: Date): string | null {
   ].join("\n");
 }
 
+// "20/09": fecha corta para las alertas y los botones de Telegram.
+function formatCourseShortDate(iso: string): string {
+  const [, month, day] = boliviaDateKey(new Date(iso)).split("-");
+  return `${day}/${month}`;
+}
+
+const normalizeText = (text: string) =>
+  String(text ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase();
+
+const WEEKDAYS = "LUNES|MARTES|MIERCOLES|JUEVES|VIERNES|SABADO|DOMINGO";
+
+// ¿De cuáles de estos cursos habla el texto? Por su nombre ("el de CapCut", "creación de
+// contenido") o por su día ("el del 20", "el domingo 20"). Un número suelto no cuenta: puede
+// ser un monto o un celular. Devuelve todos los que nombra; el que llama decide qué hacer si
+// son varios.
+function detectMentionedCourses(text: string, options: Course[]): Course[] {
+  const normalized = normalizeText(text);
+  if (!normalized.trim()) return [];
+
+  return options.filter((course) => {
+    const byName = course.aliases.some((alias) =>
+      new RegExp(`\\b${alias.replace(/\s+/g, "\\s+")}\\b`).test(normalized),
+    );
+    if (byName) return true;
+
+    const day = String(Number(boliviaDateKey(new Date(course.startsAt)).slice(-2)));
+    return new RegExp(`\\b(DEL|EL|DIA|${WEEKDAYS})\\s+0?${day}\\b`).test(normalized);
+  });
+}
+
 export {
   COURSES,
   COURSE_INFO_MINUTES_AFTER_START,
   PRESALE_CLOSES_MINUTES_BEFORE_START,
+  detectMentionedCourses,
+  formatCourseShortDate,
   getCourseStatus,
   getActiveCourses,
   getInProgressCourses,

@@ -2,6 +2,20 @@ import { WhatsAppClient } from "@kapso/whatsapp-cloud-api";
 import { createClient } from "@supabase/supabase-js";
 import { after } from "next/server";
 import { runUnattendedLeadChecks } from "../../../../lib/unattended-leads";
+import {
+  extractPayerData,
+  getOpenPendingPaymentAlert,
+  isPayerDataComplete,
+  processPendingPaymentAlerts,
+  renderMissingPayerDataReply,
+  renderPayerDataReceivedReply,
+  renderReceiptReply,
+  resolvePaymentReason,
+  runPendingPaymentAlertSweep,
+  savePendingPaymentAlert,
+  sendPaymentAlert,
+} from "../../../../lib/payment-alerts";
+import type { PayerData, PaymentReason } from "../../../../lib/payment-alerts";
 import { openai } from "@ai-sdk/openai";
 import { generateText, Output, experimental_transcribe as transcribe } from "ai";
 import { z } from "zod";
@@ -17,6 +31,7 @@ import {
   hasSellableCourse,
   getInProgressCourses,
   getDoorSaleCourses,
+  getActiveCourses,
   formatCourseDate,
   renderCourseDayDoorReply,
 } from "../../../../lib/courses";
@@ -2799,38 +2814,37 @@ async function notifyLeadToTelegram(params: {
 // punto determinista apenas se detecta el comprobante, ANTES de cualquier return
 // temprano (debounce, off_topic, fallo de envío…) — la alerta no debe depender de que
 // el bot llegue a responder por WhatsApp.
+// Alerta 💰 inmediata (sin esperar datos del cliente): pagos de paquetes, comprobantes que ya
+// traen el nombre, o el chat en atención humana. La que espera los datos la manda
+// lib/payment-alerts.ts. Ambas llevan la etiqueta del pago (curso, paquete u otro).
 async function notifyPaymentToTelegram(params: {
   phone: string;
   conversationId?: string;
   messageId?: string;
   clientMessage: string;
-  summary?: string;
-  contextLabel: string;
+  reason: PaymentReason;
+  // Datos ya extraídos; si faltan, se leen del mensaje del cliente.
+  payer?: PayerData;
+  contactName?: string | null;
   note?: string;
   verification?: string;
 }): Promise<boolean> {
-  const notified = await sendTelegramNotification(
-    buildTelegramBody({
-      headline: "💰 <b>Pago confirmado — Conecta Pro</b>",
-      phone: params.phone,
-      clientMessage: params.clientMessage,
-      summary: params.summary || "El cliente envió un comprobante de pago. Verificar.",
-      contextLabel: params.contextLabel,
-      note: params.note,
-      verification: params.verification,
-    }),
-  );
+  const payer = params.payer ?? extractPayerData([params.clientMessage], params.reason);
 
-  if (notified) {
-    await saveOutboundMessage({
-      conversationId: params.conversationId,
-      phone: params.phone,
-      content: `[TELEGRAM_PAYMENT_SENT:${params.messageId ?? "unknown"}] notificación de pago enviada a Telegram`,
-      rawPayload: { type: "telegram_notification", event: "payment" },
-    });
-  }
-
-  return notified;
+  return sendPaymentAlert(getSupabaseClient(), {
+    phone: params.phone,
+    conversationId: params.conversationId,
+    receiptMessageId: params.messageId ?? "unknown",
+    tag: payer.tag,
+    names: payer.names,
+    phones: payer.phones,
+    motive: payer.motive,
+    profileName: params.contactName ?? null,
+    clientMessage: params.clientMessage,
+    verification: params.verification,
+    note: params.note,
+    timedOut: false,
+  });
 }
 
 type AdvisorHandoffReason =
@@ -3318,7 +3332,7 @@ async function getRecentConversationHistory(
     .filter((message) => message.content.trim().length > 0)
     // Excluir marcadores internos ([MEDIA_SENT...], [LOCATION_...]) para no
     // ensuciar el contexto del LLM; el estado de "ya enviado" lo resuelve el dedup.
-    .filter((message) => !/^\[(MEDIA_SENT|LOCATION_)/.test(message.content.trim()));
+    .filter((message) => !/^\[(MEDIA_SENT|LOCATION_|PAYMENT_ALERT_PENDING)/.test(message.content.trim()));
 }
 
 async function getNewestInboundMessage(
@@ -4293,6 +4307,29 @@ function acceptsPaymentOffer(text: string): boolean {
 // ráfaga ("si quiero entrar" / "el qr porfavor" / "¿puedo llevar mi laptop?"), cada
 // mensaje llega en su propio webhook y solo responde el último: mirando solo ese, el
 // pedido del QR del mensaje del medio se perdía.
+// Lo que el cliente escribió desde la ráfaga del comprobante (incluida) en adelante: sus
+// datos de pago pueden llegar repartidos en varios turnos (el nombre en uno, el curso en otro).
+// El comprobante se reconoce por la respuesta "¡Gracias por el comprobante!" del bot.
+function textsSinceReceiptAsk(history: HistoryMessage[], fallback: string): string[] {
+  const isAssistant = history.map((message) => message.role === "assistant");
+  const askIndex = history
+    .map(
+      (message) =>
+        message.role === "assistant" &&
+        normalizeForMatch(message.content).includes("GRACIAS POR EL COMPROBANTE"),
+    )
+    .lastIndexOf(true);
+  if (askIndex < 0) return [fallback];
+
+  const batchStart = isAssistant.slice(0, askIndex).lastIndexOf(true) + 1;
+  const texts = history
+    .slice(batchStart)
+    .filter((message) => message.role === "user")
+    .map((message) => message.content);
+
+  return texts.length > 0 ? texts : [fallback];
+}
+
 function getUnansweredClientText(history: HistoryMessage[], batchText: string): string {
   const lastAssistantIndex = history.map((message) => message.role).lastIndexOf("assistant");
   const pending = history
@@ -5230,6 +5267,14 @@ export async function POST(request: Request) {
     } catch (error) {
       console.error("unattended lead checks failed", error);
     }
+
+    // Alertas 💰 que esperaban los datos del cliente y ya cumplieron los 20 minutos (ver
+    // lib/payment-alerts.ts). Mismo mecanismo: colgado del tráfico, una vez cada 5 minutos.
+    try {
+      await runPendingPaymentAlertSweep(getSupabaseClient());
+    } catch (error) {
+      console.error("pending payment alerts sweep failed", error);
+    }
   });
 
   let payload: Record<string, any>;
@@ -5365,6 +5410,20 @@ export async function POST(request: Request) {
         },
       });
     }
+  }
+
+  // Si este cliente tiene una alerta 💰 esperando sus datos (nombre, celular, motivo), lo que
+  // acaba de escribir puede completarla: se revisa después de responder, sin demorar al
+  // cliente, y aunque el bot esté apagado en esta conversación.
+  if (newMessages.length > 0 && lastMessage.conversationId) {
+    const conversationId = lastMessage.conversationId;
+    after(async () => {
+      try {
+        await processPendingPaymentAlerts(getSupabaseClient(), { conversationId });
+      } catch (error) {
+        console.error("pending payment alert check failed", error);
+      }
+    });
   }
 
   if (newMessages.length === 0) {
@@ -5571,22 +5630,25 @@ export async function POST(request: Request) {
             (mediaStatusPaused.payment_qr || manualHumanMediaSentPaused));
 
         if (isPlausibleReceiptPaused || hasExplicitPaymentPhrasePaused) {
-          const paymentContextLabelPaused = mediaStatusPaused.payment_qr
-            ? "Curso (Creación de Contenido o Edición CapCut — revisar chat)"
-            : manualHumanMediaSentPaused
-              ? "Curso (QR enviado manualmente — revisar chat)"
-              : intakeFormSentPaused
-                ? "Paquetes de producción"
-                : "Sin contexto claro — revisar chat";
+          // Con el chat en atención humana no se le piden datos al cliente (lo atiende una
+          // persona): la alerta sale ya, con la etiqueta que se pueda deducir.
+          const paymentReasonPaused = resolvePaymentReason({
+            courseContext: false,
+            courseMaterialSent: mediaStatusPaused.payment_qr || manualHumanMediaSentPaused,
+            intakeFormSent: intakeFormSentPaused,
+            activeCourses: getActiveCourses(new Date()),
+            recentMessages: [{ role: "user", content: batchText }],
+          });
+          const paymentContextLabelPaused = paymentReasonPaused.kind;
 
           paymentNotifiedWhilePaused = await notifyPaymentToTelegram({
             phone: lastMessage.from,
             conversationId: lastMessage.conversationId,
             messageId: paymentMessagePaused.messageId,
             clientMessage: batchText,
-            summary:
-              "El cliente envió un comprobante de pago mientras el chat estaba en atención humana.",
-            contextLabel: paymentContextLabelPaused,
+            reason: paymentReasonPaused,
+            contactName: lastMessage.contactName,
+            note: "El chat estaba en atención humana: el bot no le pidió datos al cliente.",
             verification:
               receiptCheckPaused?.source === "vision"
                 ? receiptCheckPaused.reason
@@ -5700,6 +5762,7 @@ export async function POST(request: Request) {
     packagesLastSentAt,
     qrLastSentAt,
     howWeWorkSent,
+    openPaymentAlert,
   ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
@@ -5723,6 +5786,8 @@ export async function POST(request: Request) {
     // Último envío del QR: con menos de 1 hora el cliente lo tiene arriba en el chat.
     getMediaIntentLastSentAt(lastMessage.from, "payment_qr"),
     hasHowWeWorkBeenSent(lastMessage.conversationId),
+    // Alerta 💰 esperando los datos del cliente (nombre, celular, motivo).
+    getOpenPendingPaymentAlert(getSupabaseClient(), lastMessage.conversationId).catch(() => null),
   ]);
 
   // Promo del live (PROMO[monto]/PROMOCION[monto], con tolerancia a typos): primero
@@ -5908,20 +5973,22 @@ export async function POST(request: Request) {
 
   // Comprobante de pago — matriz de decisión:
   //
-  //   contexto previo               | IMAGEN            | PDF/DOCUMENTO
-  //   -------------------------------|-------------------|---------------------------
-  //   QR de pago ya enviado (bot)    | decide la visión  | sí cuenta (lo revisa un humano)
-  //   QR enviado a mano por humano   | decide la visión  | sí cuenta (lo revisa un humano)
-  //   solo formulario de intake      | decide la visión  | NO cuenta
-  //   conversación anclada en cursos | decide la visión  | NO cuenta
-  //   ninguno de los anteriores      | NO cuenta         | NO cuenta
+  //   contexto previo               | IMAGEN             | PDF/DOCUMENTO
+  //   -------------------------------|--------------------|---------------------------
+  //   QR de pago ya enviado (bot)    | decide la visión   | sí cuenta (lo revisa un humano)
+  //   QR enviado a mano por humano   | decide la visión   | sí cuenta (lo revisa un humano)
+  //   solo formulario de intake      | decide la visión   | NO cuenta
+  //   conversación anclada en cursos | decide la visión   | NO cuenta
+  //   ninguno de los anteriores      | decide la visión * | NO cuenta
+  //
+  // * Antes una imagen sin contexto de pago ni se revisaba, y un comprobante que llegaba así
+  //   se perdía. Ahora se revisa, pero ahí solo cuenta si la visión lo confirmó de verdad: si
+  //   la verificación falla no se asume nada y se le pregunta al cliente qué es. La captura
+  //   de la promo del live no se revisa: acredita la promo, no es un pago.
   //
   // El PDF no puede verificarse (el modelo de chat no acepta PDF), así que su única
   // garantía es que alguien (bot o humano) ya mandó el QR: sin eso, un PDF es
-  // material del cliente (brief, cotización, guion), no un pago. La imagen sí se
-  // verifica con visión, por eso ahí basta con cualquier contexto de pago —
-  // incluido estar hablando de cursos, ya que ampliar la elegibilidad de una imagen
-  // solo dispara la verificación por visión, que es el filtro real.
+  // material del cliente (brief, cotización, guion), no un pago.
   //
   // manualHumanMediaSent cubre el caso en que un asesor mandó el QR a mano desde
   // Kapso (el envío automático falló o nunca se marcó): sin esto, mediaStatus.payment_qr
@@ -5931,13 +5998,14 @@ export async function POST(request: Request) {
   // y las frases vagas ("ya mandé/pasé/envié") sin archivo no.
   // Se evalúa sobre `receiptMedia` (la imagen/PDF del lote), no sobre el último mensaje:
   // ver COMPROBANTE EN RÁFAGA más arriba.
+  const imageHadPaymentContext =
+    mediaStatus.payment_qr ||
+    intakeFormSent ||
+    manualHumanMediaSent ||
+    courseContext ||
+    hasExplicitPaymentPhrase;
   const imageReceiptEligible =
-    Boolean(receiptMedia?.isImage) &&
-    (mediaStatus.payment_qr ||
-      intakeFormSent ||
-      manualHumanMediaSent ||
-      courseContext ||
-      hasExplicitPaymentPhrase);
+    Boolean(receiptMedia?.isImage) && (imageHadPaymentContext || !promoDetected);
   const documentReceiptEligible =
     Boolean(receiptMedia?.isDocument) && (mediaStatus.payment_qr || manualHumanMediaSent);
 
@@ -5958,99 +6026,119 @@ export async function POST(request: Request) {
   const documentWithoutQr = Boolean(receiptMedia?.isDocument) && !documentReceiptEligible;
   const receiptRejected = rejectedByVision || documentWithoutQr;
 
-  // Contexto (curso/paquete) calculado de forma determinista a partir del estado real
-  // de materiales enviados, no del LLM: payment_qr es exclusivo del curso.
-  const paymentContextLabel = mediaStatus.payment_qr
-    ? "Curso (Creación de Contenido o Edición CapCut — revisar chat)"
-    : manualHumanMediaSent
-      ? "Curso (QR enviado manualmente — revisar chat)"
-      : intakeFormSent
-        ? "Paquetes de producción"
-        : "Sin contexto claro — revisar chat";
-
   // Comprobante detectado de forma determinista: imagen elegible confirmada por
   // visión, o PDF con QR previo (del bot o mandado a mano). NO depende del LLM ni de
   // que el bot llegue a responder por WhatsApp — la alerta a Telegram es la única
   // forma en que un humano agenda al cliente, y no puede perderse por un debounce,
   // un mensaje off-topic o un fallo al enviar la respuesta.
   const receiptDetected =
-    (imageReceiptEligible && receiptCheck !== null && receiptCheck.isReceipt) ||
+    (imageReceiptEligible &&
+      receiptCheck !== null &&
+      receiptCheck.isReceipt &&
+      (imageHadPaymentContext || receiptCheck.source === "vision")) ||
     documentReceiptEligible;
 
-  if (receiptDetected && !telegramPaymentSent) {
-    await notifyPaymentToTelegram({
-      phone: lastMessage.from,
-      conversationId: lastMessage.conversationId ?? firstMessage.conversationId,
-      messageId: (receiptMedia ?? lastMessage).messageId,
-      clientMessage: batchText,
-      contextLabel: paymentContextLabel,
-      note: promoDetected
-        ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
-        : undefined,
-      verification: receiptCheck?.source === "vision" ? receiptCheck.reason : undefined,
-    });
+  // ¿Por qué pagó? Curso (y cuál), paquete o no se sabe — ver lib/payment-alerts.ts. Se
+  // calcula del estado real de materiales enviados y de lo que se habló, no del LLM.
+  const paymentReason = resolvePaymentReason({
+    courseContext,
+    courseMaterialSent: mediaStatus.payment_qr || manualHumanMediaSent || promoDetected,
+    intakeFormSent,
+    activeCourses: getActiveCourses(turnNow),
+    recentMessages: history,
+  });
+  const paymentContextLabel = paymentReason.kind;
+
+  // Respuesta fija al comprobante: pide justo los datos que faltan. Se fuerza después de
+  // generar el turno (ver COMPROBANTE RECIBIDO más abajo).
+  let receiptReplyTemplate: string | null = null;
+
+  // La alerta 💰 sale ya si no hace falta preguntarle nada al cliente (paquetes, o ya mandó
+  // su nombre junto con la foto); si no, queda pendiente hasta que mande sus datos o pasen
+  // 20 minutos, y sale UNA vez con todo (lib/payment-alerts.ts). Un segundo comprobante con
+  // una alerta todavía pendiente no abre otra.
+  if (receiptDetected && !telegramPaymentSent && !openPaymentAlert) {
+    const receiptMessageId = (receiptMedia ?? lastMessage).messageId ?? "unknown";
+    const paymentConversationId = lastMessage.conversationId ?? firstMessage.conversationId;
+    const payer = extractPayerData([unansweredClientText], paymentReason);
+    const payerComplete = isPayerDataComplete(paymentReason, payer);
+    const paymentNote = promoDetected
+      ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
+      : undefined;
+    const verification = receiptCheck?.source === "vision" ? receiptCheck.reason : undefined;
+
+    if (payerComplete) {
+      await notifyPaymentToTelegram({
+        phone: lastMessage.from,
+        conversationId: paymentConversationId,
+        messageId: receiptMessageId,
+        clientMessage: batchText,
+        reason: paymentReason,
+        payer,
+        contactName: lastMessage.contactName,
+        note: paymentNote,
+        verification,
+      });
+    } else {
+      await savePendingPaymentAlert(getSupabaseClient(), {
+        phone: lastMessage.from,
+        conversationId: paymentConversationId,
+        receiptMessageId,
+        reason: paymentReason,
+        clientMessage: batchText,
+        verification,
+        note: paymentNote,
+      });
+    }
+
+    receiptReplyTemplate = renderReceiptReply(paymentReason, payerComplete);
 
     await logSystemEvent({
       level: "info",
-      eventType: "payment_notified_deterministic",
+      eventType: payerComplete ? "payment_notified_deterministic" : "payment_alert_pending",
       conversationId: lastMessage.conversationId,
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
       metadata: {
         detection: imageReceiptEligible ? "vision_confirmed" : "document_with_qr",
         context_label: paymentContextLabel,
+        tag: payer.tag.kind,
+        had_payment_context: imageHadPaymentContext,
       },
     });
   }
 
-  if (rejectedByVision) {
+  if (receiptReplyTemplate) {
+    contextParts.push(
+      `El último mensaje del usuario es un COMPROBANTE DE PAGO (ya verificado). Marca payment_confirmation=true y responde EXACTAMENTE con este texto, sin agregar nada: "${receiptReplyTemplate}" No digas que el pago o el cupo ya quedó confirmado — la validación la hace el equipo. NUNCA le pidas el formulario de datos de paquetes.`,
+    );
+  } else if (receiptMedia && promoDetected && !receiptDetected) {
+    // Cliente del live: junto con la palabra clave manda la captura de la
+    // transmisión. Preguntarle "¿en qué te ayudo con esa imagen?" es justo lo que
+    // no debe pasar — el contexto ya dice de dónde viene y qué está pidiendo.
+    const mediaLabel = receiptMedia.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
+    contextParts.push(
+      `El último mensaje del usuario es ${mediaLabel} y viene de la PROMO DEL LIVE (ver arriba): es la captura de la transmisión con la que acredita la promoción. NO le preguntes qué es esa imagen, para qué te la envía ni en qué puedes ayudarlo con ella, y NO la trates como comprobante de pago (no marques payment_confirmation). Simplemente continúa: confírmale el precio promocional de ${promoAmount} Bs y envíale el QR (intents.payment_qr=true).`,
+    );
+  } else if (rejectedByVision && imageHadPaymentContext) {
     contextParts.push(
       "El último mensaje del usuario es una IMAGEN que NO es un comprobante de pago (se verificó su contenido). Ignórala por completo: no la menciones, no la describas, no agradezcas ningún comprobante y NO marques payment_confirmation. Continúa la conversación desde donde quedó, como si ese mensaje no hubiera llegado; si no había nada pendiente, responde de forma breve y natural.",
+    );
+  } else if (receiptMedia?.isImage && !receiptDetected) {
+    // Imagen en un chat sin contexto de pago que no es un comprobante (o no se pudo
+    // verificar): no se asume nada, se le pregunta qué es.
+    contextParts.push(
+      "El último mensaje del usuario es una IMAGEN y no es un comprobante de pago. No asumas nada sobre ella: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.",
     );
   } else if (documentWithoutQr) {
     contextParts.push(
       "El último mensaje del usuario es un DOCUMENTO/PDF y a este cliente NUNCA se le envió el QR de pago, así que NO puede ser un comprobante. NO marques payment_confirmation y NO agradezcas ningún comprobante. Pregúntale con amabilidad para qué te envía ese archivo o en qué te gustaría que te ayude con él.",
     );
   } else if (receiptMedia) {
-    const mediaLabel = receiptMedia.isDocument ? "un DOCUMENTO/PDF" : "una IMAGEN";
-    if (mediaStatus.payment_qr) {
-      contextParts.push(
-        `El último mensaje del usuario es ${mediaLabel} y ya se le envió antes el QR de pago del curso. Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y, una vez verificado, te confirmamos tu cupo. Para agregarte al grupo de participantes del curso, indícame tu nombre completo (verifica que esté bien escrito) y tu número de teléfono." No digas que el cupo ya quedó confirmado — la validación la hace el equipo. No lo trates como pedido de otro material.`,
-      );
-    } else if (intakeFormSent) {
-      contextParts.push(
-        `El último mensaje del usuario es ${mediaLabel} y el formulario de datos para paquetes de producción YA fue completado antes en esta conversación (no hay QR porque los paquetes no usan QR). Trátalo como un posible comprobante de pago de paquete: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y en breve un asesor se comunicará contigo." NO vuelvas a pedir los datos del formulario — ya se recopilaron antes. No digas que el pago ya quedó confirmado — la validación la hace el equipo.`,
-      );
-    } else if (promoDetected) {
-      // Cliente del live: junto con la palabra clave manda la captura de la
-      // transmisión. Preguntarle "¿en qué te ayudo con esa imagen?" es justo lo que
-      // no debe pasar — el contexto ya dice de dónde viene y qué está pidiendo.
-      contextParts.push(
-        `El último mensaje del usuario es ${mediaLabel} y viene de la PROMO DEL LIVE (ver arriba): es la captura de la transmisión con la que acredita la promoción. NO le preguntes qué es esa imagen, para qué te la envía ni en qué puedes ayudarlo con ella, y NO la trates como comprobante de pago (no marques payment_confirmation). Simplemente continúa: confírmale el precio promocional de ${promoAmount} Bs y envíale el QR (intents.payment_qr=true).`,
-      );
-    } else if (manualHumanMediaSent) {
-      // Un humano ya mandó material a mano (probablemente el QR, si el envío
-      // automático falló). El sistema no sabe cuál archivo fue, así que se trata
-      // igual que si el QR ya se hubiera enviado.
-      contextParts.push(
-        `El último mensaje del usuario es ${mediaLabel} y un asesor ya le envió material a mano en esta conversación (posiblemente el QR de pago). Trátalo como un posible comprobante: marca payment_confirmation=true y responde exactamente: "¡Gracias por el comprobante! 😊 Nuestro equipo va a validar el pago y, una vez verificado, te confirmamos tu cupo. Para agregarte al grupo de participantes del curso, indícame tu nombre completo (verifica que esté bien escrito) y tu número de teléfono." No digas que el cupo ya quedó confirmado — la validación la hace el equipo.`,
-      );
-    } else if (courseContext && Boolean(receiptMedia.isImage)) {
-      // Conversación anclada en cursos, sin QR ni intake ni material manual
-      // registrado: la imagen SÍ se verifica con visión (imageReceiptEligible),
-      // pero como no hay contexto de pago previo, se le pide confirmación al
-      // cliente en vez de asumir directo que es un comprobante.
-      contextParts.push(
-        `El último mensaje del usuario es una IMAGEN dentro de una conversación sobre cursos, pero todavía no se le envió el QR de pago. Si a partir de tu verificación parece un comprobante de pago o transferencia, trátalo como posible pago: marca payment_confirmation=true y responde agradeciendo el comprobante, indicando que el equipo lo va a validar y pidiendo nombre completo y número de teléfono. Si NO parece un comprobante, pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
-      );
-    } else {
-      // Solo se llega aquí con una IMAGEN sin QR, sin intake, sin material manual
-      // y fuera de contexto de cursos: sin contexto de pago no se verifica con
-      // visión, y sin verificar no se asume nada.
-      contextParts.push(
-        `El último mensaje del usuario es ${mediaLabel} y todavía NO se le ha enviado el QR de pago ni completó el formulario de datos. No asumas que es un comprobante: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.`,
-      );
-    }
+    // Otro comprobante con la alerta ya enviada o pendiente (ej. el segundo cupo).
+    contextParts.push(
+      "El último mensaje del usuario es OTRO comprobante de pago (el anterior ya quedó registrado). Agradécelo en una línea sin repetir la plantilla completa. Si todavía faltan sus datos (nombre completo, celular y, si corresponde, el curso o el motivo del pago), pídeselos en esa misma línea. Marca payment_confirmation=true.",
+    );
   } else if (hasExplicitPaymentPhrase) {
     contextParts.push(
       'El último mensaje del usuario usa una frase explícita de confirmación de pago ("comprobante", "ya pagué", "realicé el pago" o similar). Puedes marcar payment_confirmation=true si corresponde según el resto de la conversación.',
@@ -6062,6 +6150,27 @@ export async function POST(request: Request) {
   } else if (hasBareIncomingLink) {
     contextParts.push(
       "El último mensaje del usuario contiene un ENLACE/URL y no hay contexto previo que explique para qué lo envía. NO puedes abrirlo: NO describas, NO resumas ni asumas su contenido, y NO inventes nada sobre él (ni el negocio del cliente, ni el producto, ni de qué habla el video). Agradécele el envío y pídele con amabilidad que te cuente en qué te gustaría que le ayudes con ese enlace, ofreciéndole las líneas de Conecta Pro para orientarlo (cursos, paquetes de producción de contenido o agente de IA). No marques ningún intent de envío de material en este turno. Si el enlace viene junto con una pregunta clara, atiende la pregunta con el flujo que corresponda en vez de pedir contexto.",
+    );
+  }
+
+  // DATOS DEL PAGO. Hay una alerta 💰 esperando que el cliente mande su nombre, su celular y,
+  // si hace falta, el curso o el motivo (lib/payment-alerts.ts). Lo que escriba ahora son
+  // esos datos: no es un lead de paquetes, y responderle como a uno (formulario, "un asesor
+  // ya tiene tus datos") le pediría de nuevo lo que acaba de mandar.
+  const payerDataPhase = openPaymentAlert !== null && !receiptMedia;
+  const pendingPayer = openPaymentAlert
+    ? extractPayerData(textsSinceReceiptAsk(history, unansweredClientText), openPaymentAlert.reason)
+    : null;
+  const pendingPayerComplete =
+    openPaymentAlert !== null &&
+    pendingPayer !== null &&
+    isPayerDataComplete(openPaymentAlert.reason, pendingPayer);
+
+  if (payerDataPhase && pendingPayer && openPaymentAlert) {
+    contextParts.push(
+      pendingPayerComplete
+        ? `El cliente acaba de mandar los datos que le pedimos por su comprobante de pago. NO es un lead de paquetes: no marques lead_data_submitted ni service_intake_requested y no le pidas el formulario. Si solo mandó sus datos, responde EXACTAMENTE: "${renderPayerDataReceivedReply(pendingPayer.tag)}". Si además pregunta algo, respóndelo en una línea después de ese texto.`
+        : `Estamos esperando los datos del comprobante de pago de este cliente. NO es un lead de paquetes: no marques lead_data_submitted ni service_intake_requested y no le pidas el formulario. Si su mensaje trae parte de esos datos, responde EXACTAMENTE: "${renderMissingPayerDataReply(openPaymentAlert.reason, pendingPayer)}". Si pregunta otra cosa, respóndela y recuérdale en una línea lo que falta.`,
     );
   }
 
@@ -7059,20 +7168,65 @@ export async function POST(request: Request) {
     });
   }
 
+  // COMPROBANTE RECIBIDO. La respuesta es la plantilla que pide justo los datos que faltan
+  // (lib/payment-alerts.ts), sin depender del modelo: si la cambia o pide datos de más, el
+  // pago queda sin etiquetar y la alerta sale incompleta. Después de pagar tampoco va el QR.
+  if (receiptReplyTemplate) {
+    turn.should_reply = true;
+    turn.off_topic = false;
+    turn.is_greeting = false;
+    turn.reply = receiptReplyTemplate;
+    turn.payment_confirmation = true;
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.intents.payment_qr = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+    turn.intents.ai_agent_flyer = false;
+  }
+
+  // DATOS DEL PAGO. Si el cliente mandó (parte de) los datos que se le pidieron por su
+  // comprobante, la respuesta es fija: el acuse, o lo que todavía falta. Una pregunta suya
+  // ("¿a qué hora es?") la responde el modelo.
+  if (payerDataPhase && openPaymentAlert && pendingPayer && !unansweredClientText.includes("?")) {
+    const burst = extractPayerData([unansweredClientText], openPaymentAlert.reason);
+    const sentData =
+      burst.names.length > 0 ||
+      burst.phones.length > 0 ||
+      (openPaymentAlert.reason.kind === "course_unknown" && burst.tag.kind === "course") ||
+      (openPaymentAlert.reason.kind === "unknown" && burst.tag.kind !== "unknown");
+
+    if (sentData) {
+      turn.should_reply = true;
+      turn.off_topic = false;
+      turn.is_greeting = false;
+      turn.reply = pendingPayerComplete
+        ? renderPayerDataReceivedReply(pendingPayer.tag)
+        : renderMissingPayerDataReply(openPaymentAlert.reason, pendingPayer);
+      turn.lead_data_submitted = false;
+      turn.service_intake_requested = false;
+      turn.intents.payment_qr = false;
+      turn.intents.service_packages = false;
+      turn.intents.service_packages_promo = false;
+    }
+  }
+
   // ALUMNO DE CURSO QUE MANDA SU NOMBRE Y CELULAR. Después del comprobante se le piden esos
   // datos para agregarlo al grupo del curso; el modelo los leía como un lead de paquetes
   // ("un asesor ya tiene tus datos" + alerta 🟢 falsa + bot apagado 12 h). Con contexto de
-  // pago de curso y sin formulario de paquetes de por medio, no es un lead.
+  // pago de curso y sin formulario de paquetes de por medio, no es un lead. Tampoco lo es
+  // quien manda los datos de un pago de otro motivo (payerDataPhase).
   const coursePaymentContext =
-    (mediaStatus.payment_qr ||
+    payerDataPhase ||
+    ((mediaStatus.payment_qr ||
       manualHumanMediaSent ||
       paymentAcknowledged ||
       telegramPaymentSent ||
       receiptDetected) &&
-    !intakeFormSent &&
-    !explicitPackageIntent &&
-    !officeVisitRequested &&
-    !mediaStatus.ai_agent_flyer;
+      !intakeFormSent &&
+      !explicitPackageIntent &&
+      !officeVisitRequested &&
+      !mediaStatus.ai_agent_flyer);
 
   if (
     coursePaymentContext &&
@@ -7092,7 +7246,11 @@ export async function POST(request: Request) {
     // cliente todavía tiene que pagar: se le indica el QR (un "sí" a "¿te paso el QR?"
     // recibía "ya tenemos tus datos, validamos tu pago", 18 sep 2026).
     const paymentOnRecord = paymentAcknowledged || telegramPaymentSent || receiptDetected;
-    if (replaceReply && paymentOnRecord) {
+    if (replaceReply && payerDataPhase && openPaymentAlert && pendingPayer) {
+      turn.reply = pendingPayerComplete
+        ? renderPayerDataReceivedReply(pendingPayer.tag)
+        : renderMissingPayerDataReply(openPaymentAlert.reason, pendingPayer);
+    } else if (replaceReply && paymentOnRecord) {
       turn.reply = COURSE_PAYER_DATA_REPLY;
     } else if (replaceReply && !courseSellable) {
       turn.reply = COURSE_FORM_BLOCKED_REPLY;
@@ -7893,9 +8051,12 @@ export async function POST(request: Request) {
     // El caso normal (imagen/PDF confirmados) ya se notificó de forma determinista
     // más arriba, antes de cualquier return temprano — `!receiptDetected` evita
     // duplicar la alerta dentro del mismo request.
+    // Con una alerta 💰 esperando los datos del cliente, ese comprobante ya tiene su alerta:
+    // otra aquí sería un duplicado.
     if (
       turn.payment_confirmation &&
       !telegramPaymentSent &&
+      !openPaymentAlert &&
       !receiptRejected &&
       !receiptDetected
     ) {
@@ -7904,8 +8065,8 @@ export async function POST(request: Request) {
         conversationId: mediaConversationId,
         messageId: lastMessage.messageId,
         clientMessage: lastMessage.text,
-        summary: turn.conversation_summary,
-        contextLabel: paymentContextLabel,
+        reason: paymentReason,
+        contactName: lastMessage.contactName,
         note: promoDetected
           ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
           : undefined,

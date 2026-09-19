@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { runUnattendedLeadChecks } from "../../../../lib/unattended-leads";
+import { runPendingPaymentAlertSweep } from "../../../../lib/payment-alerts";
 
 // Disparo manual o programado de la escalación de leads sin atender (🚨 a los 30 min y
 // ⏰ último aviso a las 20 h). Toda la lógica vive en lib/unattended-leads.ts; el webhook de
@@ -45,8 +46,11 @@ async function handle(request: Request) {
 
   try {
     const force = new URL(request.url).searchParams.get("force") === "1";
-    const result = await runUnattendedLeadChecks(getSupabaseClient(), { force });
-    return Response.json({ ok: true, ...result });
+    const supabase = getSupabaseClient();
+    const result = await runUnattendedLeadChecks(supabase, { force });
+    // Mismo disparo para las alertas 💰 que esperaban los datos del cliente (20 min).
+    const payments = await runPendingPaymentAlertSweep(supabase, { force });
+    return Response.json({ ok: true, ...result, payments });
   } catch (error) {
     return Response.json(
       {

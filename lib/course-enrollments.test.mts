@@ -48,8 +48,15 @@ const CURSO: Course = {
   startsAt: "2026-09-13T16:00:00-04:00",
   pricePreventa: 300,
   pricePresencial: 450,
+  aliases: ["CREACION DE CONTENIDO", "CREACION", "CONTENIDO"],
 };
-const CAPCUT: Course = { ...CURSO, id: "capcut_pro", name: "Curso de Edición en CapCut Pro", startsAt: "2026-08-16T16:00:00-04:00" };
+const CAPCUT: Course = {
+  ...CURSO,
+  id: "capcut_pro",
+  name: "Curso de Edición en CapCut Pro",
+  startsAt: "2026-08-16T16:00:00-04:00",
+  aliases: ["CAPCUT", "EDICION"],
+};
 
 // --- Nombre y celular -------------------------------------------------------
 
