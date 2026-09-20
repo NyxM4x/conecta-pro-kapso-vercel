@@ -3,6 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 import { after } from "next/server";
 import { runUnattendedLeadChecks } from "../../../../lib/unattended-leads";
 import {
+  DUPLICATE_REPLY_WINDOW_MS,
+  canSkipAsDuplicate,
+  computeReplyWaitMs,
+  isSameReply,
+} from "../../../../lib/reply-timing";
+import {
   extractPayerData,
   getOpenPendingPaymentAlert,
   isPayerDataComplete,
@@ -162,16 +168,17 @@ const LINE_MEDIA_INTENTS: Record<
   ai_agent_flyer: ["ai_agent_flyer"],
 };
 
-// Ventana de agrupación: al recibir un mensaje se espera este tiempo antes de
-// generar la respuesta. Si en ese lapso el cliente manda otro mensaje, este
-// turno se descarta y responde el webhook del mensaje más nuevo — con ambos
-// mensajes ya en el historial. Evita la doble respuesta cuando el cliente
-// escribe en ráfaga (dos webhooks concurrentes, un candado distinto cada uno).
-const INBOUND_DEBOUNCE_MS = 5000;
+// Ventana de agrupación: al recibir un mensaje se espera a que el cliente termine de
+// escribir antes de generar la respuesta (REPLY_WAIT_SECONDS, 120 s por defecto; ver
+// lib/reply-timing.ts). Si en ese lapso manda otro mensaje, este turno se descarta y
+// responde el webhook del mensaje más nuevo — con todos los mensajes ya en el historial.
+// Evita la doble respuesta cuando el cliente escribe en ráfaga y, sobre todo, ahorra
+// mensajes de WhatsApp: desde octubre de 2026 Meta cobra por cada uno.
 
-// El debounce se suma a la latencia de OpenAI y del envío por Kapso; el default
-// de Vercel (10 s) queda justo, así que se amplía explícitamente.
-export const maxDuration = 60;
+// La espera (hasta 120 s) vive dentro de la función, pero DESPUÉS de responderle a Kapso
+// (ver POST y `after`), así que el webhook nunca queda colgado. Con fluid compute el tope
+// de Vercel es de 300 s en cualquier plan; 180 deja aire para la espera + OpenAI + envío.
+export const maxDuration = 180;
 
 type SystemLogLevel = "info" | "warning" | "error" | "critical";
 
@@ -2021,10 +2028,8 @@ function parseKapsoTimestamp(timestamp?: string | number | null): string | null 
   return new Date(numericTimestamp * 1000).toISOString();
 }
 
-function getWebhookEvents(payload: Record<string, any>, request: Request): Record<string, any>[] {
-  const isBatch =
-    payload.batch === true ||
-    request.headers.get("x-webhook-batch") === "true";
+function getWebhookEvents(payload: Record<string, any>, batchHeader: boolean): Record<string, any>[] {
+  const isBatch = payload.batch === true || batchHeader;
 
   if (isBatch && Array.isArray(payload.data)) return payload.data;
   return [payload];
@@ -2296,9 +2301,9 @@ async function extractIncomingFromEvent(
 
 async function normalizeIncomingMessages(
   payload: Record<string, any>,
-  request: Request,
+  batchHeader: boolean,
 ): Promise<IncomingMessage[]> {
-  const events = getWebhookEvents(payload, request);
+  const events = getWebhookEvents(payload, batchHeader);
   const incomingMessages: IncomingMessage[] = [];
 
   for (const [index, event] of events.entries()) {
@@ -4821,6 +4826,36 @@ async function notifyPresaleClosedQrToTelegram(params: {
   }
 }
 
+// ¿El bot ya mandó este mismo texto hace un momento? Pasaba 94 veces al mes: el cliente
+// escribía justo después de la respuesta y el modelo repetía el bloque entero (paquetes,
+// saludo, formulario). Repetirlo no le dice nada nuevo al cliente —lo tiene ahí arriba— y
+// cuesta un mensaje de Meta, así que en ese caso no se envía nada.
+async function wasSameReplySentRecently(
+  conversationId: string | undefined,
+  replyText: string,
+): Promise<boolean> {
+  if (!conversationId || !canSkipAsDuplicate(replyText)) return false;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("content")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .gte("created_at", new Date(Date.now() - DUPLICATE_REPLY_WINDOW_MS).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error) {
+    console.error("supabase check duplicate reply failed", error);
+    // Ante la duda se envía: perder una respuesta es peor que repetirla.
+    return false;
+  }
+
+  return (data ?? []).some((row) => isSameReply(replyText, String(row.content ?? "")));
+}
+
 async function hasOfficeVisitBeenRequested(conversationId?: string): Promise<boolean> {
   if (!conversationId) return false;
 
@@ -5257,6 +5292,9 @@ async function notifyMediaFailureToTelegram(params: {
   }
 }
 
+// Kapso recibe el 200 apenas llega el mensaje; todo el trabajo (la espera de 2 minutos
+// incluida) corre por detrás con `after`. Antes el webhook quedaba abierto hasta terminar
+// de responder: con la espera nueva, Kapso habría cortado por timeout y reintentado.
 export async function POST(request: Request) {
   // Escalación de leads sin atender, colgada del tráfico del webhook (el cron de Supabase
   // nunca corrió). Se ejecuta DESPUÉS de responder y como máximo una vez cada 10 minutos
@@ -5294,8 +5332,34 @@ export async function POST(request: Request) {
     return new Response("invalid json", { status: 400 });
   }
 
-  const events = getWebhookEvents(payload, request);
-  const incomingMessages = await normalizeIncomingMessages(payload, request);
+  // El cuerpo ya está leído: lo único que se necesitaba de `request` era la cabecera de lote.
+  const batchHeader = request.headers.get("x-webhook-batch") === "true";
+
+  after(async () => {
+    try {
+      await processWebhookEvent(payload, batchHeader);
+    } catch (error) {
+      console.error("webhook processing failed", error);
+
+      await logSystemEvent({
+        level: "critical",
+        eventType: "webhook_processing_threw",
+        errorMessage: getErrorMessage(error),
+      });
+    }
+  });
+
+  return new Response("ok", { status: 200 });
+}
+
+// El procesamiento real. Devuelve una Response solo por herencia del handler anterior: nadie
+// la lee, el cliente de Kapso ya recibió su 200.
+async function processWebhookEvent(
+  payload: Record<string, any>,
+  batchHeader: boolean,
+): Promise<Response> {
+  const events = getWebhookEvents(payload, batchHeader);
+  const incomingMessages = await normalizeIncomingMessages(payload, batchHeader);
 
   const firstMessage = incomingMessages[0];
   const lastMessage = incomingMessages[incomingMessages.length - 1];
@@ -5413,17 +5477,16 @@ export async function POST(request: Request) {
   }
 
   // Si este cliente tiene una alerta 💰 esperando sus datos (nombre, celular, motivo), lo que
-  // acaba de escribir puede completarla: se revisa después de responder, sin demorar al
-  // cliente, y aunque el bot esté apagado en esta conversación.
+  // acaba de escribir puede completarla. Va ANTES de la espera de 2 minutos —el equipo no
+  // tiene por qué enterarse tarde de un pago— y corre aunque el bot esté apagado acá.
   if (newMessages.length > 0 && lastMessage.conversationId) {
-    const conversationId = lastMessage.conversationId;
-    after(async () => {
-      try {
-        await processPendingPaymentAlerts(getSupabaseClient(), { conversationId });
-      } catch (error) {
-        console.error("pending payment alert check failed", error);
-      }
-    });
+    try {
+      await processPendingPaymentAlerts(getSupabaseClient(), {
+        conversationId: lastMessage.conversationId,
+      });
+    } catch (error) {
+      console.error("pending payment alert check failed", error);
+    }
   }
 
   if (newMessages.length === 0) {
@@ -6257,10 +6320,15 @@ export async function POST(request: Request) {
 
   const extraContext = contextParts.join("\n\n");
 
-  // Ventana de agrupación: si el cliente sigue escribiendo, este turno se
-  // descarta y responde el webhook del mensaje más nuevo, que ya verá ambos
-  // mensajes en el historial.
-  await new Promise((resolve) => setTimeout(resolve, INBOUND_DEBOUNCE_MS));
+  // Ventana de agrupación: se espera a que el cliente termine de escribir. Si sigue
+  // escribiendo, este turno se descarta y responde el webhook del mensaje más nuevo, que ya
+  // verá todos los mensajes en el historial. La cuenta va desde que el CLIENTE mandó el
+  // mensaje, no desde acá: lo que tardó Kapso en entregarlo ya es parte de la espera.
+  const waitMs = computeReplyWaitMs({ lastMessageAt: lastMessageCreatedAt, now: new Date() });
+
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
 
   const isStale = async (stage: "debounce" | "pre_send"): Promise<boolean> => {
     const newerInbound = await getNewestInboundMessage(
@@ -6300,6 +6368,34 @@ export async function POST(request: Request) {
     return new Response("newer inbound message exists, skipping stale reply", {
       status: 200,
     });
+  }
+
+  // Dos minutos son tiempo de sobra para que un asesor entre al chat desde WhatsApp Business
+  // (eso apaga el bot). Se vuelve a mirar el estado: el de antes de la espera ya venció.
+  const pauseStateAfterWait = await getBotPauseState(lastMessage.conversationId);
+
+  if (pauseStateAfterWait.paused && !pauseStateAfterWait.expired) {
+    await markReplyLockSent({
+      lastMessageId: lastMessage.messageId,
+      conversationId: lastMessage.conversationId,
+      phone: lastMessage.from,
+      responseText: "[SKIPPED:paused] el bot quedó en pausa durante la espera",
+    });
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "bot_reply_skipped_paused_during_wait",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        wait_ms: waitMs,
+        reason: pauseStateAfterWait.reason ?? null,
+        pause_check_failed: pauseStateAfterWait.failed ?? false,
+      },
+    });
+
+    return new Response("bot paused during wait, skipping reply", { status: 200 });
   }
 
   await logSystemEvent({
@@ -7884,57 +7980,85 @@ export async function POST(request: Request) {
     }
   }
 
-  try {
-    await kapso.messages.sendText({
-      phoneNumberId,
-      to: lastMessage.from,
-      body: replyText,
-    });
+  // Última guarda antes de gastar el mensaje: si es exactamente lo que ya se envió hace
+  // minutos, el texto NO se manda (el material de arriba sí salió, con su propio dedup). El
+  // turno sigue igual: los avisos al equipo —lead, pago, visita— no dependen del envío.
+  const isDuplicateReply = await wasSameReplySentRecently(mediaConversationId, replyText);
 
-    console.log("Kapso SDK text sent successfully");
+  if (isDuplicateReply) {
+    console.log("duplicate reply skipped, nothing sent to the client");
 
     await logSystemEvent({
       level: "info",
-      eventType: "reply_sent",
+      eventType: "bot_reply_skipped_duplicate",
       conversationId: lastMessage.conversationId,
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
       metadata: {
-        duration_ms: Date.now() - generationStartedAt,
-      },
-    });
-  } catch (error) {
-    console.error("kapso sendText failed", error);
-
-    await logSystemEvent({
-      level: "critical",
-      eventType: "kapso_send_text_failed",
-      conversationId: lastMessage.conversationId,
-      messageId: lastMessage.messageId,
-      contactPhone: lastMessage.from,
-      statusCode: 502,
-      errorMessage: getErrorMessage(error),
-      metadata: {
-        response_not_sent: true,
         media_sent_before_reply: sentIntents,
+        reply_preview: replyText.slice(0, 120),
       },
     });
+  } else {
+    try {
+      await kapso.messages.sendText({
+        phoneNumberId,
+        to: lastMessage.from,
+        body: replyText,
+      });
 
-    return new Response("send failed", { status: 502 });
+      console.log("Kapso SDK text sent successfully");
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "reply_sent",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          duration_ms: Date.now() - generationStartedAt,
+          wait_ms: waitMs,
+        },
+      });
+    } catch (error) {
+      console.error("kapso sendText failed", error);
+
+      await logSystemEvent({
+        level: "critical",
+        eventType: "kapso_send_text_failed",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        statusCode: 502,
+        errorMessage: getErrorMessage(error),
+        metadata: {
+          response_not_sent: true,
+          media_sent_before_reply: sentIntents,
+        },
+      });
+
+      return new Response("send failed", { status: 502 });
+    }
   }
 
   try {
-    await saveOutboundMessage({
-      conversationId: mediaConversationId,
-      phone: lastMessage.from,
-      content: replyText,
-    });
+    // El texto repetido no se guarda en el historial: nunca llegó al cliente, y si quedara
+    // guardado el bot creería habérselo dicho.
+    if (!isDuplicateReply) {
+      await saveOutboundMessage({
+        conversationId: mediaConversationId,
+        phone: lastMessage.from,
+        content: replyText,
+      });
+    }
 
     await markReplyLockSent({
       lastMessageId: lastMessage.messageId,
       conversationId: lastMessage.conversationId,
       phone: lastMessage.from,
-      responseText: replyText,
+      responseText: isDuplicateReply
+        ? "[SKIPPED:duplicate] el mismo texto ya se había enviado hace minutos"
+        : replyText,
     });
 
     // Pedido de reunión en oficina: queda registrado para que la alerta del lead (que
