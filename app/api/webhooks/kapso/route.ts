@@ -29,6 +29,7 @@ import {
   isQuotaError,
   resolveAiProvider,
 } from "../../../../lib/ai-provider";
+import { isCoursePaymentContext } from "../../../../lib/payment-context";
 import { generateText, Output, experimental_transcribe as transcribe } from "ai";
 import { z } from "zod";
 import {
@@ -3845,20 +3846,29 @@ async function hasMediaIntentBeenSent(
 // "[MEDIA_SENT:<intent>]" que deja sendMediaForIntent. Alimenta la ventana de reenvío
 // (ver shouldResendMedia en lib/media-intents.ts). Mismo patrón que
 // hasTelegramPaymentBeenSent: última fila por created_at.
+//
+// Con conversationId se acota a ESA conversación. Lo necesita el contexto de pago: un
+// teléfono que recibió el QR hace tres meses, en otro chat, no está pagando ahora
+// (ver lib/payment-context.ts).
 async function getMediaIntentLastSentAt(
   phone: string,
   intent: MediaIntent,
+  conversationId?: string,
 ): Promise<Date | null> {
   if (!phone) return null;
 
   const supabase = getSupabaseClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("kapso_messages")
     .select("created_at")
     .eq("contact_phone", phone)
     .eq("direction", "outbound")
-    .ilike("content", `[MEDIA_SENT:${intent}]%`)
+    .ilike("content", `[MEDIA_SENT:${intent}]%`);
+
+  if (conversationId) query = query.eq("kapso_conversation_id", conversationId);
+
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(1);
 
@@ -7335,17 +7345,30 @@ async function processWebhookEvent(
   // ("un asesor ya tiene tus datos" + alerta 🟢 falsa + bot apagado 12 h). Con contexto de
   // pago de curso y sin formulario de paquetes de por medio, no es un lead. Tampoco lo es
   // quien manda los datos de un pago de otro motivo (payerDataPhase).
-  const coursePaymentContext =
-    payerDataPhase ||
-    ((mediaStatus.payment_qr ||
-      manualHumanMediaSent ||
-      paymentAcknowledged ||
-      telegramPaymentSent ||
-      receiptDetected) &&
-      !intakeFormSent &&
-      !explicitPackageIntent &&
-      !officeVisitRequested &&
-      !mediaStatus.ai_agent_flyer);
+  //
+  // El QR y los flyers se leen de ESTA conversación y con ventana de tiempo. Antes venían de
+  // mediaStatus, que consulta por teléfono y sin fecha: un QR de hace tres meses dejaba el
+  // contexto de pago encendido para siempre y bloqueaba leads de paquetes legítimos
+  // (26 sep 2026). La regla completa y sus pruebas están en lib/payment-context.ts.
+  const [paymentQrSentAt, packagesMediaSentAt] = await Promise.all([
+    getMediaIntentLastSentAt(lastMessage.from, "payment_qr", lastMessage.conversationId),
+    getMediaIntentLastSentAt(lastMessage.from, "service_packages", lastMessage.conversationId),
+  ]);
+
+  const coursePaymentContext = isCoursePaymentContext({
+    payerDataPhase,
+    receiptDetected,
+    paymentAcknowledged,
+    telegramPaymentSent,
+    paymentQrSentAt,
+    manualHumanMediaSent,
+    explicitPackageIntent,
+    packagesMediaSentAt,
+    intakeFormSent,
+    officeVisitRequested,
+    aiAgentFlyerSent: mediaStatus.ai_agent_flyer,
+    now: new Date(),
+  });
 
   if (
     coursePaymentContext &&
@@ -7387,7 +7410,20 @@ async function processWebhookEvent(
       conversationId: lastMessage.conversationId,
       messageId: lastMessage.messageId,
       contactPhone: lastMessage.from,
-      metadata: { reply_replaced: replaceReply, client_message: batchText.slice(0, 200) },
+      // Qué señal encendió el contexto: sin esto, un bloqueo indebido solo se ve como
+      // "el bot cambió de tema" y hay que reconstruirlo a mano desde los mensajes.
+      metadata: {
+        reply_replaced: replaceReply,
+        client_message: batchText.slice(0, 200),
+        payer_data_phase: payerDataPhase,
+        receipt_detected: receiptDetected,
+        payment_acknowledged: paymentAcknowledged,
+        telegram_payment_sent: telegramPaymentSent,
+        manual_human_media_sent: manualHumanMediaSent,
+        payment_qr_sent_at: paymentQrSentAt?.toISOString() ?? null,
+        packages_media_sent_at: packagesMediaSentAt?.toISOString() ?? null,
+        explicit_package_intent: explicitPackageIntent,
+      },
     });
   }
 
