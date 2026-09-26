@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { resolveAiProvider } from "../../../lib/ai-provider";
 
 function envExists(name: string): boolean {
   return Boolean(process.env[name]);
@@ -10,7 +11,9 @@ function checkEnv() {
     "KAPSO_PHONE_NUMBER_ID",
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
-    "OPENAI_API_KEY",
+    // La clave que hace falta depende de AI_PROVIDER: con openrouter, exigir
+    // OPENAI_API_KEY dejaría el health en rojo estando todo bien.
+    resolveAiProvider().apiKeyVar,
   ];
 
   const missing = required.filter((name) => !envExists(name));
@@ -61,6 +64,7 @@ async function checkSupabase() {
 export async function GET() {
   const env = checkEnv();
   const supabase = await checkSupabase();
+  const ai = resolveAiProvider();
 
   const status =
     env.ok && supabase.ok
@@ -82,9 +86,18 @@ export async function GET() {
         apiKeyConfigured: envExists("KAPSO_API_KEY"),
         phoneNumberIdConfigured: envExists("KAPSO_PHONE_NUMBER_ID"),
       },
-      openai: {
-        ok: envExists("OPENAI_API_KEY"),
-        model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      ai: {
+        ok: ai.apiKeyConfigured,
+        provider: ai.provider,
+        model: ai.model,
+        apiKeyVar: ai.apiKeyVar,
+        // Si AI_PROVIDER trae un typo se cae a OpenAI en silencio; acá se ve.
+        unknownProviderValue: ai.unknownValue,
+        // Los audios se transcriben siempre con OpenAI, use el proveedor que use el bot.
+        transcription: {
+          provider: "openai",
+          apiKeyConfigured: envExists("OPENAI_API_KEY"),
+        },
       },
     },
   };

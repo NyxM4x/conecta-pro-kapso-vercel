@@ -22,7 +22,13 @@ import {
   sendPaymentAlert,
 } from "../../../../lib/payment-alerts";
 import type { PayerData, PaymentReason } from "../../../../lib/payment-alerts";
-import { openai } from "@ai-sdk/openai";
+import {
+  getChatModel,
+  getTopUpUrl,
+  getTranscriptionModel,
+  isQuotaError,
+  resolveAiProvider,
+} from "../../../../lib/ai-provider";
 import { generateText, Output, experimental_transcribe as transcribe } from "ai";
 import { z } from "zod";
 import {
@@ -3460,7 +3466,7 @@ async function generateAssistantTurn(params: {
 }): Promise<AssistantTurn> {
   try {
     const result = await generateText({
-      model: openai(process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
+      model: getChatModel(),
       system: params.extraContext
         ? `${SYSTEM_PROMPT}\n\nContexto adicional para este mensaje:\n${params.extraContext}`
         : SYSTEM_PROMPT,
@@ -3491,7 +3497,9 @@ async function generateAssistantTurn(params: {
       errorMessage: getErrorMessage(error),
       metadata: {
         fallback_used: true,
-        model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+        // Con dos proveedores posibles, saber cuál falló es la mitad del diagnóstico.
+        provider: resolveAiProvider().provider,
+        model: resolveAiProvider().model,
       },
     });
 
@@ -3501,18 +3509,24 @@ async function generateAssistantTurn(params: {
   }
 }
 
-// ALERTA DE SALDO DE OPENAI. El 31 de agosto de 2026 la cuenta se quedó sin crédito y nadie
-// se enteró: el bot respondía con el texto de respaldo a cada cliente. OpenAI no expone el
-// saldo por API con una clave normal, así que se detecta en el momento en que falla una
-// llamada por falta de crédito y se avisa al desarrollador por Telegram (como máximo una
-// vez por hora, para no inundar el chat mientras dura el problema).
-const OPENAI_QUOTA_ERROR_REGEX =
-  /insufficient_quota|no credits remaining|exceeded your current quota|billing_hard_limit|billing hard limit|check your plan and billing/i;
+// ALERTA DE SALDO. El 31 de agosto de 2026 la cuenta de OpenAI se quedó sin crédito y nadie
+// se enteró: el bot respondía con el texto de respaldo a cada cliente. Volvió a pasar el 25 de
+// septiembre. Ningún proveedor expone el saldo por API con una clave normal, así que se detecta
+// en el momento en que falla una llamada por falta de crédito y se avisa al desarrollador por
+// Telegram (como máximo una vez por hora, para no inundar el chat mientras dura el problema).
+// El detector vive en lib/ai-provider.ts y cubre los dos proveedores, incluido el cupo diario
+// del tier gratuito de OpenRouter.
 const OPENAI_QUOTA_ALERT_EVERY_MINUTES = 60;
 
-async function alertIfOpenAiQuotaError(error: unknown, source: string): Promise<void> {
+async function alertIfOpenAiQuotaError(
+  error: unknown,
+  source: string,
+  // La transcripción de audios va siempre por OpenAI, aunque AI_PROVIDER sea openrouter: el
+  // enlace de recarga no siempre es el del proveedor activo.
+  billedTo: "active" | "openai" = "active",
+): Promise<void> {
   const message = getErrorMessage(error);
-  if (!OPENAI_QUOTA_ERROR_REGEX.test(message)) return;
+  if (!isQuotaError(message)) return;
 
   try {
     const since = new Date(Date.now() - OPENAI_QUOTA_ALERT_EVERY_MINUTES * 60_000).toISOString();
@@ -3524,14 +3538,20 @@ async function alertIfOpenAiQuotaError(error: unknown, source: string): Promise<
       .limit(1);
     if ((data ?? []).length > 0) return;
 
+    const proveedor = billedTo === "openai" ? "openai" : resolveAiProvider().provider;
+    const topUpUrl =
+      billedTo === "openai"
+        ? getTopUpUrl({ ...process.env, AI_PROVIDER: "openai" })
+        : getTopUpUrl();
+
     const sent = await sendDeveloperAlert(
       [
-        "🚨 <b>OpenAI SIN SALDO — Conecta Pro</b>",
+        `🚨 <b>${proveedor === "openrouter" ? "OpenRouter" : "OpenAI"} SIN SALDO — Conecta Pro</b>`,
         "",
         `Falló: ${escapeTelegramHtml(source)}.`,
         "Mientras no se recargue, el bot responde con el mensaje de respaldo, no verifica comprobantes y no transcribe audios.",
         "",
-        "👉 Recargar: https://platform.openai.com/settings/organization/billing",
+        `👉 Recargar: ${topUpUrl}`,
         "",
         `🧾 Error: ${escapeTelegramHtml(message.slice(0, 200))}`,
       ].join("\n"),
@@ -3539,9 +3559,10 @@ async function alertIfOpenAiQuotaError(error: unknown, source: string): Promise<
 
     await logSystemEvent({
       level: "critical",
+      // Se conserva el nombre del evento: la ventana de 1 hora lo consulta y hay historial.
       eventType: "openai_quota_alert_sent",
       errorMessage: message.slice(0, 500),
-      metadata: { source, telegram_sent: sent },
+      metadata: { source, telegram_sent: sent, provider: proveedor },
     });
   } catch (alertError) {
     console.error("openai quota alert failed", alertError);
@@ -3625,7 +3646,7 @@ async function classifyReceiptImage(params: {
     });
 
     const result = await generateText({
-      model: openai(process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
+      model: getChatModel(),
       abortSignal: controller.signal,
       temperature: 0,
       messages: [
@@ -3733,7 +3754,8 @@ async function transcribeIncomingAudio(message: IncomingMessage): Promise<void> 
     });
 
     const result = await transcribe({
-      model: openai.transcription(process.env.OPENAI_TRANSCRIBE_MODEL ?? "gpt-4o-mini-transcribe"),
+      // Siempre OpenAI: OpenRouter no tiene endpoint de transcripción (ver lib/ai-provider.ts).
+      model: getTranscriptionModel(),
       audio,
       abortSignal: controller.signal,
       providerOptions: { openai: { language: "es" } },
@@ -3755,7 +3777,8 @@ async function transcribeIncomingAudio(message: IncomingMessage): Promise<void> 
   } catch (error) {
     console.error("audio transcription failed", error);
     message.audioUnreadable = true;
-    await alertIfOpenAiQuotaError(error, "transcripción de audios");
+    // Los audios se facturan a OpenAI aunque el proveedor activo sea OpenRouter.
+    await alertIfOpenAiQuotaError(error, "transcripción de audios", "openai");
 
     await logSystemEvent({
       level: "warning",
