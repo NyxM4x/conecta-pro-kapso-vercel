@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { resolveAiProvider } from "../../../lib/ai-provider";
+import { resolveAiProvider, resolveTranscriptionTargets } from "../../../lib/ai-provider";
 
 function envExists(name: string): boolean {
   return Boolean(process.env[name]);
@@ -65,6 +65,7 @@ export async function GET() {
   const env = checkEnv();
   const supabase = await checkSupabase();
   const ai = resolveAiProvider();
+  const [transcription, transcriptionFallback] = resolveTranscriptionTargets();
 
   const status =
     env.ok && supabase.ok
@@ -93,10 +94,19 @@ export async function GET() {
         apiKeyVar: ai.apiKeyVar,
         // Si AI_PROVIDER trae un typo se cae a OpenAI en silencio; acá se ve.
         unknownProviderValue: ai.unknownValue,
-        // Los audios se transcriben siempre con OpenAI, use el proveedor que use el bot.
+        // Los audios tienen su propio orden, use el proveedor que use el bot: Groq si hay
+        // GROQ_API_KEY, y OpenAI de respaldo.
         transcription: {
-          provider: "openai",
-          apiKeyConfigured: envExists("OPENAI_API_KEY"),
+          provider: transcription.provider,
+          model: transcription.model,
+          apiKeyConfigured: transcription.apiKeyConfigured,
+          fallback: transcriptionFallback
+            ? {
+                provider: transcriptionFallback.provider,
+                model: transcriptionFallback.model,
+                apiKeyConfigured: transcriptionFallback.apiKeyConfigured,
+              }
+            : null,
         },
       },
     },

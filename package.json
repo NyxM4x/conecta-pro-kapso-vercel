@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node lib/ai-provider.test.mts && node lib/payment-context.test.mts && node lib/promos.test.mts && node lib/media-intents.test.mts && node lib/courses.test.mts && node lib/keywords.test.mts && node lib/packages.test.mts && node lib/payments-report.test.mts && node lib/contact-lines.test.mts && node lib/payments-ledger.test.mts && node lib/pending-contacts.test.mts && node lib/payment-alerts.test.mts && node lib/reply-timing.test.mts",
+    "test": "node lib/ai-provider.test.mts && node lib/payment-context.test.mts && node lib/promos.test.mts && node lib/media-intents.test.mts && node lib/courses.test.mts && node lib/keywords.test.mts && node lib/packages.test.mts && node lib/payments-report.test.mts && node lib/contact-lines.test.mts && node lib/payments-ledger.test.mts && node lib/pending-contacts.test.mts && node lib/payment-alerts.test.mts && node lib/reply-timing.test.mts && node lib/incoming-audio.test.mts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
@@ -14,6 +14,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@ai-sdk/groq": "^3.0.72",
     "@ai-sdk/openai": "^3.0.66",
     "@kapso/whatsapp-cloud-api": "^0.2.1",
     "@supabase/supabase-js": "^2.106.2",

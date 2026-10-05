@@ -28,7 +28,9 @@ import {
   getTranscriptionModel,
   isQuotaError,
   resolveAiProvider,
+  resolveTranscriptionTargets,
 } from "../../../../lib/ai-provider";
+import type { TranscriptionTarget } from "../../../../lib/ai-provider";
 import { isCoursePaymentContext } from "../../../../lib/payment-context";
 import { generateText, Output, experimental_transcribe as transcribe } from "ai";
 import { z } from "zod";
@@ -63,6 +65,10 @@ import {
   shouldResendMedia,
 } from "../../../../lib/media-intents";
 import { isMediaAssetInWindow } from "../../../../lib/media-assets";
+import {
+  getIncomingAudioMediaUrl,
+  isIncomingAudioMessage,
+} from "../../../../lib/incoming-audio";
 import {
   VIDEO_PACKAGES,
   PACKAGE_SIZES,
@@ -2067,15 +2073,9 @@ function extractMessageText(
     return "📄 Documento recibido";
   }
 
-  // Audio / nota de voz: centinela. La transcripción la hace el propio webhook con OpenAI
-  // (transcribeIncomingAudio) para no pagar la de Kapso; si Kapso igual mandó una, se usa.
-  if (message?.audio || message?.type === "audio" || message?.type === "voice") {
-    const kapsoTranscript = message?.kapso?.transcript?.text;
-    if (typeof kapsoTranscript === "string" && kapsoTranscript.trim()) {
-      return `${AUDIO_PLACEHOLDER}\n\nTranscripción: ${kapsoTranscript.trim()}`;
-    }
-    return AUDIO_PLACEHOLDER;
-  }
+  // No depender de transcripciones de Kapso: el webhook descarga el audio y lo
+  // transcribe por su cuenta (transcribeIncomingAudio).
+  if (isIncomingAudioMessage(message)) return AUDIO_PLACEHOLDER;
 
   const transcriptText = message?.kapso?.transcript?.text;
   if (typeof transcriptText === "string" && transcriptText.trim()) return transcriptText.trim();
@@ -2263,10 +2263,7 @@ async function extractIncomingFromEvent(
   const isImage = Boolean(event.message?.image) || event.message?.type === "image";
   const isDocument =
     Boolean(event.message?.document) || event.message?.type === "document";
-  const isAudio =
-    Boolean(event.message?.audio) ||
-    event.message?.type === "audio" ||
-    event.message?.type === "voice";
+  const isAudio = isIncomingAudioMessage(event.message);
   // Referencia al adjunto. Kapso a veces expone una URL directa (kapso.media_url);
   // si no viene, queda el media id de Meta para descargarlo por API. El payload se
   // parsea crudo (snake_case), pero el SDK usa camelCase: aceptamos ambos.
@@ -2282,6 +2279,8 @@ async function extractIncomingFromEvent(
     event.message?.image?.link ??
     event.message?.document?.link ??
     event.message?.audio?.link ??
+    event.message?.voice?.link ??
+    getIncomingAudioMediaUrl(event.message) ??
     null;
   const messageId = event.message?.id;
   const conversationId = event.conversation?.id ?? from;
@@ -3723,15 +3722,46 @@ async function classifyReceiptImage(params: {
   return check;
 }
 
-// TRANSCRIPCIÓN DE AUDIOS, en el propio webhook y con OpenAI: la de Kapso se cobra aparte.
+// TRANSCRIPCIÓN DE AUDIOS, en el propio webhook: la de Kapso se cobra aparte.
 // Sin transcripción el bot no sabe qué dijo el cliente — en un mes llegaron 136 audios y 23
 // terminaron en silencio total porque el modelo los marcó "fuera de tema".
-const AUDIO_TRANSCRIBE_TIMEOUT_MS = 15_000;
+// Va primero por Groq (Whisper, cuota gratuita) cuando hay GROQ_API_KEY; si Groq falla o
+// se queda sin cuota, el mismo audio pasa a OpenAI para que el cliente no quede sin respuesta.
+const AUDIO_TRANSCRIBE_TIMEOUT_MS = 20_000;
+// Groq suele responder en un par de segundos: si tarda más se corta para dejarle tiempo
+// al respaldo dentro del límite total.
+const GROQ_TRANSCRIBE_TIMEOUT_MS = 8_000;
+
+async function transcribeAudioWithTarget(
+  target: TranscriptionTarget,
+  audio: Uint8Array,
+  signal: AbortSignal,
+): Promise<string> {
+  const result =
+    target.provider === "groq"
+      ? await transcribe({
+          model: getTranscriptionModel(target),
+          audio,
+          abortSignal: AbortSignal.any([signal, AbortSignal.timeout(GROQ_TRANSCRIBE_TIMEOUT_MS)]),
+          // Sin reintentos: una cuota agotada (429) pasa directo al respaldo.
+          maxRetries: 0,
+          providerOptions: { groq: { language: "es" } },
+        })
+      : await transcribe({
+          model: getTranscriptionModel(target),
+          audio,
+          abortSignal: signal,
+          providerOptions: { openai: { language: "es" } },
+        });
+
+  const text = result.text.trim();
+  if (!text) throw new Error("empty transcription");
+
+  return text;
+}
 
 async function transcribeIncomingAudio(message: IncomingMessage): Promise<void> {
   if (!message.isAudio) return;
-  // Kapso ya mandó la transcripción: no se paga dos veces.
-  if (message.text.includes("Transcripción:")) return;
 
   // Un reintento del webhook trae el mismo audio: si ya está guardado, no se vuelve a
   // transcribir (saveInboundMessage lo va a descartar como duplicado de todos modos).
@@ -3754,16 +3784,30 @@ async function transcribeIncomingAudio(message: IncomingMessage): Promise<void> 
       signal: controller.signal,
     });
 
-    const result = await transcribe({
-      // Siempre OpenAI: OpenRouter no tiene endpoint de transcripción (ver lib/ai-provider.ts).
-      model: getTranscriptionModel(),
-      audio,
-      abortSignal: controller.signal,
-      providerOptions: { openai: { language: "es" } },
-    });
+    const targets = resolveTranscriptionTargets();
+    let text = "";
+    let usedTarget = targets[0];
 
-    const text = result.text.trim();
-    if (!text) throw new Error("empty transcription");
+    for (const [index, target] of targets.entries()) {
+      try {
+        text = await transcribeAudioWithTarget(target, audio, controller.signal);
+        usedTarget = target;
+        break;
+      } catch (error) {
+        if (index === targets.length - 1) throw error;
+
+        console.error(`audio transcription failed with ${target.provider}, using fallback`, error);
+        await logSystemEvent({
+          level: "warning",
+          eventType: "audio_transcription_fallback",
+          conversationId: message.conversationId,
+          messageId: message.messageId,
+          contactPhone: message.from,
+          errorMessage: getErrorMessage(error),
+          metadata: { provider: target.provider, model: target.model },
+        });
+      }
+    }
 
     message.text = `${AUDIO_PLACEHOLDER}\n\nTranscripción: ${text}`;
 
@@ -3773,12 +3817,18 @@ async function transcribeIncomingAudio(message: IncomingMessage): Promise<void> 
       conversationId: message.conversationId,
       messageId: message.messageId,
       contactPhone: message.from,
-      metadata: { chars: text.length },
+      metadata: {
+        chars: text.length,
+        provider: usedTarget.provider,
+        model: usedTarget.model,
+        fallback_used: usedTarget !== targets[0],
+      },
     });
   } catch (error) {
     console.error("audio transcription failed", error);
     message.audioUnreadable = true;
-    // Los audios se facturan a OpenAI aunque el proveedor activo sea OpenRouter.
+    // El último intento es siempre OpenAI (respaldo de Groq), aunque el proveedor activo
+    // del bot sea OpenRouter: si falla por saldo, la recarga es la de OpenAI.
     await alertIfOpenAiQuotaError(error, "transcripción de audios", "openai");
 
     await logSystemEvent({

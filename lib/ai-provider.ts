@@ -13,12 +13,14 @@
 // la rama de OpenRouter usa `.chat()` explícitamente. Cambiar únicamente el baseURL haría
 // fallar TODAS las llamadas, y el síntoma sería el mismo que el de quedarse sin saldo.
 
+import { groq } from "@ai-sdk/groq";
 import { createOpenAI, openai } from "@ai-sdk/openai";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const DEFAULT_OPENROUTER_MODEL = "openrouter/free";
 const DEFAULT_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
+const DEFAULT_GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3-turbo";
 
 type AiProvider = "openai" | "openrouter";
 type ProviderEnv = Record<string, string | undefined>;
@@ -77,11 +79,48 @@ function getChatModel(env: ProviderEnv = process.env) {
   return openai(config.model);
 }
 
-// La transcripción de audios va SIEMPRE por OpenAI, sin importar AI_PROVIDER: OpenRouter no
-// tiene endpoint de transcripción (su API es solo chat-completions). Si OpenAI no tiene
-// saldo, el webhook ya sabe pedirle al cliente que escriba el mensaje.
-function getTranscriptionModel(env: ProviderEnv = process.env) {
-  return openai.transcription(env.OPENAI_TRANSCRIBE_MODEL?.trim() || DEFAULT_TRANSCRIPTION_MODEL);
+// LA TRANSCRIPCIÓN DE AUDIOS NO DEPENDE DE AI_PROVIDER: OpenRouter no tiene endpoint de
+// transcripción (su API es solo chat-completions). Tiene su propio orden de intento:
+//
+//   1. Groq (Whisper, cuota gratuita)  -> solo si hay GROQ_API_KEY. Modelo: GROQ_TRANSCRIBE_MODEL.
+//   2. OpenAI, siempre de respaldo     -> OPENAI_API_KEY. Modelo: OPENAI_TRANSCRIBE_MODEL.
+//
+// Si Groq falla o se queda sin cuota, el mismo audio pasa a OpenAI. Si OpenAI tampoco puede
+// (por ejemplo, sin saldo), el webhook ya sabe pedirle al cliente que escriba el mensaje.
+type TranscriptionTarget = {
+  provider: "groq" | "openai";
+  model: string;
+  apiKeyVar: "GROQ_API_KEY" | "OPENAI_API_KEY";
+  apiKeyConfigured: boolean;
+};
+
+// Pura y sin red, igual que resolveAiProvider.
+function resolveTranscriptionTargets(env: ProviderEnv = process.env): TranscriptionTarget[] {
+  const targets: TranscriptionTarget[] = [];
+
+  if (env.GROQ_API_KEY?.trim()) {
+    targets.push({
+      provider: "groq",
+      model: env.GROQ_TRANSCRIBE_MODEL?.trim() || DEFAULT_GROQ_TRANSCRIPTION_MODEL,
+      apiKeyVar: "GROQ_API_KEY",
+      apiKeyConfigured: true,
+    });
+  }
+
+  targets.push({
+    provider: "openai",
+    model: env.OPENAI_TRANSCRIBE_MODEL?.trim() || DEFAULT_TRANSCRIPTION_MODEL,
+    apiKeyVar: "OPENAI_API_KEY",
+    apiKeyConfigured: Boolean(env.OPENAI_API_KEY),
+  });
+
+  return targets;
+}
+
+function getTranscriptionModel(target: TranscriptionTarget) {
+  return target.provider === "groq"
+    ? groq.transcription(target.model)
+    : openai.transcription(target.model);
 }
 
 // Se queda sin servicio por dos motivos distintos que para el equipo son el mismo problema:
@@ -103,6 +142,7 @@ function getTopUpUrl(env: ProviderEnv = process.env): string {
 
 export {
   AI_QUOTA_ERROR_REGEX,
+  DEFAULT_GROQ_TRANSCRIPTION_MODEL,
   DEFAULT_OPENAI_MODEL,
   DEFAULT_OPENROUTER_MODEL,
   DEFAULT_TRANSCRIPTION_MODEL,
@@ -112,5 +152,6 @@ export {
   getTranscriptionModel,
   isQuotaError,
   resolveAiProvider,
+  resolveTranscriptionTargets,
 };
-export type { AiProvider, AiProviderConfig };
+export type { AiProvider, AiProviderConfig, TranscriptionTarget };

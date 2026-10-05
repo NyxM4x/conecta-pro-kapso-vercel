@@ -15,6 +15,7 @@
 
 import assert from "node:assert/strict";
 import {
+  DEFAULT_GROQ_TRANSCRIPTION_MODEL,
   DEFAULT_OPENAI_MODEL,
   DEFAULT_OPENROUTER_MODEL,
   OPENROUTER_BASE_URL,
@@ -23,6 +24,7 @@ import {
   getTranscriptionModel,
   isQuotaError,
   resolveAiProvider,
+  resolveTranscriptionTargets,
 } from "./ai-provider.ts";
 
 let passed = 0;
@@ -100,10 +102,48 @@ test("OpenAI sigue usando el mismo modelo que antes de este módulo", () => {
   assert.equal(model.modelId, DEFAULT_OPENAI_MODEL);
 });
 
-test("los audios se transcriben con OpenAI aunque el proveedor sea OpenRouter", () => {
+// --- transcripción de audios ---
+
+test("sin clave de Groq los audios se transcriben con OpenAI aunque el proveedor sea OpenRouter", () => {
   // OpenRouter no tiene endpoint de transcripción: su API es solo chat-completions.
-  const model = getTranscriptionModel({ ...CLAVES, AI_PROVIDER: "openrouter" });
-  assert.equal(model.provider, "openai.transcription");
+  const targets = resolveTranscriptionTargets({ ...CLAVES, AI_PROVIDER: "openrouter" });
+  assert.deepEqual(
+    targets.map((target) => target.provider),
+    ["openai"],
+  );
+  assert.equal(getTranscriptionModel(targets[0]).provider, "openai.transcription");
+});
+
+test("con clave de Groq los audios van primero por Groq y OpenAI queda de respaldo", () => {
+  const targets = resolveTranscriptionTargets({ ...CLAVES, GROQ_API_KEY: "gsk-test" });
+  assert.deepEqual(
+    targets.map((target) => target.provider),
+    ["groq", "openai"],
+  );
+  assert.equal(targets[0].model, DEFAULT_GROQ_TRANSCRIPTION_MODEL);
+  assert.equal(getTranscriptionModel(targets[0]).provider, "groq.transcription");
+  assert.equal(getTranscriptionModel(targets[1]).provider, "openai.transcription");
+});
+
+test("una clave de Groq vacía no activa Groq", () => {
+  const targets = resolveTranscriptionTargets({ ...CLAVES, GROQ_API_KEY: "   " });
+  assert.deepEqual(
+    targets.map((target) => target.provider),
+    ["openai"],
+  );
+});
+
+test("los modelos de transcripción se cambian por variable de entorno", () => {
+  const targets = resolveTranscriptionTargets({
+    ...CLAVES,
+    GROQ_API_KEY: "gsk-test",
+    GROQ_TRANSCRIBE_MODEL: " whisper-large-v3 ",
+    OPENAI_TRANSCRIBE_MODEL: "gpt-4o-transcribe",
+  });
+  assert.deepEqual(
+    targets.map((target) => target.model),
+    ["whisper-large-v3", "gpt-4o-transcribe"],
+  );
 });
 
 // --- errores de saldo ---
