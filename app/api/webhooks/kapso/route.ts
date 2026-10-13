@@ -2655,7 +2655,7 @@ async function markLeadCaptured(
 function detectLeadDataHeuristic(text: string): boolean {
   if (!text) return false;
   // Junta dígitos separados por espacios/guiones/paréntesis para contar la longitud real.
-  const digitRuns = text.match(/[\d][\d\s().-]{5,}\d/g) ?? [];
+  const digitRuns: string[] = text.match(/[\d][\d\s().-]{5,}\d/g) ?? [];
   const hasPhone = digitRuns.some(
     (run) => run.replace(/\D/g, "").length >= 7,
   );

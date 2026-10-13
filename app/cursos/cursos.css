@@ -1,0 +1,189 @@
+/* Página /cursos. La portada, los colores y los botones vienen de /paquetes
+   (app/paquetes/paquetes.css); acá solo está lo propio de la ficha de cada curso. */
+
+/* "CURSOS" tiene menos letras que "MARKETING": se agranda para que llene el ancho igual. */
+.cp-cursos .cp-giant { font-size: clamp(96px, 33vw, 300px); }
+
+/* Ese título más alto empujaría el botón "Ver cursos" fuera de la primera pantalla del
+   celular: la franja del video cede esa misma altura. */
+@media (max-width: 759px) {
+  .cp-cursos .cp-band { min-height: max(520px, calc(86svh - 9.5vw)); }
+}
+
+.cp-courses {
+  display: grid;
+  gap: 28px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.cp-course {
+  border: 1px solid var(--cp-line);
+  border-radius: 24px;
+  background: #0c0912;
+  overflow: hidden;
+  /* El bot puede mandar /cursos#capcut-pro: que el curso no quede pegado al borde. */
+  scroll-margin-top: 14px;
+}
+
+/* Cabecera con el degradado de las tarjetas de paquetes (cp-card-1…4). */
+.cp-course-cover {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
+  padding: 22px 22px 24px;
+  color: #fff;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.cp-course-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(180deg, transparent 35%, rgba(10, 4, 20, 0.45));
+}
+
+.cp-course-cover .cp-tag { align-self: flex-start; }
+.cp-course-cover h3 { margin: 4px 0 0; font-size: 24px; line-height: 1.15; }
+.cp-course-cover p { margin: 0; }
+
+.cp-course-info { padding: 22px 18px 26px; }
+
+.cp-course-info h4 {
+  margin: 28px 0 12px;
+  font-size: 19px;
+  font-weight: 500;
+}
+
+/* En pantalla ancha la cabecera queda al costado y es tan alta como la ficha: el nombre
+   sube junto al número para que se vea sin tener que bajar. */
+@media (min-width: 760px) {
+  .cp-course { display: grid; grid-template-columns: 0.8fr 1.2fr; }
+  .cp-course-cover { min-height: 100%; padding: 28px; }
+  .cp-course-cover .cp-card-body { margin-top: 36px; }
+  .cp-course-info { padding: 28px; }
+}
+
+/* ── Fecha y precios ────────────────────────────────────────────────── */
+
+.cp-date {
+  padding: 16px;
+  border: 1px solid rgba(255, 61, 154, 0.45);
+  border-radius: var(--cp-radius);
+  background: linear-gradient(135deg, rgba(139, 61, 255, 0.22), rgba(255, 61, 154, 0.14));
+}
+
+.cp-date-label {
+  display: block;
+  color: var(--cp-pink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.cp-date strong {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-heading), var(--font-body), sans-serif;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.cp-date p {
+  margin: 8px 0 0;
+  color: var(--cp-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Sin fecha vigente: la misma caja, apagada. */
+.cp-date-off { border-color: var(--cp-line); background: var(--cp-panel); }
+.cp-date-off .cp-date-label { color: var(--cp-muted); }
+
+.cp-prices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cp-prices div,
+.cp-facts li {
+  padding: 12px 14px;
+  border: 1px solid var(--cp-line);
+  border-radius: 14px;
+  background: var(--cp-panel);
+}
+
+.cp-prices strong {
+  display: block;
+  font-family: var(--font-heading), var(--font-body), sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.cp-prices span,
+.cp-facts span {
+  display: block;
+  margin-top: 4px;
+  color: var(--cp-muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+/* ── Ficha ──────────────────────────────────────────────────────────── */
+
+.cp-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cp-facts li { flex: 1 1 130px; }
+.cp-facts strong { display: block; font-size: 15px; font-weight: 700; }
+
+.cp-includes-bonus li::before {
+  content: "+";
+  background: rgba(139, 61, 255, 0.24);
+  color: #c9a4ff;
+  font-size: 14px;
+}
+
+.cp-course-text {
+  margin: 0;
+  color: var(--cp-muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* Frase de cierre: con qué sale el alumno. */
+.cp-course-outcome {
+  margin: 22px 0 0;
+  padding-left: 14px;
+  border-left: 3px solid var(--cp-pink);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.cp-course-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.cp-course-note {
+  margin: 0;
+  color: var(--cp-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}

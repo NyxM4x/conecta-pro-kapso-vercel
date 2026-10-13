@@ -3,8 +3,9 @@
 // Vista de /paquetes: portada, tarjetas de paquetes (estilo "Our Process") y, al tocar
 // una, la hoja de detalle con el formulario de datos que llega a Telegram.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CONTENT_TYPE_OPTIONS, LEAD_FIELDS, type LeadFieldKey } from "../../lib/lead-form";
+import { Hero } from "../components/Hero";
 
 type PackageCard = {
   name: string;
@@ -17,13 +18,6 @@ type PackageCard = {
 };
 
 type Step = "detail" | "form" | "done";
-
-// ⚠️ CIFRAS DE EJEMPLO: reemplazarlas por los datos reales de Conecta Pro antes de publicar.
-const HERO_STATS = [
-  { value: "+50K", label: "Seguidores en redes" },
-  { value: "+20", label: "Empresas confían en nosotros" },
-  { value: "+500", label: "Videos producidos" },
-];
 
 const EMPTY_FORM = Object.fromEntries(LEAD_FIELDS.map((field) => [field.key, ""])) as Record<LeadFieldKey, string>;
 
@@ -51,16 +45,6 @@ function PackagesView({
   const [error, setError] = useState("");
 
   const selected = openIndex === null ? null : packages[openIndex];
-
-  // React no siempre deja puesto el atributo muted en el HTML, y sin él el navegador
-  // interno de WhatsApp (sobre todo en iPhone) bloquea el autoplay. Se fuerza acá.
-  const videoRef = useRef<HTMLVideoElement>(null);
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = true;
-    video.play().catch(() => {});
-  }, []);
 
   // La hoja abierta ocupa una entrada del historial: así el botón "atrás" del teléfono la
   // cierra en vez de sacar al cliente del navegador de WhatsApp.
@@ -151,39 +135,12 @@ function PackagesView({
 
   return (
     <main className="cp">
-      <section className="cp-hero">
-        <div className="cp-topbar">
-          <span>©2026</span>
-          <span>CONECTA PRO</span>
-        </div>
-        <h1 className="cp-giant" aria-label="Marketing">
-          MARKETING
-        </h1>
-      </section>
-
-      <section className="cp-band">
-        {/* Video de fondo: img_paginaWeb/video_1.mp4 comprimido y sin audio. */}
-        <div className="cp-band-video" aria-hidden>
-          <video ref={videoRef} src="/paquetes/portada.mp4" poster="/paquetes/portada.jpg" autoPlay muted loop playsInline preload="auto" />
-        </div>
-        <ul className="cp-stats-row">
-          {HERO_STATS.map((stat) => (
-            <li key={stat.label}>
-              <strong>{stat.value}</strong>
-              <span>{stat.label}</span>
-            </li>
-          ))}
-        </ul>
-        <div className="cp-band-left">
-          <p className="cp-band-copy">
-            Estrategia, guiones, grabación y edición: creamos el contenido de tu negocio para que
-            tú solo te ocupes de vender.
-          </p>
-          <a className="cp-btn cp-btn-hero" href="#paquetes">
-            Ver paquetes <span className="cp-btn-arrow" aria-hidden>↓</span>
-          </a>
-        </div>
-      </section>
+      <Hero
+        title="Marketing"
+        copy="Estrategia, guiones, grabación y edición: creamos el contenido de tu negocio para que tú solo te ocupes de vender."
+        ctaLabel="Ver paquetes"
+        ctaHref="#paquetes"
+      />
 
       <section className="cp-packages" id="paquetes">
         <header className="cp-packages-head">
