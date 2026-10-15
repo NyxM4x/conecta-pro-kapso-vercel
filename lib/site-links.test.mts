@@ -23,6 +23,7 @@ import {
   decideLinkButton,
   detectButtonTextKind,
   renderCoursesButtonText,
+  renderNoCourseDatesText,
   replyMentionsButton,
   detectSiteLinkRequest,
   getSiteBaseUrl,
@@ -48,7 +49,11 @@ const test = (name: string, fn: () => void) => {
 const BASE = "https://conecta-pro-kapso-vercel.vercel.app";
 const PHONE = "59171234567";
 const SECRET = "secreto-de-prueba";
-const NOW = new Date("2026-10-15T15:00:00-04:00");
+// Con el Curso de Creación de Contenido (13 de septiembre) a la venta: el botón de cursos
+// solo sale si hay un curso con fecha cargada.
+const NOW = new Date("2026-09-10T15:00:00-04:00");
+// Sin ningún curso con fecha cargada.
+const NO_DATES = new Date("2030-01-01T09:00:00-04:00");
 
 const turn = (overrides: Partial<LinkButtonParams> = {}): LinkButtonParams => ({
   baseUrl: BASE,
@@ -307,10 +312,32 @@ test("el texto de paquetes nombra la cantidad real de paquetes", () => {
   assert.ok(PACKAGES_BUTTON_TEXT.length <= CTA_BODY_MAX_CHARS);
 });
 
-test("sin curso a la venta, el texto de cursos no invita a pagar", () => {
-  const sinFecha = renderCoursesButtonText(new Date("2030-01-01T12:00:00-04:00"));
-  assert.doesNotMatch(sinFecha, /QR/);
-  assert.match(sinFecha, /no tenemos una fecha confirmada/);
+test("sin ningún curso con fecha cargada no sale el botón de cursos, pase lo que pase", () => {
+  const cases = [
+    turn({ now: NO_DATES, intents: new Set(["course_flyer"]) }),
+    turn({ now: NO_DATES, linkRequest: "courses" }),
+    turn({ now: NO_DATES, replyMentionsButton: true, replyButtonKind: "courses" }),
+  ];
+  for (const params of cases) assert.equal(decideLinkButton(params), null);
+});
+
+test("sin fechas, el texto es el de 'no hay fechas confirmadas' con saludo según la hora", () => {
+  assert.equal(
+    renderNoCourseDatesText(NO_DATES),
+    "¡Buenos días! 😊 Sobre los cursos, por ahora no tenemos fechas oficiales confirmadas. Puedes seguirnos como ConectaPro o @marketero7 en TikTok, ahí anunciamos las nuevas fechas apenas salen.",
+  );
+  assert.match(renderNoCourseDatesText(new Date("2030-01-01T15:00:00-04:00")), /^¡Buenas tardes!/);
+  assert.match(renderNoCourseDatesText(new Date("2030-01-01T21:00:00-04:00")), /^¡Buenas noches!/);
+  // No le habla de ningún botón: si no, el bot buscaría uno que no sale.
+  assert.equal(detectButtonTextKind(renderNoCourseDatesText(NO_DATES)), null);
+  assert.ok(!replyMentionsButton(renderNoCourseDatesText(NO_DATES)));
+});
+
+test("con la preventa cerrada el texto del botón no invita a pedir el QR", () => {
+  // Curso de CapCut: 20 de septiembre a las 16:00; la preventa cierra 10 minutos antes.
+  const doorOnly = new Date("2026-09-20T15:55:00-04:00");
+  assert.doesNotMatch(renderCoursesButtonText(doorOnly), /QR/);
+  assert.match(renderCoursesButtonText(NOW), /QR/);
 });
 
 test("el texto fijo trae su botón aunque ya lo tenga o el turno esté bloqueado", () => {

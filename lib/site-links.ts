@@ -17,7 +17,7 @@
 // Sin dependencias de Next para que lo usen el webhook, la página y las pruebas con Node.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { hasSellableCourse } from "./courses.ts";
+import { hasCourseWithDate, hasSellableCourse } from "./courses.ts";
 import { normalizeForMatch } from "./keywords.ts";
 import type { OfficeVisitType } from "./office-form.ts";
 import { VIDEO_PACKAGES } from "./packages.ts";
@@ -125,12 +125,29 @@ const OFFICE_BUTTON_TEXT =
 const OFFICE_COURSE_BUTTON_TEXT =
   "¡Con gusto! 😊 Para visitarnos en la oficina, un asesor te llamará y te indicará la hora. Cuéntanos tus dudas del curso dentro de este botón para agendar tu visita 👇";
 
-// FLUJO A, consulta general o información de un curso. Depende de si hay un curso a la
-// venta: sin fecha vigente no se invita a pagar.
+// FLUJO A, consulta general o información de un curso, SOLO cuando hay un curso con fecha
+// cargada (si no, renderNoCourseDatesText y sin botón). Con la preventa cerrada o el curso
+// en marcha no se invita a pedir el QR.
 function renderCoursesButtonText(now: Date): string {
   return hasSellableCourse(now)
     ? "Puedes ver nuestros cursos dentro de este botón 👇 Ahí está lo que vas a aprender, la fecha y el precio. Si te interesa, escríbenos por aquí y te pasamos el QR para reservar tu cupo 😊"
-    : "Puedes ver nuestros cursos dentro de este botón 👇 Por ahora no tenemos una fecha confirmada: la anunciamos en TikTok (@marketero7) apenas salga 😊";
+    : "Puedes ver nuestros cursos dentro de este botón 👇 Ahí está lo que vas a aprender, la fecha y el precio 😊";
+}
+
+// Saludo según la hora de Bolivia, para el texto de "sin fechas".
+function boliviaGreeting(now: Date): string {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/La_Paz", hour: "numeric", hourCycle: "h23" }).format(now),
+  );
+  if (hour >= 5 && hour < 12) return "¡Buenos días!";
+  if (hour >= 12 && hour < 19) return "¡Buenas tardes!";
+  return "¡Buenas noches!";
+}
+
+// FLUJO A sin ningún curso con fecha cargada: este texto y nada más (sin botón, sin QR, sin
+// ubicación). Es la respuesta a cualquier pregunta por los cursos mientras no haya fecha.
+function renderNoCourseDatesText(now: Date): string {
+  return `${boliviaGreeting(now)} 😊 Sobre los cursos, por ahora no tenemos fechas oficiales confirmadas. Puedes seguirnos como ConectaPro o @marketero7 en TikTok, ahí anunciamos las nuevas fechas apenas salen.`;
 }
 
 // ¿A qué página apunta un texto de botón? Reconoce los textos fijos de arriba (aunque el
@@ -372,7 +389,9 @@ function decideLinkButton(params: LinkButtonParams): LinkButton | null {
           footerText: "Mira nuestros paquetes dentro de este botón 👇",
           forced: params.linkRequest === "packages" || forcedByText,
         };
-  } else if (coursesTurn) {
+  } else if (coursesTurn && hasCourseWithDate(params.now)) {
+    // Sin un curso con fecha cargada no hay botón: el bot responde solo el texto de que no
+    // hay fechas confirmadas (renderNoCourseDatesText).
     // Un solo curso nombrado: el link baja directo a su ficha.
     const courseId =
       params.mentionedCourseIds.length === 1 ? params.mentionedCourseIds[0] : null;
@@ -435,6 +454,7 @@ export {
   linkSentMarker,
   packageSlug,
   renderCoursesButtonText,
+  renderNoCourseDatesText,
   replyMentionsButton,
   signLeadPhone,
   siteVisitMarker,

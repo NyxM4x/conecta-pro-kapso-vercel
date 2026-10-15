@@ -190,6 +190,13 @@ function hasSellableCourse(now: Date): boolean {
   return getActiveCourses(now).some((course) => !isPresaleClosed(course, now));
 }
 
+// ¿Hay algún curso con fecha cargada (próximo o dictándose ahora)? Es el mismo criterio de
+// la página /cursos. Sin ninguno, el bot no manda el botón de cursos: responde que no hay
+// fechas confirmadas (ver renderNoCourseDatesText en lib/site-links.ts).
+function hasCourseWithDate(now: Date): boolean {
+  return COURSES.some((course) => getCourseStatus(course, now) !== "finished");
+}
+
 // ¿Algún curso que todavía se informa (próximo o en curso) se dicta en una ubicación
 // excepcional? La usa el webhook para no enviar el video de "cómo llegar", que muestra la
 // ubicación habitual.
@@ -403,6 +410,7 @@ export {
   isCourseDay,
   isPresaleClosed,
   hasSellableCourse,
+  hasCourseWithDate,
   hasActiveLocationOverride,
   formatCourseDate,
   formatNowInBolivia,

@@ -52,6 +52,7 @@ import {
   COURSES,
   detectMentionedCourses,
   formatNowInBolivia,
+  hasCourseWithDate,
 } from "../../../../lib/courses";
 import {
   LINK_BUTTON_RESEND_HOURS,
@@ -72,6 +73,7 @@ import {
   linkSentMarker,
   packageSlug,
   renderCoursesButtonText,
+  renderNoCourseDatesText,
   replyMentionsButton,
 } from "../../../../lib/site-links";
 import type { LinkButton, LinkButtonKind } from "../../../../lib/site-links";
@@ -774,6 +776,10 @@ GUÍA POR SITUACIÓN
   Aplica cuando el usuario pregunta por los cursos, por aprender edición, por capacitación,
   por las clases, etc. (ej. "¿qué cursos tienen?", "¿cuándo es el curso?", "¿tienen clases de CapCut?").
 
+  ⚠️ SIN NINGÚN CURSO CON FECHA CARGADA (el contexto adicional lo avisa con ⚠️): a CUALQUIER
+  pregunta por los cursos se responde solo el texto de "no hay fechas confirmadas" que trae el
+  contexto. No hay botón, ni QR, ni ubicación. Lo que sigue aplica cuando SÍ hay fecha.
+
   ⚠️ BOTÓN DE CURSOS (MANDA SOBRE LO QUE SIGUE EN ESTE FLUJO): ante una pregunta GENERAL de
   cursos o un pedido de INFORMACIÓN de un curso ("¿qué cursos tienen?", "info del curso de
   CapCut", "¿de qué trata el curso?", "quiero saber del curso", "¿qué se aprende?"), NO escribas la
@@ -930,10 +936,8 @@ GUÍA POR SITUACIÓN
 
     "La fecha del [curso mencionado] ya pasó 😔 Pero tenemos el [curso vigente] el [fecha del contexto] — ¿te cuento más?"
 
-    Si el contexto adicional indica que NINGÚN curso tiene fecha vigente:
-    responde con este tono:
-
-    "Por ahora no tenemos una fecha oficial confirmada para ese curso 😊 Puedes seguirnos como ConectaPro o @marketero7 en TikTok, ahí anunciamos las nuevas fechas apenas salen."
+    Si el contexto adicional indica que NINGÚN curso tiene fecha cargada: responde ÚNICA y
+    EXACTAMENTE con el texto de "no hay fechas confirmadas" que trae el contexto, sin botón.
 
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (consulta general)
   Aplica cuando preguntan por servicios, grabación, paquetes, planes, contenido para redes, dron,
@@ -6302,7 +6306,11 @@ async function processWebhookEvent(
       ...(mediaStatus.service_packages && !packagesResendDecision.send
         ? ["El botón de paquetes YA se le envió hace menos de un día: NO repitas el texto del botón de paquetes ni marques intents.service_packages por una consulta general. Responde sus dudas en TEXTO corto con los datos de la LÍNEA B. Si elige un paquete o quiere contratar, SÍ responde con el texto del botón del formulario (FLUJO B intención clara). Solo si pide el link o la página de nuevo, usa el texto del botón de paquetes y marca intents.service_packages = true."]
         : []),
-      `TEXTO DEL BOTÓN DE CURSOS (cópialo tal cual cuando el FLUJO A lo pida): "${renderCoursesButtonText(turnNow)}"`,
+      // Con un curso con fecha cargada, la información va en el botón; sin ninguno, solo el
+      // texto de que no hay fechas (sin botón, sin QR, sin ubicación).
+      hasCourseWithDate(turnNow)
+        ? `TEXTO DEL BOTÓN DE CURSOS (cópialo tal cual cuando el FLUJO A lo pida): "${renderCoursesButtonText(turnNow)}"`
+        : `⚠️ NO HAY NINGÚN CURSO CON FECHA CARGADA. Ante CUALQUIER pregunta por los cursos (información, fechas, precios, temario, el link o la página, pagar o reservar), responde ÚNICA y EXACTAMENTE con este texto, sin agregar nada: "${renderNoCourseDatesText(turnNow)}" — y NO marques intents.course_flyer, intents.location_video ni intents.payment_qr.`,
       // El hueco del formulario web: sin esto el bot le volvía a pedir los datos por chat.
       ...(webActivity.leadAt
         ? [`Este cliente YA DEJÓ SUS DATOS en el formulario de la página de ${webActivity.leadPage === "oficina" ? "visita a la oficina" : "paquetes"} (${formatNowInBolivia(webActivity.leadAt)}) y el asesor ya los tiene. NUNCA le pidas el formulario ni sus datos otra vez, y NO marques service_intake_requested, lead_data_submitted ni office_visit_requested. Si pregunta por su pedido, dile que un asesor ya tiene sus datos y le hablará pronto. Sus otras dudas respóndelas con normalidad.`]
@@ -8085,6 +8093,19 @@ async function processWebhookEvent(
     replyText = PACKAGES_FORM_BUTTON_TEXT;
     turn.service_intake_requested = true;
     turn.intents.service_packages = true;
+  }
+
+  // Sin ningún curso con fecha cargada no hay botón de cursos: la respuesta es solo el texto
+  // de que no hay fechas confirmadas, aunque el modelo haya querido mandar el botón o el
+  // material del curso. Así el cliente no abre una página que solo dice "por confirmar".
+  if (
+    !hasCourseWithDate(turnNow) &&
+    (turn.intents.course_flyer || detectButtonTextKind(replyText) === "courses")
+  ) {
+    replyText = renderNoCourseDatesText(turnNow);
+    turn.intents.course_flyer = false;
+    turn.intents.location_video = false;
+    turn.intents.payment_qr = false;
   }
 
   // Ya dejó sus datos en la página: nunca se le vuelve a pedir el formulario.
