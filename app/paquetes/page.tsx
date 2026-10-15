@@ -23,6 +23,14 @@ const TAGLINES: Record<string, string> = {
   Pro: "Todo incluido: redes, Ads y tomas con dron.",
 };
 
+// Video de la portada de la ficha de cada paquete (por slug), sin extensión: ".mp4" es el
+// video comprimido y ".jpg" su primer cuadro. Los originales están en material-original/.
+// Un paquete sin video muestra el degradado de siempre.
+const PACKAGE_VIDEOS: Record<string, string> = {
+  pro: "/paquetes/paquetePro",
+  normal: "/paquetes/paqueteNormal",
+};
+
 export default async function PaquetesPage({
   searchParams,
 }: {
@@ -39,6 +47,7 @@ export default async function PaquetesPage({
     drone: pkg.drone,
     includes: pkg.includes,
     tagline: TAGLINES[pkg.name] ?? "",
+    video: PACKAGE_VIDEOS[packageSlug(pkg.name)] ?? null,
   }));
 
   const preselected = first(params.p).toLowerCase();

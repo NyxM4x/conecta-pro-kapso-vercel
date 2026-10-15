@@ -96,6 +96,7 @@ function CoursesView({
         copy="Cursos presenciales en Santa Cruz de la Sierra para que aprendas a crear y editar contenido que venda en redes."
         ctaLabel="Ver cursos"
         ctaHref="#cursos"
+        video="cursos"
       />
 
       <section className="cp-packages" id="cursos">

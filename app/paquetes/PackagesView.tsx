@@ -18,6 +18,8 @@ type PackageCard = {
   drone: boolean;
   includes: string[];
   tagline: string;
+  // Video de la portada de su ficha, sin extensión (".mp4" y ".jpg"). Sin video, el degradado.
+  video: string | null;
 };
 
 type Step = "detail" | "form" | "done";
@@ -237,7 +239,24 @@ function PackagesView({
             {step === "detail" && (
               <>
                 <div className="cp-detail">
-                  <div className={`cp-photo cp-card-${(openIndex % 4) + 1}`}>
+                  <div
+                    className={`cp-photo cp-card-${(openIndex % 4) + 1}${selected.video ? " cp-photo-has-video" : ""}`}
+                  >
+                    {selected.video && (
+                      // key: al cambiar de paquete el video empieza de nuevo.
+                      <video
+                        key={selected.video}
+                        className="cp-photo-video"
+                        src={`${selected.video}.mp4`}
+                        poster={`${selected.video}.jpg`}
+                        autoPlay
+                        muted
+                        loop
+                        playsInline
+                        preload="auto"
+                        aria-hidden
+                      />
+                    )}
                     <span className="cp-photo-num">{pad(openIndex)}</span>
                     <div className="cp-photo-foot">
                       <span>{selected.name}</span>

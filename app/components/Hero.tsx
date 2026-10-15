@@ -1,6 +1,6 @@
 "use client";
 
-// Portada que comparten /paquetes y /cursos: el título gigante y la franja con el video,
+// Portada que comparten /paquetes, /cursos y /oficina: el título gigante y la franja con el video,
 // las cifras y el botón que baja a la sección de cada página. Los estilos están en
 // app/paquetes/paquetes.css.
 
@@ -13,17 +13,28 @@ const HERO_STATS = [
   { value: "+500", label: "Videos producidos" },
 ];
 
+// Video de portada de cada página, sin la extensión: "<ruta>.mp4" es el video comprimido y
+// sin audio, "<ruta>.jpg" su primer cuadro (se ve mientras carga). Los originales están en
+// material-original/, fuera de git.
+const HERO_VIDEOS = {
+  paquetes: "/paquetes/portadaPaquetes",
+  cursos: "/cursos/portadaCursos",
+} as const;
+
 function Hero({
   title,
   copy,
   ctaLabel,
   ctaHref,
+  video = "paquetes",
 }: {
   title: string;
   copy: string;
   ctaLabel: string;
   ctaHref: string;
+  video?: keyof typeof HERO_VIDEOS;
 }) {
+  const videoBase = HERO_VIDEOS[video];
   // React no siempre deja puesto el atributo muted en el HTML, y sin él el navegador
   // interno de WhatsApp (sobre todo en iPhone) bloquea el autoplay. Se fuerza acá.
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -47,9 +58,17 @@ function Hero({
       </section>
 
       <section className="cp-band">
-        {/* Video de fondo: img_paginaWeb/video_1.mp4 comprimido y sin audio. */}
         <div className="cp-band-video" aria-hidden>
-          <video ref={videoRef} src="/paquetes/portada.mp4" poster="/paquetes/portada.jpg" autoPlay muted loop playsInline preload="auto" />
+          <video
+            ref={videoRef}
+            src={`${videoBase}.mp4`}
+            poster={`${videoBase}.jpg`}
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="auto"
+          />
         </div>
         <ul className="cp-stats-row">
           {HERO_STATS.map((stat) => (

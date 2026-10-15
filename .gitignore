@@ -8,3 +8,6 @@
 
 *.log
 .DS_Store
+
+# Videos originales sin comprimir (pesan ~50 MB cada uno). En public/ van las versiones comprimidas.
+material-original/
