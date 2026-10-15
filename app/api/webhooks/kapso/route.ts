@@ -662,11 +662,25 @@ ZONA DE COBERTURA DEL SERVICIO (MUY IMPORTANTE):
   (a otras provincias del departamento, al trópico, a otros departamentos de Bolivia como La Paz,
   Cochabamba, etc., o a cualquier otra ciudad/localidad). Eso NO existe como servicio, aunque el
   cliente insista o pregunte "¿pueden venir hasta [lugar]?".
-- Si el cliente menciona que vive o está en un lugar fuera de Santa Cruz de la Sierra (ciudad),
-  incluidas provincias del propio departamento como "el trópico", "Camiri", "Vallegrande",
-  "Montero" lejano, u otros departamentos, indícale con claridad y amabilidad que por ahora el
-  servicio se brinda únicamente en la ciudad de Santa Cruz de la Sierra y que el equipo no se
-  desplaza fuera de ella. No ofrezcas alternativas que no existen.
+- Si el cliente quiere que lo graben en un lugar fuera de la ciudad de Santa Cruz de la Sierra
+  (provincias del propio departamento como "el trópico", "Camiri", "Vallegrande", "Montero"
+  lejano, u otros departamentos y ciudades como "Bermejo", "Tarija", "La Paz"), responde
+  EXACTAMENTE con este texto (cambia solo [lugar] por el lugar que nombró):
+
+  "Entiendo 😊 Pero el equipo trabaja únicamente en la ciudad de Santa Cruz de la Sierra y no nos trasladamos a [lugar], aunque cubras los pasajes y viáticos. Por eso allá no podemos hacer grabaciones, guiones, publicación ni el seguimiento de los paquetes.
+
+  Lo único que podemos ofrecerte a distancia es SOLO EDICIÓN NETA: tú grabas y nos mandas los videos crudos. Ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE} 📲 Con él coordinas precio y plazos directamente."
+
+  REGLAS DURAS de este caso (el cliente ya oyó un NO; no se lo cambies a medias):
+  - NO hay excepciones, aunque insista, ofrezca pagar pasajes, viáticos o un precio mayor. Si
+    vuelve a insistir, repite en UNA línea que no nos trasladamos y que la opción a distancia es
+    la edición neta con el editor (${EDITOR_PHONE}).
+  - NUNCA vuelvas a ofrecer grabación, guiones, publicación, seguimiento, dron ni ningún
+    beneficio de los paquetes, ni digas "podemos atenderte desde allá" sugiriendo algo más que la
+    edición neta.
+  - NO ofrezcas que un asesor lo llame "para ver alternativas": no hay alternativas.
+  - NO termines con preguntas como "¿te interesa alguna de esas opciones?".
+  - NO marques intents.service_packages, service_intake_requested ni advisor_handoff.
 
 ═══════════════════════════════════════
 REGLAS DE TONO Y FORMATO (campo "reply")
@@ -676,7 +690,9 @@ REGLAS DE TONO Y FORMATO (campo "reply")
 - Usa emojis con naturalidad (2-3 por mensaje, ej. 👋🎬✅📋🎓), sin saturar.
 - No inventes información. Si no sabes algo, dilo con naturalidad y ofrece que el equipo lo confirma.
 - Links de Maps: texto plano (URL completa), NUNCA formato Markdown [texto](url).
-- El envío de flyers lo decide el sistema, no tú. NUNCA prometas "te envío un flyer/imagen ahora".
+- YA NO SE ENVÍAN FLYERS NI IMÁGENES de cursos ni de paquetes: esa información está en las
+  páginas. NUNCA digas "te envío un flyer/imagen" ni "mira la imagen". Las únicas imágenes que
+  pueden salir son el QR de pago de un curso CON FECHA a la venta y el flyer del agente de IA.
 - BOTÓN O TEXTO (ahorro de mensajes): la información GENERAL de paquetes y de cursos ya no se
   escribe: va en un mensaje corto con un BOTÓN que abre la página (lo adjunta el sistema cuando
   marcas intents.service_packages, service_intake_requested o intents.course_flyer). Usa el texto
@@ -1348,7 +1364,9 @@ ${EDITING_CLARIFY_REPLY.replace(/^/gm, "  ")}
   - Es un editor de ConectaPro, pero los detalles del trabajo (precio, plazos, forma de pago) se
     coordinan directamente con él por ese número.
   - Si el cliente además muestra interés en los paquetes de producción (grabación + edición),
-    puedes mencionarlos como alternativa, pero sin forzarlo.
+    puedes mencionarlos como alternativa, pero sin forzarlo. EXCEPCIÓN: si está FUERA de la
+    ciudad de Santa Cruz de la Sierra, NUNCA menciones los paquetes ni la grabación (ver ZONA DE
+    COBERTURA): la edición neta es lo único que se le ofrece.
   - NO marques intents.service_packages en este flujo (no es un paquete de producción de Conecta Pro).
 
 ▸ ¿QUIÉN SALE EN LOS VIDEOS? (dueño o modelo)
@@ -8098,10 +8116,20 @@ async function processWebhookEvent(
   // Sin ningún curso con fecha cargada no hay botón de cursos: la respuesta es solo el texto
   // de que no hay fechas confirmadas, aunque el modelo haya querido mandar el botón o el
   // material del curso. Así el cliente no abre una página que solo dice "por confirmar".
-  if (
+  // También cuando el cliente pregunta por un curso y la respuesta igual le ofrece fecha,
+  // cupo, preventa o QR (salvo que esté avisando un pago ya hecho).
+  const courseReplyWithoutDates =
     !hasCourseWithDate(turnNow) &&
-    (turn.intents.course_flyer || detectButtonTextKind(replyText) === "courses")
-  ) {
+    !turn.payment_confirmation &&
+    (turn.intents.course_flyer ||
+      detectButtonTextKind(replyText) === "courses" ||
+      (mentionsCourse(batchText) &&
+        /\b(QR|PREVENTA|RESERVA\w*|CUPO|CUPOS|FECHA|FECHAS|INSCRIBI\w*)\b/.test(
+          normalizeForMatch(replyText),
+        ) &&
+        !replyText.includes("no tenemos fechas oficiales confirmadas")));
+
+  if (courseReplyWithoutDates) {
     replyText = renderNoCourseDatesText(turnNow);
     turn.intents.course_flyer = false;
     turn.intents.location_video = false;
@@ -8383,7 +8411,9 @@ async function processWebhookEvent(
         callRequested ||
         turn.office_visit_requested ||
         // Viene de la página (mensaje prellenado): no se le devuelve el mismo link.
-        isSitePrefilledMessage(lastMessage.text),
+        isSitePrefilledMessage(lastMessage.text) ||
+        // Deriva al editor (edición neta, o cliente fuera de la ciudad): los paquetes no van.
+        replyText.includes(EDITOR_PHONE),
       lastSentAt: await getLinkButtonsLastSentAt(lastMessage.from),
       now: turnNow,
     });
@@ -8399,6 +8429,12 @@ async function processWebhookEvent(
   // con cada consulta de cursos, y ahora la ubicación va solo cuando la piden.
   intentsToSend.delete("course_flyer");
   intentsToSend.delete("service_packages");
+  // Sin ningún curso con fecha cargada no sale NADA de cursos: ni el QR (no hay qué pagar)
+  // ni el video de cómo llegar (no hay a dónde ir).
+  if (!hasCourseWithDate(turnNow)) {
+    intentsToSend.delete("payment_qr");
+    intentsToSend.delete("location_video");
+  }
   if (intentsToSend.has("location_video") && !/https?:\/\//i.test(replyText)) {
     intentsToSend.delete("location_video");
   }
