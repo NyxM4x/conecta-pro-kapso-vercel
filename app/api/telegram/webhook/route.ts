@@ -10,6 +10,8 @@
 //   📞 Llamadas y visitas (/llamadas o /visitas) → una sola lista de quienes pidieron que los
 //                              llamen o venir a la oficina, con los que nadie contactó primero
 //                              (lib/pending-contacts.ts).
+//   /cliente <número> → qué pasó de verdad con ese cliente: botones que recibió, si abrió la
+//                       página y si sus datos llegaron (lib/client-status.ts).
 //   /id → responde el id del chat (sirve para configurar TELEGRAM_DEV_CHAT_ID).
 //
 // Seguridad: Telegram firma cada llamada con el header X-Telegram-Bot-Api-Secret-Token
@@ -35,6 +37,7 @@ import {
   resolvePresetRange,
 } from "../../../../lib/payments-ledger";
 import type { LedgerRange } from "../../../../lib/payments-ledger";
+import { loadClientStatus, normalizeClientPhone, renderClientStatus } from "../../../../lib/client-status";
 import {
   PENDING_CONTACTS_REPORT_DAYS,
   buildPendingContacts,
@@ -58,6 +61,7 @@ const BOT_COMMANDS = [
   { command: "pagos", description: "Lista de comprobantes por rango de fechas" },
   { command: "llamadas", description: "Llamadas y visitas por coordinar" },
   { command: "visitas", description: "Llamadas y visitas por coordinar" },
+  { command: "cliente", description: "Estado de un cliente: /cliente 71234567" },
 ];
 let commandsPublished = false;
 
@@ -122,6 +126,28 @@ async function sendPaymentsLedger(chatId: string | number, range: LedgerRange) {
     await sendTelegramMessage({
       chatId,
       text: "⚠️ No se pudo armar la lista de pagos. Intenta de nuevo en un momento.",
+    });
+  }
+}
+
+async function sendClientStatus(chatId: string | number, args: string) {
+  const phone = normalizeClientPhone(args);
+  if (!phone) {
+    await sendTelegramMessage({
+      chatId,
+      text: "Escribe el celular del cliente, por ejemplo: <code>/cliente 71234567</code>",
+    });
+    return;
+  }
+
+  try {
+    const data = await loadClientStatus(getSupabaseClient(), phone);
+    await sendTelegramMessage({ chatId, text: renderClientStatus(data, new Date()), disablePreview: true });
+  } catch (error) {
+    console.error("client status failed", error);
+    await sendTelegramMessage({
+      chatId,
+      text: "⚠️ No se pudo revisar ese cliente. Intenta de nuevo en un momento.",
     });
   }
 }
@@ -219,6 +245,7 @@ export async function POST(request: Request) {
         );
       }
     } else if (command === "llamadas" || command === "visitas") await sendPendingContacts(message.chat.id);
+    else if (command === "cliente") await sendClientStatus(message.chat.id, args);
     else if (command === "menu" || command === "start") {
       await sendTelegramMessage({
         chatId: message.chat.id,

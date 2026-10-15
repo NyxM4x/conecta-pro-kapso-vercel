@@ -1,11 +1,12 @@
 // Página de paquetes que se abre en el navegador interno de WhatsApp. El bot puede mandar
-// el link con el número del cliente y un paquete preseleccionado:
-//   /paquetes?wa=59171234567&p=pro
+// el link con el número del cliente (firmado) y un paquete preseleccionado:
+//   /paquetes?wa=59171234567&t=<firma>&p=pro&f=1
+// f=1 abre la hoja directo en el formulario. El link lo arma lib/site-links.ts.
 // Los paquetes salen de lib/packages.ts: no repetir precios ni cantidades acá.
 
 import type { Metadata } from "next";
 import { VIDEO_PACKAGES } from "../../lib/packages";
-import { normalizeForMatch } from "../../lib/keywords";
+import { packageSlug } from "../../lib/site-links";
 import { PackagesView, type PackageCard } from "./PackagesView";
 import "./paquetes.css";
 
@@ -32,7 +33,7 @@ export default async function PaquetesPage({
 
   const packages: PackageCard[] = VIDEO_PACKAGES.map((pkg) => ({
     name: pkg.name,
-    slug: normalizeForMatch(pkg.name).toLowerCase(),
+    slug: packageSlug(pkg.name),
     videos: pkg.videos,
     price: pkg.price,
     drone: pkg.drone,
@@ -46,7 +47,10 @@ export default async function PaquetesPage({
     <PackagesView
       packages={packages}
       originPhone={first(params.wa).replace(/\D/g, "")}
+      // Firma del número: /api/leads la verifica antes de cerrar el lead en el chat.
+      originToken={first(params.t).replace(/[^0-9a-f]/gi, "").slice(0, 16)}
       initialSlug={packages.some((pkg) => pkg.slug === preselected) ? preselected : null}
+      openForm={first(params.f) === "1"}
       // Número del WhatsApp de Conecta Pro para el botón "Volver a WhatsApp" al terminar.
       // Sin la variable, ese botón no aparece.
       businessWhatsapp={(process.env.CONECTA_PRO_WHATSAPP ?? "").replace(/\D/g, "")}

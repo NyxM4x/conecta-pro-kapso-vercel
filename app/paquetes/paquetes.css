@@ -768,3 +768,63 @@ body {
   .cp-sheet, .cp-sheet-backdrop, .cp-btn-hero, .cp-btn-arrow { animation: none; }
   html { scroll-behavior: auto; }
 }
+
+/* ── Cómo trabajamos ────────────────────────────────────────────────── */
+/* Lo que antes el bot mandaba como texto largo por WhatsApp (lib/how-we-work.ts). */
+
+.cp-how-steps {
+  display: grid;
+  gap: 14px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.cp-how-steps > li {
+  display: flex;
+  gap: 14px;
+  padding: 18px 16px;
+  border: 1px solid var(--cp-line);
+  border-radius: var(--cp-radius);
+  background: var(--cp-panel);
+}
+
+.cp-how-num {
+  flex: none;
+  color: var(--cp-accent);
+  font-family: var(--font-heading), var(--font-body), sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.cp-how-steps h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.cp-how-steps p {
+  margin: 0;
+  color: var(--cp-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.cp-how-steps .cp-includes {
+  margin-top: 12px;
+}
+
+.cp-how-goal {
+  max-width: 1080px;
+  margin: 22px auto 0;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+@media (min-width: 760px) {
+  .cp-how-steps {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

@@ -49,7 +49,32 @@ import {
   getActiveCourses,
   formatCourseDate,
   renderCourseDayDoorReply,
+  COURSES,
+  detectMentionedCourses,
+  formatNowInBolivia,
 } from "../../../../lib/courses";
+import {
+  LINK_BUTTON_RESEND_HOURS,
+  LINK_SENT_MARKER_PREFIX,
+  PACKAGES_BUTTON_TEXT,
+  PACKAGES_FORM_BUTTON_TEXT,
+  OFFICE_BUTTON_TEXT,
+  OFFICE_COURSE_BUTTON_TEXT,
+  SITE_VISIT_MARKER_PREFIX,
+  WEB_LEAD_MARKER_PREFIX,
+  canAttachButtonToReply,
+  decideLinkButton,
+  detectButtonTextKind,
+  detectSiteLinkRequest,
+  getLeadLinkSecret,
+  getSiteBaseUrl,
+  isSitePrefilledMessage,
+  linkSentMarker,
+  packageSlug,
+  renderCoursesButtonText,
+  replyMentionsButton,
+} from "../../../../lib/site-links";
+import type { LinkButton, LinkButtonKind } from "../../../../lib/site-links";
 import { MAPS_OFICINA } from "../../../../lib/locations";
 import {
   getActivePromoAmounts,
@@ -205,11 +230,11 @@ type SystemLogLevel = "info" | "warning" | "error" | "critical";
 const EDITOR_PHONE = "74271406";
 
 // Campos del formulario de leads (LÍNEA B). Los usan el prompt, el formulario completo y
-// la respuesta a quien quiere visitarnos, que pide exactamente los mismos datos.
+// la respuesta a quien quiere visitarnos, que pide exactamente los mismos datos. No se pide
+// el número: el contacto es el WhatsApp desde el que escribe, que Kapso ya conoce.
 const LEAD_INTAKE_FIELDS = `📌 Nombre:
 📌 Nombre de tu empresa o emprendimiento:
 📌 Cargo dentro de la empresa:
-📌 Número de contacto personal:
 📌 Rubro o sector: (Ej. gastronomía, belleza, moda, salud, etc.)
 📌 Instagram o redes sociales:
 📌 ¿Qué tipo de contenido te interesa? (Fotos, videos, contenido con creadores, etc.)
@@ -301,25 +326,16 @@ const AI_AGENT_INTAKE_FIELDS = `📌 Nombre:
 📌 ¿Tienen una sola sucursal o varias?`;
 
 // VISITA A LA OFICINA. El bot ya no invita a pasar ni anota un día y una hora: no sabe si
-// habrá alguien para atender. Explica que primero llama un asesor y pide los datos.
-const OFFICE_VISIT_INTRO = `¡Con gusto te recibimos! 😊 Antes de confirmar una reunión en nuestra oficina, un asesor te llamará para coordinarla y conocer más de tu negocio. Así te atiende primero por llamada y llegan a la reunión con todo claro.
+// habrá alguien para atender. Ahora tampoco pide los datos por chat: manda el botón "Agendar
+// visita" a la página /oficina, que tiene el mismo texto y el formulario de cada caso
+// (lib/office-form.ts). El asesor se entera cuando el cliente envía sus datos ahí.
+const OFFICE_VISIT_INTAKE_REPLY = OFFICE_BUTTON_TEXT;
 
-Para que te contacte, necesito estos datos 📋`;
+// Mismo texto para un cliente del agente de IA: la página le pide los datos de la LÍNEA C.
+const OFFICE_VISIT_AI_AGENT_REPLY = OFFICE_BUTTON_TEXT;
 
-const OFFICE_VISIT_INTAKE_REPLY = `${OFFICE_VISIT_INTRO}
-
-${LEAD_INTAKE_FIELDS}`;
-
-// Misma respuesta para un cliente del agente de IA: se le piden los datos de la LÍNEA C.
-const OFFICE_VISIT_AI_AGENT_REPLY = `${OFFICE_VISIT_INTRO}
-
-${AI_AGENT_INTAKE_FIELDS}`;
-
-// Visita por un CURSO: no se pide el formulario de negocio. Se preguntan sus dudas del curso
-// y el sistema avisa al asesor para que lo llame (ver notifyCourseOfficeVisitToTelegram).
-const OFFICE_VISIT_COURSE_REPLY = `¡Con gusto! 😊 Para visitarnos en la oficina, un asesor te llamará y te indicará la hora, así nos aseguramos de que alguien esté disponible para atenderte 📞
-
-Mientras tanto, cuéntame: ¿qué dudas tienes sobre el curso? Así el asesor te llama con todo listo.`;
+// Visita por un CURSO: la página no pide datos de negocio, solo su nombre y sus dudas.
+const OFFICE_VISIT_COURSE_REPLY = OFFICE_COURSE_BUTTON_TEXT;
 
 // Cuando ya dejó sus datos (o ya se le pidieron) y vuelve a hablar de venir a la oficina.
 const OFFICE_VISIT_PENDING_CALL_REPLY = `Antes de reunirnos en la oficina, un asesor te llamará para coordinar el día y la hora y conocer más de tu negocio 📞 Así nos aseguramos de que alguien esté disponible para atenderte 😊`;
@@ -337,10 +353,6 @@ Un asesor te llama por WhatsApp para conocer cómo atiendes hoy los mensajes de 
 
 ${AI_AGENT_INTAKE_FIELDS}`;
 
-// Cierre seco de conversación ("ya, gracias"). Centralizado para que la red de seguridad
-// anti-saludo pueda enviarlo textual cuando el LLM confunde el cierre con un primer
-// contacto (ver isClosingThanksOnly).
-const THANKS_CLOSING_REPLY = `¡De nada! 😊 Si decides elegir un paquete o tienes más preguntas, aquí estoy para ayudarte. ¡Éxito con tu emprendimiento! 🎬`;
 
 // EDICIÓN AMBIGUA: pregunta antes de mandar paquetes o el número del editor.
 const EDITING_CLARIFY_REPLY = `¡Claro! 😊 Para orientarte bien, cuéntame qué necesitas:
@@ -455,7 +467,8 @@ LÍNEA A — Cursos:
   preventa de cualquiera de los dos cursos (el que tenga fecha vigente). El sistema lo envía
   automáticamente cuando corresponde — nunca prometas "te lo mando ahora", usa frases neutras
   ("el QR está disponible para reservar tu cupo").
-- Este flujo activa intents.course_flyer = true para que el sistema envíe los flyers de cursos.
+- Este flujo activa intents.course_flyer = true para que el sistema adjunte el BOTÓN que abre la
+  página de cursos (ya no se envían flyers).
 - ⚠️ REGLA ABSOLUTA — LOS CURSOS NUNCA USAN EL FORMULARIO DE DATOS: un curso se cierra con el QR de
   pago y, después de pagar, el comprobante + nombre completo + número de celular escritos por el
   chat. Eso es TODO lo que se necesita. El formulario de leads (📌 Nombre, empresa, cargo dentro de
@@ -486,9 +499,10 @@ LÍNEA B — Paquetes de producción (servicio principal / embudo principal):
   contratar (enviar el formulario de datos).
 - Incluye producción profesional (grabación + edición) orientada a redes sociales (TikTok, Instagram).
 - ⚠️ LOS PAQUETES YA NO SE EXPLICAN EN TEXTO POR DEFECTO: al presentar los paquetes, el sistema
-  envía 2 imágenes (flyers) con los precios, la cantidad de videos y lo que incluye cada uno, y
-  después tu texto de "¿Cómo trabajamos con nuestros clientes?" (FLUJO B consulta general). Pero
-  TÚ SIEMPRE CONOCES estos datos: si el cliente pregunta cuánto cuesta un paquete, cuántos videos
+  adjunta a tu respuesta corta un BOTÓN que abre la página de paquetes (precios, cantidad de
+  videos, lo que incluye cada uno, cómo trabajamos y el formulario de datos). Ya no se envían
+  flyers ni el texto largo de "¿Cómo trabajamos con nuestros clientes?". Pero TÚ SIEMPRE CONOCES
+  estos datos: si el cliente pregunta cuánto cuesta un paquete, cuántos videos
   trae, cuál tiene dron, qué incluye o cuál le conviene, respóndelo en texto con los datos de esta
   sección, sin mandarlo a "ver la imagen".
 - QUÉ MUESTRA CADA FLYER (esto es lo que el cliente ve; responde igual que el flyer):
@@ -661,6 +675,16 @@ REGLAS DE TONO Y FORMATO (campo "reply")
 - No inventes información. Si no sabes algo, dilo con naturalidad y ofrece que el equipo lo confirma.
 - Links de Maps: texto plano (URL completa), NUNCA formato Markdown [texto](url).
 - El envío de flyers lo decide el sistema, no tú. NUNCA prometas "te envío un flyer/imagen ahora".
+- BOTÓN O TEXTO (ahorro de mensajes): la información GENERAL de paquetes y de cursos ya no se
+  escribe: va en un mensaje corto con un BOTÓN que abre la página (lo adjunta el sistema cuando
+  marcas intents.service_packages, service_intake_requested o intents.course_flyer). Usa el texto
+  fijo de cada flujo (FLUJO A y FLUJO B). NUNCA escribas una URL de esas páginas.
+  Van en TEXTO, sin botón: la ubicación de la oficina y la del curso (con su link de Maps), el
+  pago del curso (QR, comprobante, datos del pagador), las preguntas PUNTUALES (precio o fecha de
+  un curso concreto, si un paquete trae dron, si publican en Instagram, si el curso es virtual,
+  hasta cuándo es la preventa), el agente de IA (FLUJO C), la edición sola (número del editor),
+  la pregunta de "edición" ambigua, las cantidades fuera del catálogo y los extras, las visitas a
+  la oficina, los pedidos de llamada, el saludo, los agradecimientos y el cierre del lead.
   Usa frases neutras: "hay información disponible sobre los cursos", "te compartimos los paquetes".
 - Si la intención ya es clara, afirma el siguiente paso directamente. Sin preguntas intermedias.
 
@@ -749,6 +773,17 @@ GUÍA POR SITUACIÓN
 ▸ FLUJO A — CURSOS
   Aplica cuando el usuario pregunta por los cursos, por aprender edición, por capacitación,
   por las clases, etc. (ej. "¿qué cursos tienen?", "¿cuándo es el curso?", "¿tienen clases de CapCut?").
+
+  ⚠️ BOTÓN DE CURSOS (MANDA SOBRE LO QUE SIGUE EN ESTE FLUJO): ante una pregunta GENERAL de
+  cursos o un pedido de INFORMACIÓN de un curso ("¿qué cursos tienen?", "info del curso de
+  CapCut", "¿de qué trata el curso?", "quiero saber del curso", "¿qué se aprende?"), NO escribas la
+  información (ni fecha, ni precios, ni temario, ni ubicación): responde ÚNICA y EXACTAMENTE con el
+  "TEXTO DEL BOTÓN DE CURSOS" que viene en el contexto adicional y marca intents.course_flyer =
+  true. El sistema le adjunta el botón que abre la página del curso. En ese turno NO marques
+  intents.location_video. Las reglas de abajo sobre fechas, precios y ubicación aplican a las
+  preguntas PUNTUALES ("¿cuánto cuesta?", "¿cuándo es?", "¿dónde es?", "¿es virtual?", "¿enseñan
+  el algoritmo?"), que se responden en TEXTO corto sin el texto del botón y sin marcar
+  intents.course_flyer, y a todo el pago (QR, comprobante).
 
   - ⚠️ NUNCA digas "hoy tenemos el curso" ni nada que dé a entender que el curso es hoy, salvo que
     la fecha vigente sea literalmente la de hoy. Preséntalo como el próximo curso / el curso vigente
@@ -865,7 +900,7 @@ GUÍA POR SITUACIÓN
       normales del curso. Nunca inventes una promo ni un monto que el backend no te haya dado.
   - NO menciones paquetes de producción en este flujo.
   - Links de Maps siempre en texto plano, NUNCA en markdown [texto](url).
-  - Marca intents.course_flyer = true para que el sistema envíe los flyers de cursos.
+  - Marca intents.course_flyer = true SOLO con el texto del botón de cursos (ver arriba).
   - RECLAMO DE REEMBOLSO por cambio de fecha (ej. "pagué para el curso del 26 de julio y ya no
     puedo ir", "cambiaron la fecha y yo pagué para el domingo pasado", "quiero que me devuelvan mi
     dinero porque movieron la fecha del curso"): el curso de Creación de Contenido tenía
@@ -906,28 +941,36 @@ GUÍA POR SITUACIÓN
   contratar todavía. Si solo dicen "edición" sin aclarar si quieren que grabemos, usa primero el
   flujo "CLIENTE DICE 'EDICIÓN' SIN ACLARAR QUÉ NECESITA".
 
-  ORDEN DE LOS MENSAJES: el sistema envía PRIMERO las 2 imágenes de los paquetes (precios,
-  videos y qué incluye cada uno) y DESPUÉS tu respuesta. Tu respuesta NO repite los paquetes ni
-  los precios: es ÚNICA y EXACTAMENTE este texto, sin modificarlo, sin agregar saludos ni
-  preguntas antes o después:
+  UN SOLO MENSAJE: ya no se envían imágenes ni el texto largo de "¿Cómo trabajamos con nuestros
+  clientes?". El sistema adjunta a tu respuesta un BOTÓN que abre la página de paquetes (precios,
+  videos, qué incluye cada uno, cómo trabajamos y el formulario de datos). Tu respuesta es ÚNICA
+  y EXACTAMENTE este texto, sin modificarlo, sin agregar saludos ni preguntas antes o después:
 
-${HOW_WE_WORK_INFO.replace(/^/gm, "  ")}
+  ${PACKAGES_BUTTON_TEXT}
 
   - Marca intents.service_packages = true.
-  - Si el mensaje del cliente además trae una PREGUNTA CONCRETA que ese texto no responde (por
-    ejemplo si el Básico tiene dron, o si publican en Instagram), agrega al final UNA línea corta
-    que la responda con los datos de la LÍNEA B.
-  - Si en esta conversación YA enviaste ese texto ("¿Cómo trabajamos con nuestros clientes?"), NO
-    lo repitas: responde en pocas líneas la duda concreta del cliente con los datos de la LÍNEA B
-    (precios, videos, qué incluye, dron, forma de pago, grabación, publicación).
+  - NO pegues el catálogo, los precios ni la explicación de cómo trabajamos: están en la página.
+  - Si el mensaje del cliente además trae una PREGUNTA CONCRETA (por ejemplo si el Básico tiene
+    dron, o si publican en Instagram), respóndela PRIMERO en UNA línea corta con los datos de la
+    LÍNEA B y después pon el texto del botón.
+  - Si el contexto indica que el botón de paquetes ya se le envió hace menos de un día (o si en
+    esta conversación ya salió el texto "¿Cómo trabajamos con nuestros clientes?"), NO repitas el
+    texto del botón: responde en pocas líneas la duda concreta del cliente con los datos de la
+    LÍNEA B (precios, videos, qué incluye, dron, forma de pago, grabación, publicación).
 
 ▸ FLUJO B — PAQUETES DE PRODUCCIÓN (intención clara de contratar)
   Aplica cuando dice "quiero contratar", "quiero el paquete de X videos", "cuándo empezamos",
   "cómo contrato", "quiero empezar", "quiero los servicios de grabación y edición" (NO los cursos,
   NO la promo vencida de edición por 50 Bs).
 
-  Incluye el formulario de leads EXACTAMENTE como aparece abajo, con esta intro antes:
-  "${LEAD_INTAKE_INTRO}"
+  YA NO SE PEGA EL FORMULARIO 📌 EN EL CHAT: los datos se llenan en la página. En todo este flujo,
+  "enviar el formulario" significa responder ÚNICA y EXACTAMENTE con este texto (el sistema
+  adjunta el botón que abre el formulario, con el paquete elegido ya abierto):
+
+  ${PACKAGES_FORM_BUTTON_TEXT}
+
+  Y marcar service_intake_requested = true. NUNCA le pidas su número: el contacto es el
+  WhatsApp desde el que escribe.
 
   DISPARADORES DE INTENCIÓN CLARA (además de "quiero contratar"): una respuesta afirmativa
   que ELIGE un paquete tras haber ofrecido elegir cuenta como intención clara de contratar y
@@ -988,6 +1031,8 @@ ${HOW_WE_WORK_INFO.replace(/^/gm, "  ")}
   (Ojo: "un spot", "un video publicitario", "videos" SIN limitar la cantidad SÍ van al
   flujo normal de paquetes — no los trates como cantidad singular.)
 
+  Si el cliente prefiere escribir sus datos aquí en el chat, acéptalos: son los mismos que pide
+  la página.
 ${LEAD_INTAKE_FIELDS.replace(/^/gm, "  ")}
 
   - Marca service_intake_requested = true.
@@ -996,9 +1041,9 @@ ${LEAD_INTAKE_FIELDS.replace(/^/gm, "  ")}
   - Si el contexto indica que el formulario ya fue enviado, NO lo repitas (salvo que lo pida).
 
   CAMPOS OBLIGATORIOS vs OPCIONALES:
-  - Obligatorios para poder cerrar el intake (los 3): Nombre, Contacto (vale la confirmación de
-    que el WhatsApp actual es su contacto: "este número", "ese número", "el mismo") y Rubro/negocio
-    o qué quiere grabar.
+  - Obligatorios para poder cerrar el intake (los 2): Nombre y Rubro/negocio o qué quiere grabar.
+    El contacto es SIEMPRE el WhatsApp desde el que escribe: NUNCA pidas su número ni esperes a
+    que lo escriba.
   - El resto (cargo, Instagram, tipo de contenido detallado, referencia) son OPCIONALES: no se
     insiste por ellos y NUNCA bloquean ni retrasan el cierre del intake.
 
@@ -1008,7 +1053,7 @@ ${LEAD_INTAKE_FIELDS.replace(/^/gm, "  ")}
   Cada mensaje separado dispara una llamada a este sistema, pero eso NO significa que haya que
   contestar cada vez — cada respuesta enviada por WhatsApp tiene costo.
 
-  El disparador ES ÚNICO: ¿ya se reunieron los 3 campos obligatorios (Nombre + Contacto + Rubro),
+  El disparador ES ÚNICO: ¿ya se reunieron los 2 campos obligatorios (Nombre + Rubro),
   sumando TODOS los mensajes del cliente en la conversación? No importa cuánto tiempo pase entre
   mensajes; no hay límite de intentos ni de tiempo. El cliente tiene todo el tiempo que necesite.
 
@@ -1021,7 +1066,7 @@ ${LEAD_INTAKE_FIELDS.replace(/^/gm, "  ")}
   registrado", etc.): está prohibido, genera ruido y gasto innecesario.
 
   Usa should_reply=true (sí responder) cuando ocurra CUALQUIERA de estas condiciones:
-  1. Ya se reunieron los 3 campos obligatorios (en uno o varios mensajes). Ese es el LEAD
+  1. Ya se reunieron los 2 campos obligatorios (en uno o varios mensajes). Ese es el LEAD
      CERRADO: cierra con este mensaje (o uno equivalente, pero SIEMPRE confirmando que un asesor
      ya tiene los datos):
 
@@ -1036,12 +1081,12 @@ ${LEAD_INTAKE_FIELDS.replace(/^/gm, "  ")}
      ayudarlo con naturalidad, pero NO marques lead_data_submitted ni cierres (el lead sigue
      incompleto y se vuelve a modo silencio en cuanto retome el envío de datos).
 
-  IMPORTANTE — señal de cierre SIN los 3 campos: si el cliente dice algo como "listo", "ya está",
-  "eso es todo" o "espero su asesor" pero todavía NO ha dado los 3 campos obligatorios, NO cierres
+  IMPORTANTE — señal de cierre SIN los 2 campos: si el cliente dice algo como "listo", "ya está",
+  "eso es todo" o "espero su asesor" pero todavía NO ha dado los 2 campos obligatorios, NO cierres
   el flujo: usa should_reply=false (silencio) y NO marques lead_data_submitted. El cliente podrá
   volver cuando quiera a completar los datos.
 
-  Al cerrar (should_reply=true por tener los 3 campos):
+  Al cerrar (should_reply=true por tener los 2 campos):
   - Considera TODOS los datos que el cliente fue dando en sus mensajes, no solo el último.
   - No repitas la lista del formulario ni confirmes lo recibido campo por campo: solo el mensaje
     breve de cortesía.
@@ -1056,10 +1101,11 @@ ${LEAD_INTAKE_FIELDS.replace(/^/gm, "  ")}
   "¿quién publica los videos?", "¿tienen un grupo de WhatsApp con el cliente?", "¿revisamos los
   videos antes de publicar?").
 
-  - Si todavía NO le enviaste el texto "¿Cómo trabajamos con nuestros clientes?" en esta
-    conversación, esta pregunta ES la consulta general del FLUJO B: responde con ese texto exacto
-    y marca intents.service_packages = true (el sistema manda antes las 2 imágenes).
-  - Si YA se lo enviaste, NO lo repitas entero: responde en 1 a 3 líneas la parte que preguntó,
+  - Si todavía NO le enviaste el botón de paquetes (ni el texto "¿Cómo trabajamos con nuestros
+    clientes?") en esta conversación, esta pregunta ES la consulta general del FLUJO B: responde
+    con el texto del botón de paquetes (la página explica cómo trabajamos) y marca
+    intents.service_packages = true.
+  - Si YA tiene el botón o ese texto, NO lo repitas: responde en 1 a 3 líneas la parte que preguntó,
     con los datos de "CÓMO TRABAJAMOS" de la LÍNEA B (ej. "¿cuántas veces graban?" → una vez por
     semana, mínimo 4 videos por sesión, de 2 a 3 horas). Ahí NO marques intents.service_packages.
   - Si el cliente responde con interés tras esta explicación, sigue el flujo normal de paquetes
@@ -1320,7 +1366,8 @@ ${EDITING_CLARIFY_REPLY.replace(/^/gm, "  ")}
 
   No sabemos si habrá alguien en la oficina para atenderlo, así que NUNCA lo invitas a venir ni
   anotas un día/hora. Antes de confirmar cualquier reunión en oficina, un asesor lo llama para
-  coordinarla y conocer su negocio. Responde EXACTAMENTE con este texto (incluye el formulario):
+  coordinarla y conocer su negocio. Responde EXACTAMENTE con este texto (el sistema adjunta el
+  botón "Agendar visita", que abre la página con el formulario; NO pegues campos 📌 en el chat):
 
 ${OFFICE_VISIT_INTAKE_REPLY.replace(/^/gm, "  ")}
 
@@ -1332,15 +1379,16 @@ ${OFFICE_VISIT_INTAKE_REPLY.replace(/^/gm, "  ")}
 
 ${OFFICE_VISIT_COURSE_REPLY.replace(/^/gm, "    ")}
 
-    Después responde sus dudas del curso con el FLUJO A (sin QR si el curso ya está en marcha).
+    Sus dudas del curso las escribe en la página; si igual las pregunta aquí, respóndelas con el
+    FLUJO A (sin QR si el curso ya está en marcha).
   - Si en ese mismo mensaje pidió la ubicación de la oficina, agrégala ARRIBA del texto, en su
     propia línea (${MAPS_OFICINA}).
-  - Si la conversación es del AGENTE DE IA (LÍNEA C), usa el mismo texto pero con los campos del
-    formulario de la LÍNEA C en vez de los de paquetes, y NO marques service_intake_requested.
+  - Si la conversación es del AGENTE DE IA (LÍNEA C), usa el mismo texto (la página le pide los
+    datos de la LÍNEA C) y NO marques service_intake_requested.
   - Si el formulario ya se envió antes en la conversación, NO lo repitas: recuérdale con amabilidad
-    que un asesor lo llamará para coordinar la reunión y guíalo a completar los datos que falten.
-  - Cuando mande sus datos, cierra como cualquier lead (lead_data_submitted = true o
-    ai_agent_lead_submitted = true según la línea).
+    que un asesor lo llamará para coordinar la reunión.
+  - Sus datos los deja en la página. Si igual los escribe aquí, cierra como cualquier lead
+    (lead_data_submitted = true o ai_agent_lead_submitted = true según la línea).
   - NUNCA digas "te esperamos", "nos vemos en la oficina", "tu cita está agendada" ni "puedes pasar
     cuando quieras": eso solo lo dice el asesor después de coordinar.
 
@@ -1438,24 +1486,16 @@ ${AI_AGENT_INTAKE_FIELDS.replace(/^/gm, "    ")}
   - NO menciones cursos ni paquetes de producción de video en este flujo.
 
 ▸ CLIENTE SOLO AGRADECE ("gracias", "aya gracias", "ok gracias", etc.) — MUY IMPORTANTE, AHORRO DE MENSAJES
-  Esta respuesta de cierre SOLO se envía cuando el ÚLTIMO mensaje del usuario es EXCLUSIVAMENTE un
-  agradecimiento o cierre de conversación (ej. "gracias", "ok gracias", "listo, gracias", "muchas
-  gracias") y no contiene ninguna otra pregunta, comentario, dato, ubicación o intención nueva:
+  Cuando el ÚLTIMO mensaje del usuario es EXCLUSIVAMENTE un agradecimiento o cierre de
+  conversación (ej. "gracias", "ok gracias", "listo, gracias", "muchas gracias") y no contiene
+  ninguna otra pregunta, comentario, dato, ubicación o intención nueva, NO respondas:
+  should_reply=false, "reply" vacío y todos los intents en false. Un "¡de nada!" es un mensaje
+  pagado que no hace falta.
 
-  "${THANKS_CLOSING_REPLY}"
-
-  REGLAS ESTRICTAS (evitar gasto innecesario de mensajes/tokens):
   - Si el mensaje del cliente, aunque incluya la palabra "gracias", TAMBIÉN trae una pregunta,
     ubicación, dato nuevo o cualquier otra intención (ej. "gracias, pero yo soy del trópico",
-    "gracias, ¿pueden venir hasta X?"), NO uses esta respuesta de cierre — responde directamente
-    a esa nueva intención con el flujo que corresponda (ubicación, paquetes, etc.).
-  - Si el historial reciente ya muestra que el asistente envió este mensaje de cierre y el cliente
-    responde con un mensaje NUEVO y distinto (aunque sea corto, ej. "puedes", "venir hasta tropico
-    aser grabaciones", "pero"), NUNCA repitas este mismo mensaje de cierre — responde a lo que el
-    cliente está diciendo ahora. Repetir este mensaje de cierre sin que el cliente vuelva a agradecer
-    explícitamente es un error grave.
-  - Usa este mensaje de cierre como máximo una vez por cada agradecimiento real y explícito del
-    cliente, nunca de forma automática o por defecto.
+    "gracias, ¿pueden venir hasta X?"), SÍ responde a esa nueva intención con el flujo que
+    corresponda (ubicación, paquetes, etc.).
 
 ▸ PREGUNTA POR TIKTOK O REDES SOCIALES
   - TikTok: da solo el nombre: @marketero7. NUNCA inventes una URL.
@@ -2620,13 +2660,11 @@ function isIntakeNudge(text: string): boolean {
 
 // Recordatorio conciso de los datos clave. Se envía como respuesta determinista a un
 // nudge cuando el formulario ya fue enviado, para no repetir el formulario completo.
-const INTAKE_REMINDER = `¡Genial! 🙌 Para avanzar solo necesito estos datos y un asesor te contacta enseguida:
+// Respuesta a quien ya dejó sus datos en la página y recibiría otra vez el formulario.
+const WEB_LEAD_ALREADY_RECEIVED_REPLY = `¡Ya tenemos tus datos! 🙌 Un asesor los tiene y te hablará pronto 😊`;
 
-📌 Nombre
-📌 Nombre de tu empresa o emprendimiento
-📌 Número de contacto
-📌 Rubro
-📌 ¿Qué tipo de contenido te interesa?`;
+// Va con el botón del formulario (ver lib/site-links.ts): los datos se llenan en la página.
+const INTAKE_REMINDER = `¡Genial! 🙌 Para avanzar solo falta que llenes tus datos dentro de este botón 👇 Un asesor te hablará pronto 😊`;
 
 // El lead llegó al asesor: avanza a advisor_notified. (Antes también cancelaba el
 // seguimiento automático, que se eliminó en septiembre de 2026: nunca llegó a enviar nada.)
@@ -3343,7 +3381,7 @@ async function getRecentConversationHistory(
     .filter((message) => message.content.trim().length > 0)
     // Excluir marcadores internos ([MEDIA_SENT...], [LOCATION_...]) para no
     // ensuciar el contexto del LLM; el estado de "ya enviado" lo resuelve el dedup.
-    .filter((message) => !/^\[(MEDIA_SENT|LOCATION_|PAYMENT_ALERT_PENDING)/.test(message.content.trim()));
+    .filter((message) => !/^\[(MEDIA_SENT|LOCATION_|PAYMENT_ALERT_PENDING|LINK_SENT|SITE_VISIT)/.test(message.content.trim()));
 }
 
 async function getNewestInboundMessage(
@@ -4171,7 +4209,7 @@ function replyContainsIntakeForm(reply: string): boolean {
   const normalized = normalizeForMatch(reply);
   return (
     normalized.includes("NOMBRE DE TU EMPRESA") &&
-    normalized.includes("NUMERO DE CONTACTO")
+    normalized.includes("RUBRO O SECTOR")
   );
 }
 
@@ -4201,6 +4239,9 @@ function detectPackagesPresented(
       if (normalized.includes("MEDIA_SENT:SERVICE_PACKAGES")) return true;
       // El texto de "¿Cómo trabajamos...?" sale junto con los flyers de paquetes.
       if (normalized.includes(HOW_WE_WORK_MARKER)) return true;
+      // El mensaje con el botón a la página de paquetes (o a su formulario) también.
+      const buttonKind = detectButtonTextKind(message.content);
+      if (buttonKind === "packages" || buttonKind === "packages_form") return true;
 
       if (COURSE_KEYWORDS.test(normalized) && !/\bPAQUETES?\b/.test(normalized)) return false;
 
@@ -4258,7 +4299,12 @@ function classifyAssistantLine(content: string): "course" | "packages" | null {
 
   // "Si decides elegir un paquete, aquí estoy" no presenta nada: hace falta el formulario,
   // el texto de cómo trabajamos, o "paquete" junto a un nombre, un precio o "videos".
+  // El mensaje con el botón a una página también dice de qué línea se habla.
+  const buttonKind = detectButtonTextKind(content);
+  if (buttonKind === "courses") return "course";
+
   const presentsPackages =
+    buttonKind !== null ||
     normalized.includes(HOW_WE_WORK_MARKER) ||
     replyContainsIntakeForm(content) ||
     (/\bPAQUETES?\b/.test(normalized) &&
@@ -4780,6 +4826,57 @@ async function hasTelegramLeadBeenSent(conversationId?: string): Promise<boolean
   return (data ?? []).length > 0;
 }
 
+// Lo que el cliente hizo en las páginas, según las marcas que dejan /api/leads y
+// /api/site-visit en su conversación (ver lib/web-leads.ts):
+//   - leadAt / leadPage: envió un formulario (paquetes u oficina). El bot no le vuelve a
+//     pedir los datos ni le reenvía el botón del formulario.
+//   - lastVisitAt: la última vez que abrió una página desde el botón. Si dice "ya lo envié"
+//     y no hay lead, se sabe si al menos entró.
+type WebActivity = {
+  leadAt: Date | null;
+  leadPage: string | null;
+  lastVisitAt: Date | null;
+  lastVisitPage: string | null;
+};
+
+async function getWebActivity(conversationId?: string): Promise<WebActivity> {
+  const empty: WebActivity = { leadAt: null, leadPage: null, lastVisitAt: null, lastVisitPage: null };
+  if (!conversationId) return empty;
+
+  const supabase = getSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("content, created_at")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .or(`content.like."${WEB_LEAD_MARKER_PREFIX}%",content.like."${SITE_VISIT_MARKER_PREFIX}%"`)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error) {
+    console.error("supabase check web activity failed", error);
+    return empty;
+  }
+
+  const activity = { ...empty };
+
+  for (const row of data ?? []) {
+    const content = String(row.content ?? "");
+    const at = new Date(row.created_at);
+
+    if (!activity.leadAt && content.startsWith(WEB_LEAD_MARKER_PREFIX)) {
+      activity.leadAt = at;
+      activity.leadPage = content.slice(WEB_LEAD_MARKER_PREFIX.length).trim().replace(/^\//, "");
+    } else if (!activity.lastVisitAt && content.startsWith(SITE_VISIT_MARKER_PREFIX)) {
+      activity.lastVisitAt = at;
+      activity.lastVisitPage = /^\[SITE_VISIT:(\w+)\]/.exec(content)?.[1] ?? null;
+    }
+  }
+
+  return activity;
+}
+
 // Ventana de dedup: 6 h. Antes el marcador [TELEGRAM_PAYMENT_SENT] bloqueaba para
 // SIEMPRE cualquier pago posterior de la misma conversación (un cliente que pagara
 // un segundo curso meses después nunca habría alertado). Con la ventana, 3 fotos
@@ -5175,6 +5272,111 @@ async function sendKapsoVideo(params: {
     const body = await response.text();
     throw new Error(`Kapso video send failed ${response.status}: ${body}`);
   }
+}
+
+// Último envío de cada botón a las páginas (ver lib/site-links.ts) a este cliente, dentro de
+// la ventana en que no se repite. Ante un error de lectura el botón vuelve a salir: un botón
+// repetido molesta menos que un cliente sin el link.
+async function getLinkButtonsLastSentAt(
+  phone: string,
+): Promise<Partial<Record<LinkButtonKind, Date>>> {
+  if (!phone) return {};
+
+  const supabase = getSupabaseClient();
+  const since = new Date(Date.now() - LINK_BUTTON_RESEND_HOURS * 3_600_000).toISOString();
+
+  const { data, error } = await supabase
+    .from("kapso_messages")
+    .select("content, created_at")
+    .eq("contact_phone", phone)
+    .eq("direction", "outbound")
+    .like("content", `${LINK_SENT_MARKER_PREFIX}%`)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error) {
+    console.error("supabase read link buttons last sent failed", error);
+    return {};
+  }
+
+  const lastSent: Partial<Record<LinkButtonKind, Date>> = {};
+
+  for (const row of data ?? []) {
+    const kind = /^\[LINK_SENT:(\w+)\]/.exec(String(row.content ?? ""))?.[1] as
+      | LinkButtonKind
+      | undefined;
+    if (kind && !lastSent[kind]) lastSent[kind] = new Date(row.created_at);
+  }
+
+  return lastSent;
+}
+
+// Mensaje con un botón que abre /paquetes o /cursos. `bodyText` es la respuesta del bot
+// cuando el botón viaja pegado a ella, o el texto corto del botón cuando sale aparte.
+async function sendLinkButton(params: {
+  kapso: WhatsAppClient;
+  phoneNumberId: string;
+  to: string;
+  button: LinkButton;
+  bodyText: string;
+  footerText?: string;
+}) {
+  await params.kapso.messages.sendInteractiveCtaUrl({
+    phoneNumberId: params.phoneNumberId,
+    to: params.to,
+    bodyText: params.bodyText,
+    ...(params.footerText ? { footerText: params.footerText } : {}),
+    parameters: { displayText: params.button.displayText, url: params.button.url },
+  });
+}
+
+// Marcadores del botón enviado. [LINK_SENT:...] alimenta la ventana de no repetición de cada
+// botón; [MEDIA_SENT:<intent>] lo registra como el material de su línea, porque el botón
+// reemplazó a los flyers: así siguen funcionando la continuidad de línea, el "ya se le
+// envió" que ve el modelo y la ventana de un día. Ambos quedan fuera del historial del
+// modelo (ver getRecentConversationHistory).
+async function saveLinkButtonSent(params: {
+  conversationId?: string;
+  phone: string;
+  button: LinkButton;
+  attachedToReply: boolean;
+}) {
+  // La visita a la oficina no es material de ninguna línea.
+  const lineIntent: MediaIntent | null =
+    params.button.kind === "courses"
+      ? "course_flyer"
+      : params.button.kind === "office"
+        ? null
+        : "service_packages";
+
+  if (lineIntent) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: `[MEDIA_SENT:${lineIntent}] botón "${params.button.displayText}"`,
+      rawPayload: {
+        type: "link_button",
+        intent: lineIntent,
+        url: params.button.url,
+        source: "link_button",
+      },
+    });
+  }
+
+  await saveOutboundMessage({
+    conversationId: params.conversationId,
+    phone: params.phone,
+    content: `${linkSentMarker(params.button.kind)} ${params.button.url}`,
+    rawPayload: {
+      type: "link_button",
+      kind: params.button.kind,
+      url: params.button.url,
+      display_text: params.button.displayText,
+      attached_to_reply: params.attachedToReply,
+      forced: params.button.forced,
+    },
+  });
 }
 
 // Resultado discriminado: antes `sendMediaForIntent` devolvía `boolean`, indistinguible
@@ -5909,6 +6111,8 @@ async function processWebhookEvent(
     qrLastSentAt,
     howWeWorkSent,
     openPaymentAlert,
+    coursesButtonLastSentAt,
+    webActivity,
   ] = await Promise.all([
     getRecentConversationHistory(lastMessage.conversationId, 12),
     getMediaSentStatus(lastMessage.from),
@@ -5934,6 +6138,10 @@ async function processWebhookEvent(
     hasHowWeWorkBeenSent(lastMessage.conversationId),
     // Alerta 💰 esperando los datos del cliente (nombre, celular, motivo).
     getOpenPendingPaymentAlert(getSupabaseClient(), lastMessage.conversationId).catch(() => null),
+    // Último botón de cursos (deja el marcador [MEDIA_SENT:course_flyer], ver saveLinkButtonSent).
+    getMediaIntentLastSentAt(lastMessage.from, "course_flyer"),
+    // ¿Ya dejó sus datos en el formulario de /paquetes?
+    getWebActivity(lastMessage.conversationId),
   ]);
 
   // Promo del live (PROMO[monto]/PROMOCION[monto], con tolerancia a typos): primero
@@ -5949,6 +6157,13 @@ async function processWebhookEvent(
     lastSentAt: packagesLastSentAt,
     now: turnNow,
   });
+  // Botón de cursos: mismo criterio de un día que el de paquetes (ver MEDIA_RESEND_WINDOW_HOURS).
+  const coursesButtonRecent =
+    coursesButtonLastSentAt !== null &&
+    turnNow.getTime() - coursesButtonLastSentAt.getTime() < LINK_BUTTON_RESEND_HOURS * 3_600_000;
+  // Se le mandó el botón del formulario y los datos no llegaron (ni por la web ni por chat).
+  const formButtonPending =
+    flowState.flowStage === "intake_sent" && !flowState.advisorNotifiedAt && !webActivity.leadAt;
   const qrSentRecently = !shouldResendMedia({
     intent: "payment_qr",
     lastSentAt: qrLastSentAt,
@@ -6079,15 +6294,26 @@ async function processWebhookEvent(
           ? "- payment_qr: se le envió hace más de 1 hora. Si quiere pagar o reservar un curso a la venta, marca intents.payment_qr = true y el QR vuelve a salir."
           : "- payment_qr: NUNCA enviado.",
       "Confía en este estado (no en lo que infieras del historial de mensajes) para saber si algo ya se envió.",
-      ...(mediaStatus.course_flyer
-        ? ["Como course_flyer YA fue enviado: no anuncies los flyers de cursos como si fuera la primera vez. Asume que ya se compartieron, salvo que el usuario los pida explícitamente de nuevo."]
+      // course_flyer y service_packages ya no son imágenes: son el BOTÓN a la página de
+      // cada línea (ver lib/site-links.ts). Dentro del día no se repite.
+      ...(coursesButtonRecent
+        ? ["El botón de cursos YA se le envió hace menos de un día: NO repitas el texto del botón ni marques intents.course_flyer. Responde sus dudas del curso en TEXTO corto. Solo si pide el link o la página de nuevo, usa el texto del botón de cursos y marca intents.course_flyer = true."]
         : []),
       ...(mediaStatus.service_packages && !packagesResendDecision.send
-        ? ["El flyer de paquetes ya se le envió hace menos de un día: NO vuelve a salir en este turno. Responde sus dudas de servicios/paquetes/precios en TEXTO, sin anunciar el flyer, sin mencionar que se lo enviaste y sin ofrecer reenviarlo. Continúa la conversación desde donde quedó (por ejemplo, completar los datos que falten del formulario). Solo si el cliente pide explícitamente que se lo reenvíes, marca intents.service_packages = true."]
+        ? ["El botón de paquetes YA se le envió hace menos de un día: NO repitas el texto del botón de paquetes ni marques intents.service_packages por una consulta general. Responde sus dudas en TEXTO corto con los datos de la LÍNEA B. Si elige un paquete o quiere contratar, SÍ responde con el texto del botón del formulario (FLUJO B intención clara). Solo si pide el link o la página de nuevo, usa el texto del botón de paquetes y marca intents.service_packages = true."]
         : []),
-      ...(mediaStatus.service_packages && packagesResendDecision.send
-        ? ["Aunque service_packages YA se envió antes, pasó más de un día desde entonces: el flyer de paquetes vuelve a salir cuando el cliente pregunta por servicios/paquetes/precios, porque los precios pueden haber cambiado. Marca intents.service_packages = true igual que la primera vez."]
-        : []),
+      `TEXTO DEL BOTÓN DE CURSOS (cópialo tal cual cuando el FLUJO A lo pida): "${renderCoursesButtonText(turnNow)}"`,
+      // El hueco del formulario web: sin esto el bot le volvía a pedir los datos por chat.
+      ...(webActivity.leadAt
+        ? [`Este cliente YA DEJÓ SUS DATOS en el formulario de la página de ${webActivity.leadPage === "oficina" ? "visita a la oficina" : "paquetes"} (${formatNowInBolivia(webActivity.leadAt)}) y el asesor ya los tiene. NUNCA le pidas el formulario ni sus datos otra vez, y NO marques service_intake_requested, lead_data_submitted ni office_visit_requested. Si pregunta por su pedido, dile que un asesor ya tiene sus datos y le hablará pronto. Sus otras dudas respóndelas con normalidad.`]
+        : formButtonPending
+          ? [
+              // Lo que de verdad pasó en la página (marcas de /api/site-visit): no se adivina.
+              webActivity.lastVisitAt
+                ? `Se le envió el botón para que llene sus datos en la página. La ABRIÓ (${formatNowInBolivia(webActivity.lastVisitAt)}) pero sus datos TODAVÍA NO llegaron: no tocó "Enviar mis datos" o el envío falló. Si dice que ya los envió, dile con amabilidad que aún no nos llegaron y que vuelva a abrir el botón de arriba y toque 'Enviar mis datos' al final del formulario; si prefiere, puede escribirlos aquí. NO marques lead_data_submitted por ese mensaje.`
+                : "Se le envió el botón para que llene sus datos en la página, pero todavía NO la abrió y sus datos no llegaron. Si dice que ya los envió, dile con amabilidad que aún no nos llegaron y que toque el botón de arriba para llenarlos; si prefiere, puede escribirlos aquí. NO marques lead_data_submitted por ese mensaje.",
+            ]
+          : []),
       ...(mediaStatus.service_packages_promo
         ? ["Como service_packages_promo YA fue enviado: la imagen de la promo temporal ya la tiene. No la presentes como novedad ni repitas todo su detalle; continúa la conversación desde ahí, salvo que el usuario la pida explícitamente de nuevo."]
         : []),
@@ -6099,6 +6325,14 @@ async function processWebhookEvent(
         : []),
     ].join("\n"),
   ];
+
+  // Páginas /paquetes y /cursos: el link lo pone el sistema con un botón (ver
+  // lib/site-links.ts). Sin esta regla el modelo inventaba la URL o prometía "te paso el link".
+  if (getSiteBaseUrl()) {
+    contextParts.push(
+      "PÁGINAS WEB DE CONECTA PRO: hay una página de paquetes (con el detalle de cada uno y el formulario de datos) y una de cursos (temario, fecha y precio). El sistema decide cuándo adjuntar el botón que las abre, igual que con los flyers. NUNCA escribas una URL de esas páginas ni prometas \"te paso el link\". Si el cliente pide el link o la página de los paquetes o de los cursos, responde en UNA línea corta que abajo tiene el botón para abrirla 👇, sin repetir el catálogo.",
+    );
+  }
 
   // Promo del live: el cliente llega con la palabra clave y el monto anunciado en la
   // transmisión. Ese monto ES el precio que se le confirma (lo fija quien hace el live,
@@ -6387,7 +6621,7 @@ async function processWebhookEvent(
   if (!hasAssistantHistory && detectedIntent) {
     const intentDirective: Record<DetectedIntent, string> = {
       service_packages:
-        `El cliente YA expresó intención de paquetes de producción en su mensaje (menciona un precio del catálogo (${renderPackagePrices()}), una cantidad de paquete (${renderPackageSizes()}), o palabras como paquetes/grabación/videos/publicidad/marketing/manejo de redes). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (el texto de "¿Cómo trabajamos con nuestros clientes?"; las 2 imágenes de los paquetes las envía el sistema antes) y marca intents.service_packages=true.`,
+        `El cliente YA expresó intención de paquetes de producción en su mensaje (menciona un precio del catálogo (${renderPackagePrices()}), una cantidad de paquete (${renderPackageSizes()}), o palabras como paquetes/grabación/videos/publicidad/marketing/manejo de redes). NO es un saludo puro: marca is_greeting=false y responde con el FLUJO B consulta general (el texto fijo del botón de paquetes; el sistema adjunta el botón) y marca intents.service_packages=true.`,
       course:
         "El cliente YA preguntó por cursos en su mensaje. NO es un saludo puro: marca is_greeting=false, responde con el FLUJO A (cursos) y marca intents.course_flyer=true.",
       office:
@@ -6602,7 +6836,7 @@ async function processWebhookEvent(
           ...retry,
           off_topic: false,
           should_reply: true,
-          reply: fallbackToPackages ? HOW_WE_WORK_INFO : FALLBACK_ASSISTANT_TURN.reply,
+          reply: fallbackToPackages ? PACKAGES_BUTTON_TEXT : FALLBACK_ASSISTANT_TURN.reply,
           intents: {
             ...FALLBACK_ASSISTANT_TURN.intents,
             service_packages: fallbackToPackages,
@@ -7070,7 +7304,12 @@ async function processWebhookEvent(
     (officeVisitKind === "course" || (!officeVisitRequested && replyInvitesVisit && courseContext))
   ) {
     const replyExplainsCall = /\bUN\s+ASESOR\s+TE\s+LLAMARA\b/.test(normalizeForMatch(turn.reply));
-    const replaced = replyInvitesVisit || !replyExplainsCall || replyContainsIntakeForm(turn.reply);
+    // Sin el texto fijo no sale el botón "Agendar visita" (ver detectButtonTextKind).
+    const replaced =
+      replyInvitesVisit ||
+      !replyExplainsCall ||
+      replyContainsIntakeForm(turn.reply) ||
+      detectButtonTextKind(turn.reply) !== "office";
 
     if (replaced) turn.reply = OFFICE_VISIT_COURSE_REPLY;
     turn.service_intake_requested = false;
@@ -7078,7 +7317,9 @@ async function processWebhookEvent(
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;
     turn.intents.location_video = false;
-    courseOfficeVisitToNotify = officeVisitKind === "course";
+    // El asesor ya no se entera en este turno: el botón "Agendar visita" lleva a /oficina, y
+    // el aviso llega cuando el cliente envía su nombre y sus dudas (como en los demás casos).
+    courseOfficeVisitToNotify = false;
 
     await logSystemEvent({
       level: "info",
@@ -7256,20 +7497,21 @@ async function processWebhookEvent(
     }
   }
 
-  // Red de seguridad anti-saludo — CIERRE SECO. Un "ya, gracias" no es un primer
-  // contacto: el LLM lo leía como saludo sin intención concreta y devolvía la bienvenida
-  // entera a alguien que se estaba despidiendo (9 veces en 3 semanas, sep 2026). Va
-  // ANTES que las otras redes porque no depende de que haya o no historial: el caso real
-  // aparece tanto al cerrar una conversación como al reabrirla con un agradecimiento
-  // tardío. Responde el cierre que el prompt ya define para este caso.
-  if (turn.should_reply && turn.is_greeting && isClosingThanksOnly(unansweredClientText)) {
-    console.log("generic greeting suppressed by safety net (closing thanks)", {
+  // CIERRE SECO: un "ya, gracias" no se responde. Antes el LLM lo leía como saludo y
+  // devolvía la bienvenida entera a alguien que se estaba despidiendo (9 veces en 3 semanas,
+  // sep 2026), y después se le contestaba "¡De nada!": un mensaje pagado que no hacía falta.
+  // Ahora es silencio, sea cual sea lo que el modelo quiso responder.
+  if (turn.should_reply && isClosingThanksOnly(unansweredClientText)) {
+    console.log("closing thanks silenced", {
       conversationId: lastMessage.conversationId,
       messageId: lastMessage.messageId,
     });
 
     turn.is_greeting = false;
-    turn.reply = THANKS_CLOSING_REPLY;
+    turn.should_reply = false;
+    turn.reply = "";
+    turn.intents = { ...FALLBACK_ASSISTANT_TURN.intents };
+    turn.service_intake_requested = false;
 
     await logSystemEvent({
       level: "info",
@@ -7301,7 +7543,7 @@ async function processWebhookEvent(
     });
 
     turn.is_greeting = false;
-    turn.reply = HOW_WE_WORK_INFO;
+    turn.reply = PACKAGES_BUTTON_TEXT;
     turn.intents.service_packages = true;
 
     await logSystemEvent({
@@ -7830,8 +8072,26 @@ async function processWebhookEvent(
     return new Response("reply silenced, accumulating lead data", { status: 200 });
   }
 
-  // El texto de "¿Cómo trabajamos...?" sale siempre en su versión exacta.
-  const replyText = applyExactHowWeWorkText(turn.reply);
+  // La información general de paquetes ya no se escribe en el chat: va en la página, detrás
+  // del botón (ver lib/site-links.ts). Si el modelo (o una red de seguridad) igual escribe el
+  // texto largo de "¿Cómo trabajamos...?" o pega el formulario 📌, se cambia por el texto
+  // corto del botón. La visita a la oficina conserva su formulario: ahí el asesor llama.
+  let replyText = applyExactHowWeWorkText(turn.reply);
+
+  if (normalizeForMatch(replyText).includes(HOW_WE_WORK_MARKER)) {
+    replyText = PACKAGES_BUTTON_TEXT;
+    turn.intents.service_packages = true;
+  } else if (replyContainsIntakeForm(replyText) && !turn.office_visit_requested) {
+    replyText = PACKAGES_FORM_BUTTON_TEXT;
+    turn.service_intake_requested = true;
+    turn.intents.service_packages = true;
+  }
+
+  // Ya dejó sus datos en la página: nunca se le vuelve a pedir el formulario.
+  if (webActivity.leadAt && detectButtonTextKind(replyText) === "packages_form") {
+    replyText = WEB_LEAD_ALREADY_RECEIVED_REPLY;
+    turn.service_intake_requested = false;
+  }
 
   // Guardia anti-loop bot-contra-bot: si las últimas 3 respuestas ya enviadas en
   // esta conversación son idénticas a la que se está por enviar ahora, es señal
@@ -8054,6 +8314,83 @@ async function processWebhookEvent(
   // QR pedido con todas las letras: sale aunque lo haya recibido hace menos de 1 hora.
   if (forceQrResend && intentsToSend.has("payment_qr")) forcedIntents.add("payment_qr");
 
+  // --- Botón a la página de la línea (ver lib/site-links.ts) ---------------------------
+  // El botón ES el material de las líneas A y B: reemplaza a los flyers y al texto largo.
+  // Se decide DESPUÉS de todas las guardas de arriba: sigue al material que de verdad sale
+  // (cursos → /cursos, paquetes o formulario → /paquetes) y, sobre todo, al texto fijo de
+  // botón de la respuesta, que siempre lleva el suyo. Los turnos de pago, de derivación a un
+  // asesor o de cierre de lead no llevan botón: ahí el siguiente paso es otro (el QR, el
+  // asesor) y un link solo distrae.
+  const siteBaseUrl = getSiteBaseUrl();
+  let linkButton: LinkButton | null = null;
+
+  if (siteBaseUrl) {
+    const linkPackageName =
+      chosenPackage?.name ??
+      VIDEO_PACKAGES.find(
+        (pkg) =>
+          packageSlug(pkg.name) ===
+          (detectSelectedPackageName(lastMessage.text) ?? flowState.selectedPackage),
+      )?.name ??
+      null;
+
+    linkButton = decideLinkButton({
+      baseUrl: siteBaseUrl,
+      phone: lastMessage.from,
+      secret: getLeadLinkSecret(),
+      intents: intentsToSend,
+      // El recordatorio fijo del formulario también es el momento de ofrecer la página.
+      serviceIntakeRequested: turn.service_intake_requested || isDeterministicIntakeNudge,
+      packageName: linkPackageName,
+      mentionedCourseIds: detectMentionedCourses(batchText, COURSES).map((course) => course.id),
+      linkRequest: detectSiteLinkRequest(batchText),
+      replyMentionsButton: replyMentionsButton(replyText),
+      replyButtonKind: detectButtonTextKind(replyText),
+      // Qué formulario abre "Agendar visita": el del curso, el del agente de IA o el de negocio.
+      officeVisitType:
+        replyText === OFFICE_COURSE_BUTTON_TEXT
+          ? "curso"
+          : mediaStatus.ai_agent_flyer || turn.intents.ai_agent_flyer
+            ? "agente"
+            : "negocio",
+      blocked:
+        intentsToSend.has("payment_qr") ||
+        intentsToSend.has("ai_agent_flyer") ||
+        turn.advisor_handoff ||
+        turn.lead_data_submitted ||
+        turn.ai_agent_lead_submitted ||
+        callRequested ||
+        turn.office_visit_requested ||
+        // Viene de la página (mensaje prellenado): no se le devuelve el mismo link.
+        isSitePrefilledMessage(lastMessage.text),
+      lastSentAt: await getLinkButtonsLastSentAt(lastMessage.from),
+      now: turnNow,
+    });
+
+    // Con el lead ya en manos del asesor, el formulario de paquetes no tiene nada que hacer.
+    if (linkButton && linkButton.kind !== "courses" && telegramLeadSent && !linkButton.forced) {
+      linkButton = null;
+    }
+  }
+
+  // Ya no salen los flyers de cursos ni los de paquetes: la información está en la página.
+  // Tampoco el video de cómo llegar si la respuesta no da la ubicación con su link: antes salía
+  // con cada consulta de cursos, y ahora la ubicación va solo cuando la piden.
+  intentsToSend.delete("course_flyer");
+  intentsToSend.delete("service_packages");
+  if (intentsToSend.has("location_video") && !/https?:\/\//i.test(replyText)) {
+    intentsToSend.delete("location_video");
+  }
+
+  // El botón viaja pegado a la respuesta cuando cabe (no cuesta un mensaje aparte); si no,
+  // sale solo al final del turno, después de todo el material.
+  const mediaAfterReply = [...intentsToSend].some(
+    (intent) => !MEDIA_BEFORE_REPLY.includes(intent),
+  );
+  const attachLinkButton =
+    linkButton !== null && canAttachButtonToReply(replyText, mediaAfterReply);
+  let linkButtonAttached = false;
+
   const sentIntents: MediaIntent[] = [];
 
   const sendIntentMedia = async (intent: MediaIntent) => {
@@ -8110,13 +8447,46 @@ async function processWebhookEvent(
     });
   } else {
     try {
-      await kapso.messages.sendText({
-        phoneNumberId,
-        to: lastMessage.from,
-        body: replyText,
-      });
+      if (attachLinkButton && linkButton) {
+        try {
+          await sendLinkButton({
+            kapso,
+            phoneNumberId,
+            to: lastMessage.from,
+            button: linkButton,
+            bodyText: replyText,
+            // Si la respuesta ya habla del botón (los textos fijos), el pie lo repetiría.
+            footerText: replyMentionsButton(replyText) ? undefined : linkButton.footerText,
+          });
+          linkButtonAttached = true;
+        } catch (error) {
+          // Sin botón, pero con respuesta: el texto sale igual como siempre.
+          console.error("reply with link button failed, sending plain text", error);
 
-      console.log("Kapso SDK text sent successfully");
+          await logSystemEvent({
+            level: "warning",
+            eventType: "link_button_send_failed",
+            conversationId: lastMessage.conversationId,
+            messageId: lastMessage.messageId,
+            contactPhone: lastMessage.from,
+            errorMessage: getErrorMessage(error),
+            metadata: { kind: linkButton.kind, attached_to_reply: true },
+          });
+        }
+      }
+
+      if (!linkButtonAttached) {
+        await kapso.messages.sendText({
+          phoneNumberId,
+          to: lastMessage.from,
+          body: replyText,
+        });
+      }
+
+      console.log("Kapso SDK text sent successfully", {
+        link_button: linkButton?.kind ?? null,
+        attached: linkButtonAttached,
+      });
 
       await logSystemEvent({
         level: "info",
@@ -8218,6 +8588,46 @@ async function processWebhookEvent(
     for (const intent of MEDIA_SEND_ORDER) {
       if (!intentsToSend.has(intent) || MEDIA_BEFORE_REPLY.includes(intent)) continue;
       await sendIntentMedia(intent);
+    }
+
+    // Botón a la página: si no viajó pegado a la respuesta, sale ahora, último en el turno.
+    // Con la respuesta descartada por repetida tampoco sale: el cliente ya tiene todo arriba.
+    if (linkButton && !isDuplicateReply) {
+      let linkButtonSent = linkButtonAttached;
+
+      if (!linkButtonAttached) {
+        try {
+          await sendLinkButton({
+            kapso,
+            phoneNumberId,
+            to: lastMessage.from,
+            button: linkButton,
+            bodyText: linkButton.bodyText,
+          });
+          linkButtonSent = true;
+        } catch (error) {
+          console.error("link button send failed", linkButton.kind, error);
+
+          await logSystemEvent({
+            level: "warning",
+            eventType: "link_button_send_failed",
+            conversationId: lastMessage.conversationId,
+            messageId: lastMessage.messageId,
+            contactPhone: lastMessage.from,
+            errorMessage: getErrorMessage(error),
+            metadata: { kind: linkButton.kind, attached_to_reply: false },
+          });
+        }
+      }
+
+      if (linkButtonSent) {
+        await saveLinkButtonSent({
+          conversationId: mediaConversationId,
+          phone: lastMessage.from,
+          button: linkButton,
+          attachedToReply: linkButtonAttached,
+        });
+      }
     }
 
     // Lead: el cliente envió sus datos de contratación, o pidió que un asesor lo
@@ -8553,6 +8963,8 @@ async function processWebhookEvent(
       human_handoff_pause_reason: humanHandoffPauseReason,
       detected_intents: turn.intents,
       sent_intents: sentIntents,
+      link_button: linkButton?.kind ?? null,
+      link_button_attached: linkButtonAttached,
     },
   });
 

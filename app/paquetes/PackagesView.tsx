@@ -4,8 +4,11 @@
 // una, la hoja de detalle con el formulario de datos que llega a Telegram.
 
 import { useCallback, useEffect, useState } from "react";
+import { HOW_WE_WORK_GOAL, HOW_WE_WORK_STEPS } from "../../lib/how-we-work";
 import { CONTENT_TYPE_OPTIONS, LEAD_FIELDS, type LeadFieldKey } from "../../lib/lead-form";
 import { Hero } from "../components/Hero";
+import { SuccessCheck } from "../components/SuccessCheck";
+import { VisitBeacon } from "../components/VisitBeacon";
 
 type PackageCard = {
   name: string;
@@ -28,12 +31,17 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 function PackagesView({
   packages,
   originPhone,
+  originToken,
   initialSlug,
+  openForm,
   businessWhatsapp,
 }: {
   packages: PackageCard[];
   originPhone: string;
+  originToken: string;
   initialSlug: string | null;
+  // El bot mandó el link al pedirle los datos: la hoja abre directo en el formulario.
+  openForm: boolean;
   businessWhatsapp: string;
 }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
@@ -69,9 +77,12 @@ function PackagesView({
   useEffect(() => {
     if (initialSlug) {
       const index = packages.findIndex((pkg) => pkg.slug === initialSlug);
-      if (index >= 0) openPackage(index);
+      if (index >= 0) {
+        openPackage(index);
+        if (openForm) setStep("form");
+      }
     }
-  }, [initialSlug, packages, openPackage]);
+  }, [initialSlug, openForm, packages, openPackage]);
 
   useEffect(() => {
     document.body.style.overflow = selected ? "hidden" : "";
@@ -103,6 +114,7 @@ function PackagesView({
           contentType: contentTypes.join(", "),
           packageName: selected.name,
           originPhone,
+          originToken,
           website: honeypot,
         }),
       });
@@ -125,16 +137,14 @@ function PackagesView({
     }
   }
 
-  const whatsappBack =
-    businessWhatsapp && selected
-      ? `https://wa.me/${businessWhatsapp}?text=${encodeURIComponent(
-          `Hola, ya envié mis datos para el paquete ${selected.name} 🙌`,
-        )}`
-      : "";
+  // Vuelve al chat sin texto escrito: los datos ya llegaron al asesor, y un "ya envié mis
+  // datos" solo le llegaría al bot, que queda apagado para que lo atienda una persona.
+  const whatsappBack = businessWhatsapp && selected ? `https://wa.me/${businessWhatsapp}` : "";
 
 
   return (
     <main className="cp">
+      <VisitBeacon page="paquetes" />
       <Hero
         title="Marketing"
         copy="Estrategia, guiones, grabación y edición: creamos el contenido de tu negocio para que tú solo te ocupes de vender."
@@ -174,6 +184,39 @@ function PackagesView({
             </button>
           ))}
         </div>
+      </section>
+
+      {/* Lo que antes el bot mandaba como texto largo por WhatsApp. */}
+      <section className="cp-packages cp-how" id="como-trabajamos">
+        <header className="cp-packages-head">
+          <h2>
+            Cómo
+            <br />
+            Trabajamos
+          </h2>
+          <p>Una metodología organizada para que tengas contenido constante y profesional.</p>
+        </header>
+
+        <ol className="cp-how-steps">
+          {HOW_WE_WORK_STEPS.map((step, index) => (
+            <li key={step.title}>
+              <span className="cp-how-num">{pad(index)}</span>
+              <div>
+                <h3>{step.title}</h3>
+                <p>{step.text}</p>
+                {step.points && (
+                  <ul className="cp-includes">
+                    {step.points.map((point) => (
+                      <li key={point}>{point}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <p className="cp-how-goal">{HOW_WE_WORK_GOAL}</p>
       </section>
 
       <footer className="cp-footer">© {new Date().getFullYear()} Conecta Pro</footer>
@@ -282,9 +325,8 @@ function PackagesView({
                       />
                     ) : (
                       <input
-                        type={field.kind}
-                        inputMode={field.kind === "tel" ? "tel" : undefined}
-                        autoComplete={field.key === "name" ? "name" : field.key === "phone" ? "tel" : "off"}
+                        type="text"
+                        autoComplete={field.key === "name" ? "name" : "off"}
                         required={field.required}
                         maxLength={field.maxLength}
                         placeholder={field.placeholder}
@@ -315,16 +357,12 @@ function PackagesView({
 
             {step === "done" && (
               <div className="cp-done">
-                <span className="cp-done-icon" aria-hidden>
-                  ✓
-                </span>
-                <h3>
-                  ¡Listo, <em>{form.name.split(" ")[0] || "gracias"}</em>!
-                </h3>
-                <p className="cp-muted">
-                  Recibimos tus datos para el paquete {selected.name}. Un asesor te escribirá por
-                  WhatsApp muy pronto.
-                </p>
+                {/* El bot no manda nada por WhatsApp (ahorro de mensajes): este check es la
+                    confirmación que deja tranquilo al cliente. */}
+                <SuccessCheck
+                  title="Tus datos fueron enviados a un Asesor"
+                  message={`Paquete ${selected.name} · te hablará muy pronto por WhatsApp`}
+                />
                 {whatsappBack ? (
                   <a className="cp-btn cp-btn-wa cp-btn-block" href={whatsappBack}>
                     Volver a WhatsApp

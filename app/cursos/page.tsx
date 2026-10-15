@@ -20,7 +20,15 @@ export const metadata: Metadata = {
 // y no una sola vez al desplegar.
 export const dynamic = "force-dynamic";
 
-export default function CursosPage() {
+export default async function CursosPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  // /cursos?demo=pago muestra el pago dentro de la página con un QR de ejemplo (todavía no
+  // hay API del banco, ver CoursePayment.tsx).
+  const paymentDemo = params.demo === "pago";
   const now = new Date();
   const hasDate = (course: Course) => getCourseStatus(course, now) !== "finished";
 
@@ -53,5 +61,16 @@ export default function CursosPage() {
     };
   });
 
-  return <CoursesView courses={courses} />;
+  const demoCourse = ordered[0];
+
+  return (
+    <CoursesView
+      courses={courses}
+      paymentDemo={
+        paymentDemo && demoCourse
+          ? { courseName: demoCourse.name, price: demoCourse.pricePreventa }
+          : null
+      }
+    />
+  );
 }

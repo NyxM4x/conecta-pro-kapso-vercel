@@ -3,6 +3,9 @@
 // (LEAD_INTAKE_FIELDS en app/api/webhooks/kapso/route.ts). Si cambian esas preguntas,
 // cambiarlas también acá.
 //
+// No se pide el número: el contacto es el WhatsApp de quien tocó el botón del bot, que
+// Kapso ya conoce y viaja en el link (?wa=, ver lib/site-links.ts).
+//
 // Sin dependencias de Next ni de zod para que lo puedan usar la página (cliente), la ruta
 // /api/leads (servidor) y las pruebas con Node a secas.
 
@@ -12,7 +15,6 @@ type LeadFieldKey =
   | "name"
   | "company"
   | "role"
-  | "phone"
   | "sector"
   | "social"
   | "contentType"
@@ -23,7 +25,7 @@ type LeadField = {
   label: string;
   placeholder: string;
   required: boolean;
-  kind: "text" | "tel" | "textarea" | "chips";
+  kind: "text" | "textarea" | "chips";
   maxLength: number;
 };
 
@@ -31,7 +33,6 @@ const LEAD_FIELDS: LeadField[] = [
   { key: "name", label: "Nombre", placeholder: "Tu nombre", required: true, kind: "text", maxLength: 80 },
   { key: "company", label: "Nombre de tu empresa o emprendimiento", placeholder: "Ej. Café Aroma", required: true, kind: "text", maxLength: 100 },
   { key: "role", label: "Cargo dentro de la empresa", placeholder: "Ej. Dueño, gerente, marketing", required: true, kind: "text", maxLength: 80 },
-  { key: "phone", label: "Número de contacto personal", placeholder: "Ej. 71234567", required: true, kind: "tel", maxLength: 20 },
   { key: "sector", label: "Rubro o sector", placeholder: "Gastronomía, belleza, moda, salud…", required: true, kind: "text", maxLength: 80 },
   { key: "social", label: "Instagram o redes sociales", placeholder: "@tunegocio", required: true, kind: "text", maxLength: 150 },
   { key: "contentType", label: "¿Qué tipo de contenido te interesa?", placeholder: "", required: true, kind: "chips", maxLength: 150 },
@@ -51,7 +52,8 @@ const CONTENT_TYPE_OPTIONS = [
 type LeadInput = Record<LeadFieldKey, string> & {
   // Nombre del paquete elegido, tal cual está en VIDEO_PACKAGES.
   packageName: string;
-  // Número de WhatsApp con el que el bot mandó el link (?wa=), si vino.
+  // WhatsApp de quien tocó el botón del bot (?wa=). Es el contacto del lead; falta solo si
+  // alguien abrió la página sin pasar por el bot.
   originPhone?: string;
 };
 
@@ -69,10 +71,6 @@ function validateLead(
     lead[field.key] = value.slice(0, field.maxLength);
   }
 
-  if (lead.phone && lead.phone.replace(/\D/g, "").length < 7) {
-    errors.push("Número de contacto personal");
-  }
-
   lead.packageName = typeof raw.packageName === "string" ? raw.packageName.trim().slice(0, 40) : "";
   if (!lead.packageName) errors.push("Paquete");
 
@@ -82,18 +80,27 @@ function validateLead(
   return errors.length > 0 ? { ok: false, errors: [...new Set(errors)] } : { ok: true, lead };
 }
 
-// Celular para wa.me: los clientes lo escriben con espacios, guiones o sin el 591. Un
-// número boliviano de 8 dígitos se completa con el código de país.
-function toWhatsappDigits(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
-  if (digits.length === 8 && /^[67]/.test(digits)) return `591${digits}`;
-  return digits;
-}
+type LeadMessageOptions = {
+  // La firma del link coincide: el número es de verdad el del chat que recibió el botón.
+  verified?: boolean;
+  // Ya había dejado sus datos por el chat: el asesor no debe tratarlo como un lead nuevo.
+  alreadyLeadInChat?: boolean;
+};
 
 // Mensaje del lead para el grupo de asesores (parse_mode HTML).
-function buildLeadTelegramMessage(lead: LeadInput, packageLabel: string): string {
+function buildLeadTelegramMessage(
+  lead: LeadInput,
+  packageLabel: string,
+  options: LeadMessageOptions = {},
+): string {
   const e = (text: string) => escapeTelegramHtml(text);
-  const contact = toWhatsappDigits(lead.phone);
+
+  const contactLines = lead.originPhone
+    ? [
+        `📞 WhatsApp: +${lead.originPhone}${options.verified ? "" : " (sin verificar)"}`,
+        `👉 Abrir chat: https://wa.me/${lead.originPhone}`,
+      ]
+    : ["⚠️ Sin número: abrió la página sin pasar por el botón del bot"];
 
   const lines = [
     "🌐 <b>Nuevo lead desde la web — Conecta Pro</b>",
@@ -102,18 +109,15 @@ function buildLeadTelegramMessage(lead: LeadInput, packageLabel: string): string
     `👤 Nombre: ${e(lead.name)}`,
     `🏢 Empresa: ${e(lead.company)}`,
     `💼 Cargo: ${e(lead.role)}`,
-    `📞 Contacto: ${e(lead.phone)}`,
-    `👉 Abrir chat: https://wa.me/${contact}`,
+    ...contactLines,
     `🏷️ Rubro: ${e(lead.sector)}`,
     `📲 Redes: ${e(lead.social)}`,
     `🎬 Contenido: ${e(lead.contentType)}`,
   ];
 
   if (lead.reference) lines.push(`✨ Referencia: ${e(lead.reference)}`);
-
-  // El número desde el que abrió el link puede no ser el que dejó como contacto.
-  if (lead.originPhone && lead.originPhone !== contact) {
-    lines.push("", `💬 Abrió el link desde el WhatsApp: https://wa.me/${lead.originPhone}`);
+  if (options.alreadyLeadInChat) {
+    lines.push("", "ℹ️ Ya había dejado sus datos por el chat: es el mismo cliente, no un lead nuevo");
   }
 
   return lines.join("\n");
@@ -123,7 +127,6 @@ export {
   LEAD_FIELDS,
   CONTENT_TYPE_OPTIONS,
   validateLead,
-  toWhatsappDigits,
   buildLeadTelegramMessage,
 };
-export type { LeadField, LeadFieldKey, LeadInput };
+export type { LeadField, LeadFieldKey, LeadInput, LeadMessageOptions };

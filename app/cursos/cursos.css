@@ -187,3 +187,9 @@
   line-height: 1.5;
   text-align: center;
 }
+
+/* Demostración del pago dentro de la página (/cursos?demo=pago). */
+.cp-pay-demo {
+  max-width: 520px;
+  margin: 0 auto 28px;
+}

@@ -5,6 +5,8 @@
 import { PRESALE_CLOSES_MINUTES_BEFORE_START } from "../../lib/courses";
 import type { CourseDetails, CourseSchedule } from "../../lib/course-details";
 import { Hero } from "../components/Hero";
+import { VisitBeacon } from "../components/VisitBeacon";
+import { CoursePayment } from "./CoursePayment";
 
 type CourseCard = {
   slug: string;
@@ -78,9 +80,17 @@ function CourseDate({ schedule }: { schedule: CourseSchedule }) {
   );
 }
 
-function CoursesView({ courses }: { courses: CourseCard[] }) {
+function CoursesView({
+  courses,
+  paymentDemo,
+}: {
+  courses: CourseCard[];
+  // Demostración del pago dentro de la página (/cursos?demo=pago).
+  paymentDemo: { courseName: string; price: number } | null;
+}) {
   return (
     <main className="cp cp-cursos">
+      <VisitBeacon page="cursos" />
       <Hero
         title="Cursos"
         copy="Cursos presenciales en Santa Cruz de la Sierra para que aprendas a crear y editar contenido que venda en redes."
@@ -97,6 +107,12 @@ function CoursesView({ courses }: { courses: CourseCard[] }) {
           </h2>
           <p>Presenciales, en Santa Cruz de la Sierra. Mira qué se aprende en cada uno.</p>
         </header>
+
+        {paymentDemo && (
+          <div className="cp-pay-demo">
+            <CoursePayment courseName={paymentDemo.courseName} price={paymentDemo.price} demo />
+          </div>
+        )}
 
         <div className="cp-courses">
           {courses.map(({ slug, name, details, schedule, whatsappUrl }, index) => (
