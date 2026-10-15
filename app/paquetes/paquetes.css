@@ -847,3 +847,136 @@ body {
 @media (min-width: 560px) {
   .cp-photo-has-video { min-height: 460px; }
 }
+
+/* ── Tarjetas: video de fondo y botón que se note ───────────────────── */
+
+/* El video del paquete corre en la tarjeta desde antes de tocarla. Va detrás de todo; el
+   degradado de abajo oscurece la parte del texto para que se lea. */
+.cp-card-video {
+  position: absolute;
+  inset: 0;
+  z-index: -3;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cp-card-has-video::before { display: none; }
+.cp-card-has-video::after {
+  background: linear-gradient(180deg, rgba(10, 4, 20, 0.2) 0%, transparent 28%, rgba(10, 4, 20, 0.88) 100%);
+}
+
+/* "Ver detalle" con el mismo estilo del botón "Ver paquetes" de la portada: el anterior,
+   chiquito y oscuro, pasaba desapercibido y no se entendía que la tarjeta se abría. */
+.cp-card-cta {
+  display: inline-flex;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 50px;
+  margin-top: 12px;
+  padding: 0 18px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background:
+    linear-gradient(#fff, #fff) padding-box,
+    conic-gradient(from var(--cp-angle), var(--cp-purple), var(--cp-pink), var(--cp-blue), var(--cp-purple)) border-box;
+  color: var(--cp-purple-deep);
+  font-family: var(--font-heading), var(--font-body), sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  animation: cp-spin 3s linear infinite;
+}
+
+.cp-btn-arrow-side {
+  width: 26px;
+  height: 26px;
+  animation: cp-nudge 1.4s ease-in-out infinite;
+}
+
+@keyframes cp-nudge {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(4px); }
+}
+
+/* Aviso de que las tarjetas se deslizan (solo en el celular, donde son un carrusel). */
+.cp-swipe-hint {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 14px 0 0;
+  color: var(--cp-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.cp-swipe-hint span { display: inline-block; animation: cp-nudge 1.4s ease-in-out infinite; }
+
+@media (min-width: 760px) {
+  .cp-swipe-hint { display: none; }
+}
+
+/* "¿Cómo trabajamos?" debajo de las tarjetas, igual que "Ver paquetes" en la portada. */
+.cp-next {
+  max-width: 520px;
+  margin: 24px auto 0;
+}
+
+/* ── Ficha de un paquete con video ──────────────────────────────────── */
+
+/* El número arriba; el nombre y el botón abajo. */
+.cp-photo-has-video { justify-content: flex-start; }
+.cp-photo-has-video .cp-photo-foot { margin-top: auto; }
+.cp-photo-cta {
+  margin-top: 16px;
+  padding: 0 14px;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+/* En el celular lo primero es el video a pantalla completa, con el botón que baja a la
+   información. En pantallas anchas el video va al lado de la información y el botón sobra. */
+@media (max-width: 559px) {
+  .cp-sheet-video {
+    height: 100dvh;
+    max-height: 100dvh;
+    padding-top: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .cp-sheet-video .cp-photo-has-video {
+    min-height: 100dvh;
+    margin: 0 -16px;
+    padding: 64px 18px calc(24px + env(safe-area-inset-bottom));
+    border: 0;
+    border-radius: 0;
+  }
+  .cp-sheet-video .cp-photo-foot span:first-child { font-size: 24px; }
+  .cp-sheet-video .cp-photo-foot span:last-child { font-size: 15px; }
+  /* La X queda siempre a mano, también después de bajar a la información. */
+  .cp-sheet-video .cp-close {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 5;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .cp-sheet-video .cp-detail-info { scroll-margin-top: 12px; padding-top: 12px; }
+
+  /* Información más grande para leerla cómoda en el celular. */
+  .cp-sheet .cp-muted { font-size: 17px; }
+  .cp-sheet h4 { font-size: 21px; }
+  .cp-sheet .cp-includes { gap: 12px; }
+  .cp-sheet .cp-includes li { font-size: 17px; }
+  .cp-sheet .cp-stats span { font-size: 14px; }
+  .cp-sheet .cp-detail-info .cp-btn { min-height: 52px; font-size: 17px; }
+}
+
+@media (min-width: 560px) {
+  .cp-photo-cta { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-card-cta,
+  .cp-btn-arrow-side,
+  .cp-swipe-hint span { animation: none; }
+}

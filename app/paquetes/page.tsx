@@ -48,6 +48,7 @@ export default async function PaquetesPage({
     includes: pkg.includes,
     tagline: TAGLINES[pkg.name] ?? "",
     video: PACKAGE_VIDEOS[packageSlug(pkg.name)] ?? null,
+    period: pkg.period,
   }));
 
   const preselected = first(params.p).toLowerCase();

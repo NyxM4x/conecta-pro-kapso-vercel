@@ -3,7 +3,7 @@
 // Vista de /paquetes: portada, tarjetas de paquetes (estilo "Our Process") y, al tocar
 // una, la hoja de detalle con el formulario de datos que llega a Telegram.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HOW_WE_WORK_GOAL, HOW_WE_WORK_STEPS } from "../../lib/how-we-work";
 import { CONTENT_TYPE_OPTIONS, LEAD_FIELDS, type LeadFieldKey } from "../../lib/lead-form";
 import { Hero } from "../components/Hero";
@@ -20,6 +20,8 @@ type PackageCard = {
   tagline: string;
   // Video de la portada de su ficha, sin extensión (".mp4" y ".jpg"). Sin video, el degradado.
   video: string | null;
+  // Cuánto dura: "mes" o, en el Básico, "14 días" (lib/packages.ts).
+  period: "mes" | "14 días";
 };
 
 type Step = "detail" | "form" | "done";
@@ -29,6 +31,9 @@ const EMPTY_FORM = Object.fromEntries(LEAD_FIELDS.map((field) => [field.key, ""]
 const formatPrice = (price: number) => price.toLocaleString("es-BO");
 const pad = (index: number) => String(index + 1).padStart(2, "0");
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+// "Bs/mes" o "Bs por 14 días": el Básico no es mensual.
+const pricePeriod = (period: PackageCard["period"]) => (period === "mes" ? "Bs/mes" : `Bs por ${period}`);
+const periodPhrase = (period: PackageCard["period"]) => (period === "mes" ? "al mes" : `en ${period}`);
 
 function PackagesView({
   packages,
@@ -55,6 +60,14 @@ function PackagesView({
   const [error, setError] = useState("");
 
   const selected = openIndex === null ? null : packages[openIndex];
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const infoRef = useRef<HTMLDivElement>(null);
+
+  // Cada paquete y cada paso arrancan arriba: con el video a pantalla completa, abrir el
+  // siguiente paquete a mitad de la hoja dejaría al cliente sin ver el video.
+  useEffect(() => {
+    sheetRef.current?.scrollTo({ top: 0 });
+  }, [openIndex, step]);
 
   // La hoja abierta ocupa una entrada del historial: así el botón "atrás" del teléfono la
   // cierra en vez de sacar al cliente del navegador de WhatsApp.
@@ -169,22 +182,49 @@ function PackagesView({
             <button
               key={pkg.slug}
               type="button"
-              className={`cp-card cp-card-${(index % 4) + 1}`}
+              className={`cp-card cp-card-${(index % 4) + 1}${pkg.video ? " cp-card-has-video" : ""}`}
               onClick={() => openPackage(index)}
             >
+              {/* El video del paquete corre desde antes de tocarlo, de fondo y sin audio. */}
+              {pkg.video && (
+                <video
+                  className="cp-card-video"
+                  src={`${pkg.video}.mp4`}
+                  poster={`${pkg.video}.jpg`}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  preload="auto"
+                  aria-hidden
+                />
+              )}
               <span className="cp-card-num">{pad(index)}</span>
               <span className="cp-card-body">
                 <span className="cp-card-name">{pkg.name}</span>
                 <span className="cp-card-meta">
-                  {pkg.videos} videos · {formatPrice(pkg.price)} Bs/mes
+                  {pkg.videos} videos · {formatPrice(pkg.price)} {pricePeriod(pkg.period)}
                 </span>
                 {pkg.tagline && <span className="cp-card-text">{pkg.tagline}</span>}
+                {/* Mismo estilo que "Ver paquetes": el de antes pasaba desapercibido. */}
                 <span className="cp-card-cta">
-                  Ver detalle <span aria-hidden>→</span>
+                  Ver detalle <span className="cp-btn-arrow cp-btn-arrow-side" aria-hidden>→</span>
                 </span>
               </span>
             </button>
           ))}
+        </div>
+
+        {/* En el celular las tarjetas se deslizan de lado: sin aviso, el tercer paquete no se ve. */}
+        <p className="cp-swipe-hint" aria-hidden>
+          Desliza para ver los {packages.length} paquetes <span>→</span>
+        </p>
+
+        {/* Lleva a "Cómo trabajamos", que sin este botón casi nadie bajaba a leer. */}
+        <div className="cp-next">
+          <a className="cp-btn cp-btn-hero" href="#como-trabajamos">
+            ¿Cómo trabajamos? <span className="cp-btn-arrow" aria-hidden>↓</span>
+          </a>
         </div>
       </section>
 
@@ -226,7 +266,8 @@ function PackagesView({
       {selected && openIndex !== null && (
         <div className="cp-sheet-backdrop" onClick={closeSheet}>
           <div
-            className="cp-sheet"
+            ref={sheetRef}
+            className={`cp-sheet${selected.video && step === "detail" ? " cp-sheet-video" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={`Paquete ${selected.name}`}
@@ -262,9 +303,20 @@ function PackagesView({
                       <span>{selected.name}</span>
                       <span>{selected.videos} videos</span>
                     </div>
+                    {/* En el celular el video ocupa toda la pantalla: este botón avisa que
+                        abajo está la información y baja hasta ella. */}
+                    {selected.video && (
+                      <button
+                        type="button"
+                        className="cp-btn cp-btn-hero cp-photo-cta"
+                        onClick={() => infoRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                      >
+                        Ver Información Del Paquete <span className="cp-btn-arrow" aria-hidden>↓</span>
+                      </button>
+                    )}
                   </div>
 
-                  <div className="cp-detail-info">
+                  <div className="cp-detail-info" ref={infoRef}>
                     <span className="cp-tag">Paquete</span>
                     <h3>
                       Paquete <em>{selected.name}</em>
@@ -283,15 +335,17 @@ function PackagesView({
                   </div>
                 </div>
 
-                <h4 className="cp-stats-title">Tu plan mensual</h4>
+                <h4 className="cp-stats-title">
+                  {selected.period === "mes" ? "Tu plan mensual" : `Tu plan de ${selected.period}`}
+                </h4>
                 <div className="cp-stats">
                   <div>
                     <strong>{selected.videos}</strong>
-                    <span>Videos al mes</span>
+                    <span>Videos {periodPhrase(selected.period)}</span>
                   </div>
                   <div>
                     <strong>{formatPrice(selected.price)}</strong>
-                    <span>Bs al mes</span>
+                    <span>{selected.period === "mes" ? "Bs al mes" : `Bs por ${selected.period}`}</span>
                   </div>
                   <div>
                     <strong>{selected.drone ? "Sí" : "Extra"}</strong>

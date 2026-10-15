@@ -560,7 +560,9 @@ ${renderPackageIncludes("  ")}
   ellos, los pide en letras o no le quedó claro tras ver los flyers. Por defecto NO los repites al
   presentar los paquetes: ya van en las imágenes. Cualquier duda que no esté en esta sección
   (plazos de entrega, fechas de inicio) la confirma el asesor.
-- DISPARADORES POR PRECIO: los montos ${renderPackagePrices()} (Bs, al mes) son los precios
+- PERÍODO DE CADA PAQUETE: ${renderPackageCatalog()}. Ojo: NO todos son mensuales; di el
+  período de cada uno tal cual (nunca digas que el ${VIDEO_PACKAGES[0].name} es "al mes" si no lo es).
+- DISPARADORES POR PRECIO: los montos ${renderPackagePrices()} (Bs) son los precios
   conocidos de los paquetes (${renderPackagePriceMap()}). Si el cliente menciona uno de esos
   montos (ej. "vengo del anuncio de los ${PACKAGE_PRICES[0]}"), viene interesado en paquetes →
   activa este flujo. NO trates estos montos como una cantidad de videos fuera del catálogo (son

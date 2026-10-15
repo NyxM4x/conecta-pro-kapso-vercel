@@ -16,8 +16,11 @@ type VideoPackage = {
   // Nombre tal como aparece en el flyer.
   name: string;
   videos: number;
-  // Precio mensual en Bs.
+  // Precio en Bs por todo el período (ver period).
   price: number;
+  // Cuánto dura el paquete: "mes" (mensual) o, para el Básico, "14 días". El precio cubre
+  // ese período. Antes la página decía "Bs/mes" para todos y el Básico no es mensual.
+  period: "mes" | "14 días";
   // ¿Este paquete incluye grabación con dron? Hoy solo el más grande. Antes esto no
   // estaba escrito en ningún lado y el prompt decía "según el paquete que elijas" sin
   // decir cuál: el modelo llenaba el hueco solo y llegó a prometerle a un cliente que el
@@ -40,6 +43,7 @@ const VIDEO_PACKAGES: VideoPackage[] = [
     name: "Básico",
     videos: 6,
     price: 2500,
+    period: "14 días",
     drone: false,
     includes: [...BASE_INCLUDES, "manejo de la cuenta de TikTok"],
   },
@@ -47,6 +51,7 @@ const VIDEO_PACKAGES: VideoPackage[] = [
     name: "Normal",
     videos: 12,
     price: 3500,
+    period: "mes",
     drone: false,
     includes: [...BASE_INCLUDES, "manejo de la cuenta de TikTok"],
   },
@@ -54,6 +59,7 @@ const VIDEO_PACKAGES: VideoPackage[] = [
     name: "Pro",
     videos: 18,
     price: 5500,
+    period: "mes",
     drone: true,
     includes: [
       "estrategia de contenido",
@@ -93,6 +99,11 @@ function joinList(items: string[], conjunction: "o" | "y"): string {
 }
 
 // "6, 12 o 18"
+// "al mes" / "por 14 días": cómo se dice el período de un paquete junto a su precio.
+function renderPackagePeriod(pkg: Pick<VideoPackage, "period">): string {
+  return pkg.period === "mes" ? "al mes" : `por ${pkg.period}`;
+}
+
 function renderPackageSizes(): string {
   return joinList(PACKAGE_SIZES.map(String), "o");
 }
@@ -130,7 +141,7 @@ function renderPackageNamesList(): string {
 // "Básico = 6 videos (2500 Bs); Normal = 12 videos (3500 Bs); Pro = 18 videos (5500 Bs)"
 function renderPackageCatalog(): string {
   return VIDEO_PACKAGES.map(
-    (pkg) => `${pkg.name} = ${pkg.videos} videos (${pkg.price} Bs)`,
+    (pkg) => `${pkg.name} = ${pkg.videos} videos (${pkg.price} Bs ${renderPackagePeriod(pkg)})`,
   ).join("; ");
 }
 
@@ -167,7 +178,7 @@ function renderSocialNetworksRule(): string {
 
 function renderPackageIncludes(indent = ""): string {
   return VIDEO_PACKAGES.map(
-    (pkg) => `${indent}• ${pkg.name} (${pkg.videos} videos, ${pkg.price} Bs): ${pkg.includes.join(", ")}.`,
+    (pkg) => `${indent}• ${pkg.name} (${pkg.videos} videos, ${pkg.price} Bs ${renderPackagePeriod(pkg)}): ${pkg.includes.join(", ")}.`,
   ).join("\n");
 }
 
@@ -393,6 +404,7 @@ export {
   mentionsCatalogPackage,
   findPackageByName,
   renderPackageSizes,
+  renderPackagePeriod,
   renderPackagePrices,
   renderPackageFlyerLines,
   renderPackageNameExamples,
