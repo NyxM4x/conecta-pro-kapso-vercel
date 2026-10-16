@@ -7,7 +7,12 @@
 
 import assert from "node:assert/strict";
 import { renderPackageSizes } from "./packages.ts";
+import { CTA_BODY_MAX_CHARS, PROMO_FORM_BUTTON_TEXT, canAttachButtonToReply } from "./site-links.ts";
 import {
+  PROMOS,
+  findActivePromo,
+  getActiveTextPromo,
+  isPromoClientText,
   getActivePromoAmounts,
   getActivePromos,
   getActiveReliefCampaigns,
@@ -250,6 +255,60 @@ test("el corte es el mismo en todos los formatos en que Supabase devuelve timest
 test("una fecha ilegible se ignora en vez de dejar al cliente sin material", () => {
   assert.equal(isMediaAssetInWindow({ expires_at: "no-es-una-fecha" }, AFTER), true);
   assert.equal(isMediaAssetInWindow({ starts_at: "" }, AFTER), true);
+});
+
+// --- Promo de 4 videos por 999 Bs (texto oficial, sin imagen) ----------------------
+
+const IN_999 = at("2026-10-20T12:00:00-04:00");
+const PROMO_999 = PROMOS.find((promo) => promo.id === "promo_4_videos_999_2026_10")!;
+
+test("la promo de 999 está vigente en su ventana y se responde con texto", () => {
+  assert.equal(isPromoIntentActive(PROMO, IN_999), true);
+  assert.equal(getActiveTextPromo(IN_999)?.id, PROMO_999.id);
+  assert.deepEqual(getActivePromoAmounts(IN_999), [999]);
+});
+
+test("antes y después de su ventana la promo de 999 no existe", () => {
+  assert.equal(getActiveTextPromo(at("2026-10-15T23:59:59-04:00")), null);
+  assert.equal(getActiveTextPromo(at(PROMO_999.endsAt)), null);
+  assert.equal(findActivePromo(PROMO_999.slug, at(PROMO_999.endsAt)), null);
+});
+
+test("la promo se encuentra por su slug (link del bot) y por su nombre corto (formulario)", () => {
+  assert.equal(findActivePromo("promo-4-videos", IN_999)?.id, PROMO_999.id);
+  assert.equal(findActivePromo("Promo 4 videos", IN_999)?.id, PROMO_999.id);
+  assert.equal(findActivePromo("Pro", IN_999), null);
+  assert.ok(PROMO_999.shortName.length <= 40);
+});
+
+test("el texto oficial trae el precio, los 4 videos y la presentadora", () => {
+  const text = PROMO_999.clientText ?? "";
+  assert.match(text, /4 VIDEOS PROFESIONALES POR SOLO 999 Bs/);
+  assert.match(text, /200 Bs adicionales/);
+  assert.match(text, /¿Te agendamos una fecha/);
+});
+
+test("el texto oficial y su botón caben en UN solo mensaje de WhatsApp", () => {
+  // Si el texto crece por encima del límite, el botón saldría en un mensaje aparte (cuesta
+  // un mensaje más): esta prueba avisa antes de que pase.
+  const text = PROMO_999.clientText ?? "";
+  assert.equal(canAttachButtonToReply(text, false), true);
+  assert.ok(text.length <= CTA_BODY_MAX_CHARS);
+});
+
+test("el texto oficial se reconoce en el historial; otros mensajes no", () => {
+  assert.equal(isPromoClientText(PROMO_999.clientText ?? ""), true);
+  assert.equal(isPromoClientText("¡Hola! Tenemos paquetes de 6, 12 y 18 videos"), false);
+  assert.equal(isPromoClientText(""), false);
+});
+
+test("el contexto de la promo de 999 explica el texto oficial y el botón al aceptar", () => {
+  const context = renderPromoContext(IN_999);
+  assert.match(context, /999 Bs/);
+  assert.match(context, /TEXTO OFICIAL/);
+  assert.ok(context.includes(PROMO_FORM_BUTTON_TEXT));
+  assert.match(context, /200 Bs adicionales \(en total 1199 Bs\)/);
+  assert.doesNotMatch(context, /1\.000 Bs/);
 });
 
 console.log(`TZ=${process.env.TZ ?? "(sistema)"} — ${passed} pruebas OK`);

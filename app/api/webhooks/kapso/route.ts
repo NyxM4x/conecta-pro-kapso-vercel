@@ -59,10 +59,12 @@ import {
   LINK_SENT_MARKER_PREFIX,
   PACKAGES_BUTTON_TEXT,
   PACKAGES_FORM_BUTTON_TEXT,
+  PROMO_FORM_BUTTON_TEXT,
   OFFICE_BUTTON_TEXT,
   OFFICE_COURSE_BUTTON_TEXT,
   SITE_VISIT_MARKER_PREFIX,
   WEB_LEAD_MARKER_PREFIX,
+  buildPromoFormButton,
   canAttachButtonToReply,
   decideLinkButton,
   detectButtonTextKind,
@@ -81,6 +83,8 @@ import { MAPS_OFICINA } from "../../../../lib/locations";
 import {
   getActivePromoAmounts,
   getActivePromoVideoCounts,
+  getActiveTextPromo,
+  isPromoClientText,
   renderPromoContext,
   renderReliefContext,
   mentionsReliefCampaign,
@@ -88,6 +92,7 @@ import {
 } from "../../../../lib/promos";
 import {
   MEDIA_RESEND_WINDOW_HOURS,
+  asksForActivePromo,
   resolvePromoIntents,
   shouldResendMedia,
 } from "../../../../lib/media-intents";
@@ -1585,10 +1590,11 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
 - intents.service_packages_promo: true SOLO si el contexto adicional lista una promoción como
   VIGENTE y el cliente la pide o pregunta por promociones, ofertas, descuentos o rebajas de la
   línea de video, o menciona los datos de esa promo (por ejemplo su cantidad de videos o su
-  precio promocional). El sistema envía entonces la imagen de la promo.
+  precio promocional). El sistema envía entonces el material de la promo: su imagen o, si el
+  contexto adicional dice que se responde con su TEXTO OFICIAL, ese texto en lugar de tu respuesta.
   Es material de la LÍNEA B (paquetes de producción), NO de cursos ni del agente de IA.
   FALSE siempre que el contexto adicional NO liste ninguna promo vigente — sin promo vigente no
-  hay imagen que enviar y no debes mencionar ninguna promoción.
+  hay material que enviar y no debes mencionar ninguna promoción.
   FALSE en el saludo inicial.
   FALSE cuando el cliente pregunta por los paquetes normales (${renderPackageSizes()} videos) sin nombrar promoción:
   ese caso sigue siendo intents.service_packages.
@@ -4266,6 +4272,8 @@ function detectPackagesPresented(
       // El mensaje con el botón a la página de paquetes (o a su formulario) también.
       const buttonKind = detectButtonTextKind(message.content);
       if (buttonKind === "packages" || buttonKind === "packages_form") return true;
+      // El texto oficial de una promo también es una oferta: su "sí" la acepta.
+      if (isPromoClientText(message.content)) return true;
 
       if (COURSE_KEYWORDS.test(normalized) && !/\bPAQUETES?\b/.test(normalized)) return false;
 
@@ -4277,6 +4285,23 @@ function detectPackagesPresented(
 
       return talksAboutPackages && showsTheOffer;
     });
+}
+
+// ¿La última oferta de la LÍNEA B que vio el cliente fue el texto de una promo? Entonces su
+// "sí" / "lo quiero" acepta la promo y el formulario que recibe es el de la promo. Si
+// después del texto le llegó el botón de paquetes (o su formulario), la oferta vigente en
+// la conversación vuelve a ser el catálogo.
+function promoIsLastOffer(history: HistoryMessage[]): boolean {
+  for (let index = history.length - 1; index >= 0; index--) {
+    const message = history[index];
+    if (message.role !== "assistant") continue;
+    if (isPromoClientText(message.content)) return true;
+    if (message.content.trim() === PROMO_FORM_BUTTON_TEXT) return true;
+
+    const buttonKind = detectButtonTextKind(message.content);
+    if (buttonKind === "packages" || buttonKind === "packages_form") return false;
+  }
+  return false;
 }
 
 // ¿La conversación está anclada en la línea de CURSOS? Red de seguridad determinista
@@ -6174,6 +6199,14 @@ async function processWebhookEvent(
   // anunciado en el live es el precio que se le confirma al cliente.
   const turnNow = new Date();
 
+  // Promo vigente que se responde con su TEXTO oficial en vez de una imagen (lib/promos.ts),
+  // y si ese texto ya está en el chat. Decide si el texto sale, si se repite y a qué
+  // formulario lleva el "sí" del cliente.
+  const textPromo = getActiveTextPromo(turnNow);
+  const textPromoSent =
+    textPromo !== null &&
+    history.some((message) => message.role === "assistant" && isPromoClientText(message.content));
+
   // Misma decisión que aplicará el backend al enviar el material, calculada acá para
   // que el TEXTO que escribe el modelo sea coherente con lo que realmente sale.
   const packagesResendDecision = shouldResendMedia({
@@ -6306,7 +6339,9 @@ async function processWebhookEvent(
       "Estado real (ground truth del backend) de materiales ya enviados a este usuario:",
       `- course_flyer: ${mediaStatus.course_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
       `- service_packages: ${mediaStatus.service_packages ? "YA enviado antes" : "NUNCA enviado"}`,
-      `- service_packages_promo: ${mediaStatus.service_packages_promo ? "YA enviado antes" : "NUNCA enviado"}`,
+      textPromo
+        ? `- service_packages_promo (texto oficial de la promo "${textPromo.shortName}"): ${textPromoSent ? "YA enviado antes, está arriba en el chat" : "NUNCA enviado"}`
+        : `- service_packages_promo: ${mediaStatus.service_packages_promo ? "YA enviado antes" : "NUNCA enviado"}`,
       `- ai_agent_flyer: ${mediaStatus.ai_agent_flyer ? "YA enviado antes" : "NUNCA enviado"}`,
       // QR de pago: dentro de la hora no vuelve a salir (salvo que lo pida). Sin este aviso
       // el modelo escribía "te paso el QR 👇" y no llegaba nada.
@@ -8357,6 +8392,38 @@ async function processWebhookEvent(
     }
   }
 
+  // --- Promo con texto oficial (lib/promos.ts) -----------------------------------------
+  // Esta promo no tiene imagen: su material es el texto revisado por el equipo, que
+  // REEMPLAZA a la respuesta del modelo para que el cliente reciba siempre la misma oferta
+  // (y no una paráfrasis con otro precio). Ya pasó por todas las guardas de línea de arriba.
+  // Si ya está arriba en el chat no se repite, salvo que la pida de nuevo: la respuesta del
+  // modelo sigue la conversación desde ahí (dudas, o el botón si acepta).
+  let promoTextTurn = false;
+  if (textPromo?.clientText && intentsToSend.has("service_packages_promo")) {
+    intentsToSend.delete("service_packages_promo");
+
+    if (!textPromoSent || turn.explicit_resend_request) {
+      replyText = textPromo.clientText;
+      promoTextTurn = true;
+      // El formulario viaja como botón pegado a este mismo texto (ver más abajo), no como
+      // el formulario 📌 del chat.
+      turn.service_intake_requested = false;
+
+      await logSystemEvent({
+        level: "info",
+        eventType: "promo_text_sent",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          promo_id: textPromo.id,
+          resend: textPromoSent,
+          client_message: lastMessage.text.slice(0, 200),
+        },
+      });
+    }
+  }
+
   // Reenvío explícito: forzar (anular dedup) los intents detectados este turno.
   if (turn.explicit_resend_request) {
     for (const intent of intentsToSend) forcedIntents.add(intent);
@@ -8375,7 +8442,20 @@ async function processWebhookEvent(
   const siteBaseUrl = getSiteBaseUrl();
   let linkButton: LinkButton | null = null;
 
-  if (siteBaseUrl) {
+  // El texto de la promo lleva PEGADO el botón al formulario de la promo, en el mismo
+  // mensaje: quien se anima al leerla deja sus datos ahí mismo, sin esperar a escribir "sí"
+  // (un mensaje menos) y sin pasar por la ficha de la promo (un paso menos). Si ya dejó sus
+  // datos, el texto sale solo: no hay nada más que pedirle.
+  if (siteBaseUrl && promoTextTurn && textPromo) {
+    if (!telegramLeadSent && !webActivity.leadAt) {
+      linkButton = buildPromoFormButton({
+        baseUrl: siteBaseUrl,
+        phone: lastMessage.from,
+        secret: getLeadLinkSecret(),
+        promoSlug: textPromo.slug,
+      });
+    }
+  } else if (siteBaseUrl) {
     const linkPackageName =
       chosenPackage?.name ??
       VIDEO_PACKAGES.find(
@@ -8385,6 +8465,16 @@ async function processWebhookEvent(
       )?.name ??
       null;
 
+    // ¿El formulario es el de la promo? Sí cuando la última oferta que vio fue la promo (o
+    // la está pidiendo ahora) y no eligió un paquete del catálogo en este mensaje.
+    const promoFormSlug =
+      textPromo &&
+      !chosenPackage &&
+      !detectSelectedPackageName(lastMessage.text) &&
+      (promoIsLastOffer(history) || asksForActivePromo(lastMessage.text, turnNow))
+        ? textPromo.slug
+        : null;
+
     linkButton = decideLinkButton({
       baseUrl: siteBaseUrl,
       phone: lastMessage.from,
@@ -8393,6 +8483,7 @@ async function processWebhookEvent(
       // El recordatorio fijo del formulario también es el momento de ofrecer la página.
       serviceIntakeRequested: turn.service_intake_requested || isDeterministicIntakeNudge,
       packageName: linkPackageName,
+      promoSlug: promoFormSlug,
       mentionedCourseIds: detectMentionedCourses(batchText, COURSES).map((course) => course.id),
       linkRequest: detectSiteLinkRequest(batchText),
       replyMentionsButton: replyMentionsButton(replyText),
@@ -8423,6 +8514,16 @@ async function processWebhookEvent(
     // Con el lead ya en manos del asesor, el formulario de paquetes no tiene nada que hacer.
     if (linkButton && linkButton.kind !== "courses" && telegramLeadSent && !linkButton.forced) {
       linkButton = null;
+    }
+
+    // Aceptó la promo: el texto genérico ("elige tu paquete") no corresponde, porque el
+    // botón abre directo el formulario de la promo.
+    if (
+      linkButton?.kind === "packages_form" &&
+      promoFormSlug &&
+      replyText === PACKAGES_FORM_BUTTON_TEXT
+    ) {
+      replyText = PROMO_FORM_BUTTON_TEXT;
     }
   }
 

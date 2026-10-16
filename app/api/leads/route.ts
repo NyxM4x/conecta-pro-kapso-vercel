@@ -1,5 +1,5 @@
 // Recibe los formularios de las páginas y los manda al grupo de asesores en Telegram:
-//   - /paquetes: el lead de un paquete (lib/lead-form.ts).
+//   - /paquetes: el lead de un paquete o de una promo vigente (lib/lead-form.ts, lib/promos.ts).
 //   - /oficina:  el pedido de reunión en la oficina (lib/office-form.ts), form = "oficina".
 // Es pública a propósito (la abre cualquier cliente desde WhatsApp): la protegen el campo
 // trampa para bots y la validación contra el catálogo.
@@ -12,6 +12,7 @@
 import { VIDEO_PACKAGES } from "../../../lib/packages";
 import { buildLeadTelegramMessage, validateLead } from "../../../lib/lead-form";
 import { buildOfficeVisitTelegramMessage, validateOfficeVisit } from "../../../lib/office-form";
+import { findActivePromo } from "../../../lib/promos";
 import { getLeadLinkSecret, packageSlug, verifyLeadPhone } from "../../../lib/site-links";
 import { sendTelegramNotification } from "../../../lib/telegram";
 import {
@@ -41,8 +42,17 @@ export async function POST(request: Request) {
 
   const pkg =
     "lead" in result ? VIDEO_PACKAGES.find((item) => item.name === result.lead.packageName) : null;
-  if ("lead" in result && !pkg) {
-    return Response.json({ ok: false, errors: ["Paquete"] }, { status: 422 });
+  // Si no es un paquete del catálogo, puede ser una promo VIGENTE (lib/promos.ts). Vencida no
+  // se acepta: quien dejó la página abierta no se queda con un precio que ya no existe.
+  const promo = "lead" in result && !pkg ? findActivePromo(result.lead.packageName, new Date()) : null;
+  if ("lead" in result && !pkg && !promo) {
+    return Response.json(
+      { ok: false, errors: [/^promo/i.test(result.lead.packageName) ? "la promoción ya no está vigente" : "Paquete"] },
+      { status: 422 },
+    );
+  }
+  if ("lead" in result && promo?.presenterPrice && !result.lead.presenter) {
+    return Response.json({ ok: false, errors: ["¿Quién sale en los videos?"] }, { status: 422 });
   }
 
   const originPhone = "lead" in result ? result.lead.originPhone : result.visit.originPhone;
@@ -67,6 +77,12 @@ export async function POST(request: Request) {
   const message =
     "lead" in result && pkg
       ? buildLeadTelegramMessage(result.lead, `${pkg.name} — ${pkg.videos} videos — ${pkg.price} Bs`, options)
+      : "lead" in result && promo
+        ? buildLeadTelegramMessage(
+            result.lead,
+            `${promo.shortName} — ${promo.videoCount} videos — ${promo.price} Bs`,
+            { ...options, promo: { presenterPrice: promo.presenterPrice } },
+          )
       : "visit" in result
         ? buildOfficeVisitTelegramMessage(result.visit, options)
         : "";
@@ -84,8 +100,14 @@ export async function POST(request: Request) {
       await closeWebLead(supabase, conversation, {
         phone: originPhone,
         page: office ? "oficina" : "paquetes",
-        selectedPackage: pkg ? packageSlug(pkg.name) : null,
-        detail: pkg ? { package: pkg.name } : "visit" in result ? { visit_type: result.visit.type } : {},
+        selectedPackage: pkg ? packageSlug(pkg.name) : promo ? promo.slug : null,
+        detail: pkg
+          ? { package: pkg.name }
+          : promo && "lead" in result
+            ? { package: promo.shortName, promo_id: promo.id, presenter: result.lead.presenter ?? null }
+            : "visit" in result
+              ? { visit_type: result.visit.type }
+              : {},
       });
     } catch (error) {
       console.error("lead web: no se pudo cerrar en la conversación", error);

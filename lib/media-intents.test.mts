@@ -394,6 +394,28 @@ test("señal fuerte de paquete: 'paquete', 6/12/18 y 2500/3500/5500", () => {
   assert.equal(fuerte("me interesa el de edición en CapCut"), false);
 });
 
+// --- Promo de 4 videos por 999 Bs (octubre 2026) -----------------------------------
+
+const PROMO_999_VIGENTE = new Date("2026-10-20T12:00:00-04:00");
+
+test("la promo de 999 se pide por la palabra, por el precio o por los 4 videos", () => {
+  assert.equal(asksForActivePromo("Hola, info de la promoción", PROMO_999_VIGENTE), true);
+  assert.equal(asksForActivePromo("vi lo de 999 bs", PROMO_999_VIGENTE), true);
+  assert.equal(asksForActivePromo("quiero los 4 videos", PROMO_999_VIGENTE), true);
+  assert.equal(asksForActivePromo("a las 4 paso", PROMO_999_VIGENTE), false);
+});
+
+test("una consulta por la promo de 999 manda la promo y no el botón de paquetes", () => {
+  const result = resolvePromoIntents({
+    intents: ["service_packages"],
+    message: "me interesa la promo de 999",
+    now: PROMO_999_VIGENTE,
+    courseFlyerMarked: false,
+    aiAgentFlyerMarked: false,
+  });
+  assert.deepEqual(result.intents, ["service_packages_promo"]);
+});
+
 console.log(`${passed} pruebas de guardas OK`);
 
 if (failures.length > 0) {

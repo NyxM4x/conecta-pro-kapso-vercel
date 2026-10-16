@@ -12,10 +12,12 @@ import {
   CTA_FOOTER_MAX_CHARS,
   buildCoursesUrl,
   buildPackagesUrl,
+  buildPromoFormButton,
   OFFICE_BUTTON_TEXT,
   OFFICE_COURSE_BUTTON_TEXT,
   PACKAGES_BUTTON_TEXT,
   PACKAGES_FORM_BUTTON_TEXT,
+  PROMO_FORM_BUTTON_TEXT,
   WEB_LEAD_MARKER_PREFIX,
   canAttachButtonToReply,
   siteVisitMarker,
@@ -403,6 +405,48 @@ test("las marcas de la web tienen el prefijo que buscan el webhook y /cliente", 
   assert.equal(webLeadMarker("paquetes"), "[TELEGRAM_LEAD_SENT] lead recibido desde la página /paquetes");
   assert.ok(webLeadMarker("oficina").startsWith(WEB_LEAD_MARKER_PREFIX));
   assert.equal(siteVisitMarker("cursos"), "[SITE_VISIT:cursos]");
+});
+
+test("quien acepta la promo recibe el formulario de la promo, no el de los paquetes", () => {
+  const button = decideLinkButton(turn({ serviceIntakeRequested: true, promoSlug: "promo-4-videos" }));
+  assert.equal(button?.kind, "packages_form");
+  assert.equal(button?.bodyText, PROMO_FORM_BUTTON_TEXT);
+  const url = new URL(button!.url);
+  assert.equal(url.searchParams.get("p"), "promo-4-videos");
+  assert.equal(url.searchParams.get("f"), "1");
+});
+
+test("la promo gana sobre un paquete viejo guardado en la conversación", () => {
+  const url = new URL(
+    buildPackagesUrl({ baseUrl: BASE, packageName: "Pro", promoSlug: "promo-4-videos", form: true }),
+  );
+  assert.equal(url.searchParams.get("p"), "promo-4-videos");
+});
+
+test("con la promo vigente, 'Ver paquetes' sigue abriendo la página entera", () => {
+  const button = decideLinkButton(
+    turn({ intents: new Set(["service_packages"]), promoSlug: "promo-4-videos" }),
+  );
+  assert.equal(button?.kind, "packages");
+  assert.equal(new URL(button!.url).searchParams.get("p"), null);
+});
+
+test("el texto del formulario de la promo se reconoce como botón de formulario", () => {
+  assert.equal(detectButtonTextKind(PROMO_FORM_BUTTON_TEXT), "packages_form");
+  assert.ok(replyMentionsButton(PROMO_FORM_BUTTON_TEXT));
+  assert.ok(PROMO_FORM_BUTTON_TEXT.length <= CTA_BODY_MAX_CHARS);
+});
+
+test("el botón de la promo abre directo su formulario, con el número firmado", () => {
+  const button = buildPromoFormButton({ baseUrl: BASE, phone: PHONE, secret: SECRET, promoSlug: "promo-4-videos" });
+  const url = new URL(button.url);
+  assert.equal(url.pathname, "/paquetes");
+  assert.equal(url.searchParams.get("p"), "promo-4-videos");
+  assert.equal(url.searchParams.get("f"), "1");
+  assert.ok(verifyLeadPhone(PHONE, url.searchParams.get("t") ?? "", SECRET));
+  assert.ok(button.forced);
+  assert.ok(button.displayText.length <= CTA_DISPLAY_MAX_CHARS);
+  assert.ok([...button.footerText].length <= CTA_FOOTER_MAX_CHARS);
 });
 
 console.log(`${passed} pruebas de botones a las páginas OK`);

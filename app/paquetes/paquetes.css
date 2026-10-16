@@ -445,6 +445,84 @@ body {
   font-weight: 600;
 }
 
+/* ── Promoción vigente (lib/promos.ts) ──────────────────────────────── */
+/* Una sola tarjeta ancha, antes de los paquetes: es lo que vino a ver quien llega desde la
+   promo del bot. Desaparece sola cuando la promo vence. */
+
+.cp-promo-list {
+  display: grid;
+  gap: 14px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.cp-promo-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 24px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--cp-radius);
+  background:
+    radial-gradient(60% 80% at 100% 0%, rgba(255, 255, 255, 0.22), transparent 70%),
+    linear-gradient(130deg, #ff7cc0 0%, var(--cp-pink) 40%, var(--cp-purple) 100%);
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.2s ease;
+}
+
+.cp-promo-card:active { transform: scale(0.98); }
+
+@media (hover: hover) {
+  .cp-promo-card:hover { transform: translateY(-4px); }
+}
+
+.cp-promo-badge {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--cp-ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cp-promo-title {
+  font-family: var(--font-heading), var(--font-body), sans-serif;
+  font-size: clamp(26px, 7vw, 40px);
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.cp-promo-title strong { font-weight: 800; }
+
+.cp-promo-until { font-size: 13px; font-weight: 600; opacity: 0.9; }
+
+.cp-promo-photo {
+  background:
+    radial-gradient(60% 60% at 100% 0%, rgba(255, 255, 255, 0.25), transparent 70%),
+    linear-gradient(150deg, #ff7cc0 0%, var(--cp-pink) 45%, var(--cp-purple) 100%);
+}
+
+.cp-promo-notes li::before { content: "!"; }
+
+.cp-promo-summary {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 61, 154, 0.35);
+  border-radius: 12px;
+  background: rgba(255, 61, 154, 0.1);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .cp-footer {
   padding: 28px 16px 36px;
   background: var(--cp-light);

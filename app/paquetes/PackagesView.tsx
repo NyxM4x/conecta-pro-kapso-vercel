@@ -1,11 +1,19 @@
 "use client";
 
-// Vista de /paquetes: portada, tarjetas de paquetes (estilo "Our Process") y, al tocar
-// una, la hoja de detalle con el formulario de datos que llega a Telegram.
+// Vista de /paquetes: portada, promoción vigente (si hay), tarjetas de paquetes (estilo
+// "Our Process") y, al tocar una, la hoja de detalle con el formulario de datos que llega a
+// Telegram.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HOW_WE_WORK_GOAL, HOW_WE_WORK_STEPS } from "../../lib/how-we-work";
-import { CONTENT_TYPE_OPTIONS, LEAD_FIELDS, type LeadFieldKey } from "../../lib/lead-form";
+import {
+  CONTENT_TYPE_OPTIONS,
+  LEAD_FIELDS,
+  PREFERRED_DATE_MAX_LENGTH,
+  PRESENTER_OPTIONS,
+  type LeadFieldKey,
+  type PresenterChoice,
+} from "../../lib/lead-form";
 import { Hero } from "../components/Hero";
 import { SuccessCheck } from "../components/SuccessCheck";
 import { VisitBeacon } from "../components/VisitBeacon";
@@ -24,6 +32,23 @@ type PackageCard = {
   period: "mes" | "14 días";
 };
 
+// Promoción vigente (lib/promos.ts). Solo llegan las que están dentro de su ventana.
+type PromoCard = {
+  slug: string;
+  // Nombre corto: título de la tarjeta y lo que viaja como packageName al formulario.
+  shortName: string;
+  videos: number;
+  price: number;
+  includes: string[];
+  notes: string[];
+  presenterPrice: number | null;
+  // Último día de vigencia ya formateado ("viernes, 31 de octubre").
+  validUntil: string;
+};
+
+// Qué hoja está abierta: un paquete del catálogo o una promo, por su posición.
+type OpenSheet = { kind: "package" | "promo"; index: number };
+
 type Step = "detail" | "form" | "done";
 
 const EMPTY_FORM = Object.fromEntries(LEAD_FIELDS.map((field) => [field.key, ""])) as Record<LeadFieldKey, string>;
@@ -37,6 +62,7 @@ const periodPhrase = (period: PackageCard["period"]) => (period === "mes" ? "al 
 
 function PackagesView({
   packages,
+  promos,
   originPhone,
   originToken,
   initialSlug,
@@ -44,6 +70,7 @@ function PackagesView({
   businessWhatsapp,
 }: {
   packages: PackageCard[];
+  promos: PromoCard[];
   originPhone: string;
   originToken: string;
   initialSlug: string | null;
@@ -51,15 +78,20 @@ function PackagesView({
   openForm: boolean;
   businessWhatsapp: string;
 }) {
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [open, setOpen] = useState<OpenSheet | null>(null);
   const [step, setStep] = useState<Step>("detail");
   const [form, setForm] = useState(EMPTY_FORM);
   const [contentTypes, setContentTypes] = useState<string[]>([]);
+  const [presenter, setPresenter] = useState<PresenterChoice | "">("");
+  const [preferredDate, setPreferredDate] = useState("");
   const [honeypot, setHoneypot] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
 
-  const selected = openIndex === null ? null : packages[openIndex];
+  const selected = open?.kind === "package" ? packages[open.index] ?? null : null;
+  const selectedPromo = open?.kind === "promo" ? promos[open.index] ?? null : null;
+  // Lo que viaja al formulario y se muestra en la etiqueta: el paquete o la promo.
+  const selectedName = selected?.name ?? selectedPromo?.shortName ?? "";
   const sheetRef = useRef<HTMLDivElement>(null);
   const infoRef = useRef<HTMLDivElement>(null);
 
@@ -67,12 +99,12 @@ function PackagesView({
   // siguiente paquete a mitad de la hoja dejaría al cliente sin ver el video.
   useEffect(() => {
     sheetRef.current?.scrollTo({ top: 0 });
-  }, [openIndex, step]);
+  }, [open, step]);
 
   // La hoja abierta ocupa una entrada del historial: así el botón "atrás" del teléfono la
   // cierra en vez de sacar al cliente del navegador de WhatsApp.
-  const openPackage = useCallback((index: number) => {
-    setOpenIndex(index);
+  const openSheet = useCallback((sheet: OpenSheet) => {
+    setOpen(sheet);
     setStep("detail");
     setError("");
     window.history.pushState({ sheet: true }, "");
@@ -80,28 +112,34 @@ function PackagesView({
 
   const closeSheet = useCallback(() => {
     if (window.history.state?.sheet) window.history.back();
-    else setOpenIndex(null);
+    else setOpen(null);
   }, []);
 
   useEffect(() => {
-    const onPop = () => setOpenIndex(null);
+    const onPop = () => setOpen(null);
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   useEffect(() => {
-    if (initialSlug) {
-      const index = packages.findIndex((pkg) => pkg.slug === initialSlug);
-      if (index >= 0) {
-        openPackage(index);
-        if (openForm) setStep("form");
-      }
+    if (!initialSlug) return;
+    const promoIndex = promos.findIndex((promo) => promo.slug === initialSlug);
+    const packageIndex = packages.findIndex((pkg) => pkg.slug === initialSlug);
+    const sheet: OpenSheet | null =
+      promoIndex >= 0
+        ? { kind: "promo", index: promoIndex }
+        : packageIndex >= 0
+          ? { kind: "package", index: packageIndex }
+          : null;
+    if (sheet) {
+      openSheet(sheet);
+      if (openForm) setStep("form");
     }
-  }, [initialSlug, openForm, packages, openPackage]);
+  }, [initialSlug, openForm, packages, promos, openSheet]);
 
   useEffect(() => {
-    document.body.style.overflow = selected ? "hidden" : "";
-  }, [selected]);
+    document.body.style.overflow = open ? "hidden" : "";
+  }, [open]);
 
   const toggleContentType = (option: string) =>
     setContentTypes((current) =>
@@ -110,10 +148,15 @@ function PackagesView({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!selected || sending) return;
+    if (!selectedName || sending) return;
 
     if (contentTypes.length === 0) {
       setError("Elige al menos un tipo de contenido.");
+      return;
+    }
+
+    if (selectedPromo?.presenterPrice && !presenter) {
+      setError("Elige quién sale en los videos.");
       return;
     }
 
@@ -127,7 +170,8 @@ function PackagesView({
         body: JSON.stringify({
           ...form,
           contentType: contentTypes.join(", "),
-          packageName: selected.name,
+          packageName: selectedName,
+          ...(selectedPromo ? { presenter: presenter || undefined, preferredDate } : {}),
           originPhone,
           originToken,
           website: honeypot,
@@ -154,7 +198,7 @@ function PackagesView({
 
   // Vuelve al chat sin texto escrito: los datos ya llegaron al asesor, y un "ya envié mis
   // datos" solo le llegaría al bot, que queda apagado para que lo atienda una persona.
-  const whatsappBack = businessWhatsapp && selected ? `https://wa.me/${businessWhatsapp}` : "";
+  const whatsappBack = businessWhatsapp && open ? `https://wa.me/${businessWhatsapp}` : "";
 
 
   return (
@@ -163,9 +207,47 @@ function PackagesView({
       <Hero
         title="Marketing"
         copy="Estrategia, guiones, grabación y edición: creamos el contenido de tu negocio para que tú solo te ocupes de vender."
-        ctaLabel="Ver paquetes"
-        ctaHref="#paquetes"
+        ctaLabel={promos.length > 0 ? "Ver promoción" : "Ver paquetes"}
+        ctaHref={promos.length > 0 ? "#promo" : "#paquetes"}
       />
+
+      {/* Promoción vigente: va antes de los paquetes porque es lo que el cliente vino a ver
+          cuando el bot le mandó la promo. Pasada su fecha, la sección desaparece sola. */}
+      {promos.length > 0 && (
+        <section className="cp-packages cp-promo-section" id="promo">
+          <header className="cp-packages-head">
+            <h2>
+              Promoción
+              <br />
+              Especial
+            </h2>
+            <p>Por tiempo limitado. Déjanos tus datos y un asesor te agenda la fecha por WhatsApp.</p>
+          </header>
+
+          <div className="cp-promo-list">
+            {promos.map((promo, index) => (
+              <button
+                key={promo.slug}
+                type="button"
+                className="cp-promo-card"
+                onClick={() => openSheet({ kind: "promo", index })}
+              >
+                <span className="cp-promo-badge">🔥 Promo</span>
+                <span className="cp-promo-title">
+                  {promo.videos} videos profesionales
+                  <br />
+                  por solo <strong>{formatPrice(promo.price)} Bs</strong>
+                </span>
+                <span className="cp-card-text">{promo.includes.join(" · ")}</span>
+                <span className="cp-promo-until">Válida hasta el {promo.validUntil}</span>
+                <span className="cp-card-cta">
+                  Ver promoción <span className="cp-btn-arrow cp-btn-arrow-side" aria-hidden>→</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="cp-packages" id="paquetes">
         <header className="cp-packages-head">
@@ -183,7 +265,7 @@ function PackagesView({
               key={pkg.slug}
               type="button"
               className={`cp-card cp-card-${(index % 4) + 1}${pkg.video ? " cp-card-has-video" : ""}`}
-              onClick={() => openPackage(index)}
+              onClick={() => openSheet({ kind: "package", index })}
             >
               {/* El video del paquete corre desde antes de tocarlo, de fondo y sin audio. */}
               {pkg.video && (
@@ -263,25 +345,25 @@ function PackagesView({
 
       <footer className="cp-footer">© {new Date().getFullYear()} Conecta Pro</footer>
 
-      {selected && openIndex !== null && (
+      {open && selectedName && (
         <div className="cp-sheet-backdrop" onClick={closeSheet}>
           <div
             ref={sheetRef}
-            className={`cp-sheet${selected.video && step === "detail" ? " cp-sheet-video" : ""}`}
+            className={`cp-sheet${selected?.video && step === "detail" ? " cp-sheet-video" : ""}`}
             role="dialog"
             aria-modal="true"
-            aria-label={`Paquete ${selected.name}`}
+            aria-label={selectedPromo ? selectedPromo.shortName : `Paquete ${selectedName}`}
             onClick={(event) => event.stopPropagation()}
           >
             <button type="button" className="cp-close" onClick={closeSheet} aria-label="Cerrar">
               ×
             </button>
 
-            {step === "detail" && (
+            {step === "detail" && selected && (
               <>
                 <div className="cp-detail">
                   <div
-                    className={`cp-photo cp-card-${(openIndex % 4) + 1}${selected.video ? " cp-photo-has-video" : ""}`}
+                    className={`cp-photo cp-card-${(open.index % 4) + 1}${selected.video ? " cp-photo-has-video" : ""}`}
                   >
                     {selected.video && (
                       // key: al cambiar de paquete el video empieza de nuevo.
@@ -298,7 +380,7 @@ function PackagesView({
                         aria-hidden
                       />
                     )}
-                    <span className="cp-photo-num">{pad(openIndex)}</span>
+                    <span className="cp-photo-num">{pad(open.index)}</span>
                     <div className="cp-photo-foot">
                       <span>{selected.name}</span>
                       <span>{selected.videos} videos</span>
@@ -355,18 +437,90 @@ function PackagesView({
               </>
             )}
 
+            {step === "detail" && selectedPromo && (
+              <>
+                <div className="cp-detail">
+                  <div className="cp-photo cp-promo-photo">
+                    <span className="cp-photo-num">🔥</span>
+                    <div className="cp-photo-foot">
+                      <span>{selectedPromo.shortName}</span>
+                      <span>{formatPrice(selectedPromo.price)} Bs</span>
+                    </div>
+                  </div>
+
+                  <div className="cp-detail-info">
+                    <span className="cp-tag">Promoción especial</span>
+                    <h3>
+                      {selectedPromo.videos} videos por <em>{formatPrice(selectedPromo.price)} Bs</em>
+                    </h3>
+                    <p className="cp-muted">
+                      Haz que tu negocio destaque en TikTok con contenido estratégico y profesional.
+                      Válida hasta el {selectedPromo.validUntil}.
+                    </p>
+                    <button type="button" className="cp-btn cp-btn-accent" onClick={() => setStep("form")}>
+                      ¡La quiero!
+                    </button>
+
+                    <h4>Qué incluye</h4>
+                    <ul className="cp-includes">
+                      {selectedPromo.includes.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+
+                    {selectedPromo.notes.length > 0 && (
+                      <>
+                        <h4>Importante</h4>
+                        <ul className="cp-includes cp-promo-notes">
+                          {selectedPromo.notes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <h4 className="cp-stats-title">Tu promoción</h4>
+                <div className="cp-stats">
+                  <div>
+                    <strong>{selectedPromo.videos}</strong>
+                    <span>Videos, grabados el mismo día</span>
+                  </div>
+                  <div>
+                    <strong>{formatPrice(selectedPromo.price)}</strong>
+                    <span>Bs en total</span>
+                  </div>
+                  <div>
+                    <strong>{selectedPromo.presenterPrice ? `+${selectedPromo.presenterPrice}` : "—"}</strong>
+                    <span>{selectedPromo.presenterPrice ? "Bs presentadora (opcional)" : "Sin extras"}</span>
+                  </div>
+                </div>
+              </>
+            )}
+
             {step === "form" && (
               <form className="cp-form" onSubmit={submit}>
                 <button type="button" className="cp-back" onClick={() => setStep("detail")}>
-                  ← Volver al paquete
+                  {selectedPromo ? "← Volver a la promoción" : "← Volver al paquete"}
                 </button>
-                <span className="cp-tag">Paquete {selected.name}</span>
+                <span className="cp-tag">{selectedPromo ? selectedPromo.shortName : `Paquete ${selectedName}`}</span>
                 <h3>
                   Cuéntanos de <em>tu negocio</em>
                 </h3>
                 <p className="cp-muted">
-                  Con estos datos un asesor estudia tu caso y te escribe por WhatsApp.
+                  {selectedPromo
+                    ? "Con estos datos un asesor te escribe por WhatsApp para agendar la fecha de grabación."
+                    : "Con estos datos un asesor estudia tu caso y te escribe por WhatsApp."}
                 </p>
+                {/* El botón del bot abre el formulario directo, sin pasar por la ficha: este
+                    resumen le recuerda qué está pidiendo sin hacerlo volver atrás. */}
+                {selectedPromo && (
+                  <p className="cp-promo-summary">
+                    🎬 {selectedPromo.videos} videos · <strong>{formatPrice(selectedPromo.price)} Bs</strong> en total ·
+                    válida hasta el {selectedPromo.validUntil}
+                  </p>
+                )}
 
                 {LEAD_FIELDS.map((field) => (
                   <label key={field.key} className="cp-field">
@@ -410,6 +564,45 @@ function PackagesView({
                   </label>
                 ))}
 
+                {/* Preguntas propias de la promo: quién sale en los videos y qué día le sirve. */}
+                {selectedPromo?.presenterPrice ? (
+                  <div className="cp-field">
+                    <span>¿Quién sale en los videos?</span>
+                    <span className="cp-chips" role="radiogroup">
+                      {PRESENTER_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={presenter === option.value}
+                          className={presenter === option.value ? "is-on" : ""}
+                          onClick={() => setPresenter(option.value)}
+                        >
+                          {option.value === "presenter"
+                            ? `${option.label} (+${selectedPromo.presenterPrice} Bs)`
+                            : option.label}
+                        </button>
+                      ))}
+                    </span>
+                  </div>
+                ) : null}
+
+                {selectedPromo && (
+                  <label className="cp-field">
+                    <span>
+                      ¿Qué fecha te gustaría para la grabación?<small> (opcional)</small>
+                    </span>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      maxLength={PREFERRED_DATE_MAX_LENGTH}
+                      placeholder="Ej. el sábado 25 por la mañana"
+                      value={preferredDate}
+                      onChange={(event) => setPreferredDate(event.target.value)}
+                    />
+                  </label>
+                )}
+
                 {/* Trampa para bots: oculta para las personas. */}
                 <input
                   className="cp-hp"
@@ -434,7 +627,11 @@ function PackagesView({
                     confirmación que deja tranquilo al cliente. */}
                 <SuccessCheck
                   title="Tus datos fueron enviados a un Asesor"
-                  message={`Paquete ${selected.name} · te hablará muy pronto por WhatsApp`}
+                  message={
+                    selectedPromo
+                      ? `${selectedPromo.shortName} · te hablará muy pronto por WhatsApp para agendar tu fecha`
+                      : `Paquete ${selectedName} · te hablará muy pronto por WhatsApp`
+                  }
                 />
                 {whatsappBack ? (
                   <a className="cp-btn cp-btn-wa cp-btn-block" href={whatsappBack}>
@@ -455,4 +652,4 @@ function PackagesView({
 }
 
 export { PackagesView };
-export type { PackageCard };
+export type { PackageCard, PromoCard };

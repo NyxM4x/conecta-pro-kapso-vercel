@@ -9,6 +9,8 @@
 //   LÍNEA B — paquetes: consulta general → "Ver paquetes";
 //                       intención clara (quiere contratar) → "Llenar mis datos", con el
 //                       paquete elegido ya abierto en el formulario (&p=pro&f=1).
+//                       Texto oficial de una promo → "Llenar mis datos" pegado al mismo
+//                       mensaje, directo al formulario de la promo (buildPromoFormButton).
 //   Visita a la oficina: → "Agendar visita" (/oficina, según a qué viene).
 //   Pagos, derivaciones a un asesor y cierres de lead: sin botón.
 //
@@ -117,6 +119,11 @@ const PACKAGES_BUTTON_TEXT = `Puedes ver nuestros ${VIDEO_PACKAGES.length} paque
 const PACKAGES_FORM_BUTTON_TEXT =
   "¡Perfecto! 🙌 Elige tu paquete y llena tus datos dentro de este botón 👇 Un asesor te hablará pronto 😊";
 
+// Igual que el anterior, pero para quien acepta una PROMOCIÓN vigente (lib/promos.ts): el
+// botón abre el formulario de la promo, no el de los paquetes del catálogo.
+const PROMO_FORM_BUTTON_TEXT =
+  "¡Excelente decisión! 🙌 Para agendar la fecha de tu promoción, llena tus datos dentro de este botón 👇 Un asesor te hablará pronto 😊";
+
 // Visita a la oficina por los servicios o por el agente de IA.
 const OFFICE_BUTTON_TEXT =
   "¡Con gusto te recibimos! 😊 Antes de la reunión en nuestra oficina, un asesor te llamará para coordinarla y conocer tu negocio. Deja tus datos dentro de este botón para agendar tu visita 👇";
@@ -211,14 +218,17 @@ function buildPackagesUrl(params: {
   baseUrl: string;
   phone?: string;
   packageName?: string | null;
+  // Slug de una promoción vigente (Promo.slug): gana sobre packageName.
+  promoSlug?: string | null;
   secret?: string | null;
   form?: boolean;
 }): string {
   const url = new URL("/paquetes", params.baseUrl);
   setSignedPhone(url, params.phone, params.secret);
-  if (params.packageName) url.searchParams.set("p", packageSlug(params.packageName));
-  // Con un paquete elegido, la hoja se abre directo en el formulario.
-  if (params.form && params.packageName) url.searchParams.set("f", "1");
+  const slug = params.promoSlug || (params.packageName ? packageSlug(params.packageName) : "");
+  if (slug) url.searchParams.set("p", slug);
+  // Con un paquete (o una promo) elegido, la hoja se abre directo en el formulario.
+  if (params.form && slug) url.searchParams.set("f", "1");
 
   return url.toString();
 }
@@ -298,6 +308,8 @@ type LinkButtonParams = {
   serviceIntakeRequested: boolean;
   // Paquete que eligió, si se sabe (nombre tal cual en VIDEO_PACKAGES).
   packageName: string | null;
+  // La conversación está en una promoción vigente: el formulario abre el de la promo.
+  promoSlug?: string | null;
   // Cursos que nombra el mensaje (ids de lib/courses.ts).
   mentionedCourseIds: string[];
   // Pidió el link con todas las letras.
@@ -364,10 +376,13 @@ function decideLinkButton(params: LinkButtonParams): LinkButton | null {
 
   if (packagesTurn && (textKind || params.linkRequest !== "courses")) {
     const form = textKind ? textKind === "packages_form" : params.serviceIntakeRequested;
+    // La promo solo manda en el formulario: "Ver paquetes" sigue mostrando la página entera.
+    const promoSlug = form ? params.promoSlug ?? null : null;
     const url = buildPackagesUrl({
       baseUrl: params.baseUrl,
       phone: params.phone,
       packageName: params.packageName,
+      promoSlug,
       secret: params.secret,
       form,
     });
@@ -377,7 +392,7 @@ function decideLinkButton(params: LinkButtonParams): LinkButton | null {
           kind: "packages_form",
           url,
           displayText: "Llenar mis datos",
-          bodyText: PACKAGES_FORM_BUTTON_TEXT,
+          bodyText: promoSlug ? PROMO_FORM_BUTTON_TEXT : PACKAGES_FORM_BUTTON_TEXT,
           footerText: "Llena tus datos dentro de este botón 👇",
           forced: params.linkRequest === "packages" || forcedByText,
         }
@@ -417,6 +432,32 @@ function decideLinkButton(params: LinkButtonParams): LinkButton | null {
   return button;
 }
 
+// Botón que viaja pegado al TEXTO OFICIAL de una promo (lib/promos.ts): abre directo el
+// formulario de la promo (&f=1), sin pasar por su ficha. Así quien la lee y se anima deja sus
+// datos en el mismo mensaje: ni un mensaje más ni un paso más en la página.
+function buildPromoFormButton(params: {
+  baseUrl: string;
+  phone: string;
+  secret: string | null;
+  promoSlug: string;
+}): LinkButton {
+  return {
+    kind: "packages_form",
+    url: buildPackagesUrl({
+      baseUrl: params.baseUrl,
+      phone: params.phone,
+      secret: params.secret,
+      promoSlug: params.promoSlug,
+      form: true,
+    }),
+    displayText: "Llenar mis datos",
+    bodyText: PROMO_FORM_BUTTON_TEXT,
+    footerText: "Agenda tu fecha: llena tus datos aquí 👇",
+    // Es parte de la promo: sale siempre con su texto, aunque haya otro botón reciente.
+    forced: true,
+  };
+}
+
 // ¿La respuesta del bot puede viajar como cuerpo del mensaje con botón? Así el botón no
 // cuesta un mensaje aparte. No si es larga (WhatsApp corta en 1024), si trae un link (el
 // de Maps tiene que verse y abrirse tal cual) o si después de ella sale más material: el
@@ -438,11 +479,13 @@ export {
   OFFICE_COURSE_BUTTON_TEXT,
   PACKAGES_BUTTON_TEXT,
   PACKAGES_FORM_BUTTON_TEXT,
+  PROMO_FORM_BUTTON_TEXT,
   SITE_VISIT_MARKER_PREFIX,
   WEB_LEAD_MARKER_PREFIX,
   buildCoursesUrl,
   buildOfficeUrl,
   buildPackagesUrl,
+  buildPromoFormButton,
   canAttachButtonToReply,
   courseSlug,
   decideLinkButton,

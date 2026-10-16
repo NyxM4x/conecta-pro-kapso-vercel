@@ -83,6 +83,46 @@ test("marca al cliente que ya había dejado sus datos por chat", () => {
   );
 });
 
+test("el formulario de la promo guarda quién sale en los videos y la fecha tentativa", () => {
+  const result = validateLead({
+    ...COMPLETE,
+    packageName: "Promo 4 videos",
+    presenter: "presenter",
+    preferredDate: "  sábado 25 por la mañana ",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.lead.presenter, "presenter");
+    assert.equal(result.lead.preferredDate, "sábado 25 por la mañana");
+  }
+});
+
+test("una opción de presentadora inventada se descarta", () => {
+  const result = validateLead({ ...COMPLETE, presenter: "<script>" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.lead.presenter, undefined);
+});
+
+test("el lead de una promo llega a Telegram marcado como promo, con la presentadora", () => {
+  const result = validateLead({ ...COMPLETE, packageName: "Promo 4 videos", presenter: "presenter" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const message = buildLeadTelegramMessage(result.lead, "Promo 4 videos — 4 videos — 999 Bs", {
+    verified: true,
+    promo: { presenterPrice: 200 },
+  });
+  assert.match(message, /PROMOCIÓN/);
+  assert.match(message, /🎁 Promo: <b>Promo 4 videos — 4 videos — 999 Bs<\/b>/);
+  assert.match(message, /Presentadora: <b>Sí<\/b> \(\+200 Bs\)/);
+});
+
+test("un lead de paquete normal no muestra nada de la promo", () => {
+  const result = validateLead({ ...COMPLETE, presenter: "owner" });
+  if (!result.ok) throw new Error("debía validar");
+  const message = buildLeadTelegramMessage(result.lead, "Normal — 12 videos — 3500 Bs");
+  assert.doesNotMatch(message, /PROMOCIÓN|Presentadora/);
+});
+
 console.log(`${passed} pruebas del formulario de leads OK`);
 
 if (failures.length > 0) {

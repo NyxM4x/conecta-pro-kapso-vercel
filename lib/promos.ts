@@ -11,7 +11,9 @@
 // PARA ACTUALIZAR: edita SOLO la lista PROMOS. Al vencer una promo se puede borrar de
 // la lista o dejarla: pasada su ventana el sistema la ignora igual.
 
+import { normalizeForMatch } from "./keywords.ts";
 import { renderPackageSizes } from "./packages.ts";
+import { PROMO_FORM_BUTTON_TEXT } from "./site-links.ts";
 
 const BOLIVIA_TZ = "America/La_Paz";
 
@@ -21,9 +23,13 @@ type PromoIntent = "service_packages_promo";
 
 type Promo = {
   id: string;
+  // Identificador en la página /paquetes (?p=<slug>) y en selected_package.
+  slug: string;
   // Intent con el que está registrada la imagen en kapso_media_assets.
   intent: PromoIntent;
   name: string;
+  // Nombre corto: título de la tarjeta en la web y lo que manda su formulario. Máx. 40.
+  shortName: string;
   // ISO con offset de Bolivia (UTC-4, sin horario de verano).
   startsAt: string;
   // Instante EXCLUSIVO en que deja de estar vigente. Para una promo válida "los días
@@ -40,13 +46,88 @@ type Promo = {
   line: "service_packages";
   // Copy que se inyecta al prompt. Una línea por viñeta.
   details: string[];
+  // Lo que incluye y las condiciones, para la ficha de la promo en /paquetes.
+  includes: string[];
+  notes: string[];
+  // Presentadora profesional opcional: precio adicional en Bs. Sin el campo, la promo no
+  // la ofrece y el formulario no pregunta quién sale en los videos.
+  presenterPrice?: number;
+  // Texto LITERAL con el que se responde la promo por WhatsApp. Con este campo la promo NO
+  // usa imagen: el webhook reemplaza la respuesta del modelo por este texto revisado, así
+  // el cliente recibe siempre la misma oferta y no una paráfrasis.
+  clientText?: string;
 };
+
+// Texto oficial de la promo de 4 videos por 999 Bs, tal cual lo entregó el equipo.
+const PROMO_999_TEXT = `🚀🔥 ¡PROMOCIÓN ESPECIAL DE CONNECTA PRO!
+
+🎬 4 VIDEOS PROFESIONALES POR SOLO 999 Bs.
+
+¿Qué incluye nuestro paquete? 👇
+
+✅ Estrategia de contenido personalizada.
+
+✅ Creación de guiones persuasivos.
+
+✅ Grabación profesional de los 4 videos.
+
+✅ Edición profesional.
+
+✅ Administración de tu cuenta de TikTok.
+
+📌 Importante: Los 4 videos se graban el mismo día y los propietarios del negocio serán los protagonistas.
+
+🎤 ¿Quieres una presentadora profesional? Puedes agregarla por solo 200 Bs adicionales. (*Tambien puedes salir tu, recomendamos que salga el dueño del negocio para conectar con el publico*)
+
+💰 Forma de pago: 50% al iniciar y 50% al finalizar el paquete.
+
+🔥 ¡Haz que tu negocio destaque en TikTok con contenido estratégico y profesional!
+
+📲 ¿Te agendamos una fecha para aprovechar esta promoción?`;
 
 const PROMOS: Promo[] = [
   {
+    id: "promo_4_videos_999_2026_10",
+    slug: "promo-4-videos",
+    intent: "service_packages_promo",
+    name: "Promoción especial — 4 videos profesionales por 999 Bs",
+    shortName: "Promo 4 videos",
+    // ⚠️ Confirmar la ventana con el equipo: hoy arranca el 16 y vence al terminar octubre.
+    startsAt: "2026-10-16T00:00:00-04:00",
+    endsAt: "2026-11-01T00:00:00-04:00",
+    price: 999,
+    videoCount: 4,
+    line: "service_packages",
+    details: [
+      "4 videos profesionales por 999 Bs (precio TOTAL de la promo, no mensual).",
+      "Incluye: estrategia de contenido personalizada, creación de guiones persuasivos, grabación profesional de los 4 videos, edición profesional y administración de la cuenta de TikTok.",
+      "Los 4 videos se graban el MISMO día y los protagonistas son los propietarios del negocio.",
+      "Presentadora profesional OPCIONAL: 200 Bs adicionales (en total 1.199 Bs). También puede salir el cliente; recomendamos que salga el dueño del negocio para conectar con el público.",
+      "Forma de pago: 50% al iniciar y 50% al finalizar el paquete.",
+      "Lo que no está en esta lista (dron, más videos, manejo de otras redes) NO viene en la promo: si lo pide, un asesor se lo cotiza aparte.",
+      "La fecha de grabación la coordina un asesor después de que el cliente deja sus datos: NUNCA confirmes tú un día ni una hora.",
+    ],
+    includes: [
+      "Estrategia de contenido personalizada",
+      "Creación de guiones persuasivos",
+      "Grabación profesional de los 4 videos",
+      "Edición profesional",
+      "Administración de tu cuenta de TikTok",
+    ],
+    notes: [
+      "Los 4 videos se graban el mismo día.",
+      "Los propietarios del negocio son los protagonistas: así se conecta mejor con el público.",
+      "Forma de pago: 50% al iniciar y 50% al finalizar el paquete.",
+    ],
+    presenterPrice: 200,
+    clientText: PROMO_999_TEXT,
+  },
+  {
     id: "promo_bolivia_2026_08",
+    slug: "promo-bolivia",
     intent: "service_packages_promo",
     name: "Promo por Bolivia — Paquete Exprés: 4 videos por 1.000 Bs",
+    shortName: "Paquete Exprés",
     startsAt: "2026-08-06T00:00:00-04:00",
     endsAt: "2026-08-08T00:00:00-04:00",
     price: 1000,
@@ -58,6 +139,8 @@ const PROMOS: Promo[] = [
       "Los 4 videos se graban en un solo día.",
       "Válida ÚNICAMENTE los días jueves 6 y viernes 7 de agosto de 2026 (hora de Bolivia).",
     ],
+    includes: ["Estrategia", "Guiones", "Grabación profesional", "Edición", "Publicación"],
+    notes: ["Los 4 videos se graban en un solo día."],
   },
 ];
 
@@ -313,6 +396,41 @@ function getActivePromoVideoCounts(now: Date): number[] {
   return getActivePromos(now).map((promo) => promo.videoCount);
 }
 
+// Promo vigente que se responde con su texto literal (clientText), si hay una.
+function getActiveTextPromo(now: Date): Promo | null {
+  return getActivePromos(now).find((promo) => promo.clientText) ?? null;
+}
+
+// Promo vigente por su slug (?p= de la página) o por su nombre corto (lo que manda el
+// formulario). Vencida no se encuentra: el formulario de una promo pasada no se acepta.
+function findActivePromo(key: string, now: Date): Promo | null {
+  if (!key) return null;
+  return (
+    getActivePromos(now).find((promo) => promo.slug === key || promo.shortName === key) ?? null
+  );
+}
+
+// Primeras líneas con contenido del texto oficial: bastan para reconocerlo en el historial
+// aunque se haya guardado recortado.
+const promoTextHeadline = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => normalizeForMatch(line).trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+// ¿Este mensaje del bot es el texto oficial de alguna promo? Con esto el webhook sabe que
+// el cliente ya vio la oferta (para no repetirla y para leer su "sí" como aceptación).
+function isPromoClientText(text: string): boolean {
+  if (!text) return false;
+  const normalized = normalizeForMatch(text);
+  return PROMOS.some(
+    (promo) =>
+      promo.clientText !== undefined &&
+      promoTextHeadline(promo.clientText).every((line) => normalized.includes(line)),
+  );
+}
+
 // "jueves 6 de agosto" en hora de Bolivia, para el copy del contexto.
 function formatPromoDay(iso: string): string {
   return new Intl.DateTimeFormat("es-BO", {
@@ -350,8 +468,15 @@ function renderPromoContext(now: Date): string {
     );
   }
 
+  const textPromo = active.find((promo) => promo.clientText);
+  const promoMentions = active
+    .map((promo) => `los ${promo.videoCount} videos / los ${promo.price} Bs`)
+    .join(" o ");
+
   lines.push(
-    "- Esta promo pertenece a la LÍNEA B (paquetes de producción). Cuando el cliente pregunte por promociones, ofertas o descuentos, o mencione los 4 videos / los 1.000 Bs, o pida esta promo: responde con sus datos concretos (sí puedes decir el precio y qué incluye, están arriba) y marca intents.service_packages_promo = true.",
+    textPromo
+      ? `- Esta promo pertenece a la LÍNEA B (paquetes de producción). Cuando el cliente pregunte por promociones, ofertas o descuentos, o mencione ${promoMentions}, o pida esta promo: marca intents.service_packages_promo = true. La promo NO tiene imagen: el sistema envía su TEXTO OFICIAL en lugar de tu respuesta, en un solo mensaje con el botón "Llenar mis datos" que abre directo el formulario de la promo. En ese turno no la redactes tú (pon una sola línea corta; se reemplaza igual).`
+      : `- Esta promo pertenece a la LÍNEA B (paquetes de producción). Cuando el cliente pregunte por promociones, ofertas o descuentos, o mencione ${promoMentions}, o pida esta promo: responde con sus datos concretos (sí puedes decir el precio y qué incluye, están arriba) y marca intents.service_packages_promo = true.`,
     `- En ese turno marca intents.service_packages = false: la promo y el flyer normal de paquetes NUNCA salen juntos, se enviaría material contradictorio (la promo vs. los paquetes mensuales de ${renderPackageSizes()} videos).`,
     "- Si el cliente pregunta por los paquetes NORMALES sin mencionar promoción, sigue el FLUJO B de siempre (intents.service_packages = true) y, si viene al caso, menciona en UNA línea que hay una promo vigente por si le interesa. NO marques los dos intents a la vez.",
     `- La promo NO reemplaza a los paquetes de ${renderPackageSizes()} videos: es una oferta temporal adicional.`,
@@ -360,6 +485,19 @@ function renderPromoContext(now: Date): string {
       .join(" o ")} videos NO es una cantidad fuera de los paquetes — es exactamente esta promo. En ese caso NO respondas que solo existen los paquetes de ${renderPackageSizes()}, NO marques advisor_handoff (ni "out_of_catalog" ni "custom_quantity") y NO ofrezcas cotización a medida: ofrécele la promo y marca intents.service_packages_promo = true.`,
     "- NUNCA prometas la promo para después de su última fecha de vigencia ni la extiendas.",
   );
+
+  if (textPromo) {
+    lines.push(
+      "- Si el texto oficial de la promo YA se le envió en esta conversación (está en el historial), NO vuelvas a marcar intents.service_packages_promo salvo que pida la promo otra vez con todas las letras: responde sus dudas en pocas líneas con los datos de arriba.",
+      `- INICIATIVA PARA ADQUIRIR LA PROMO: si el cliente responde con interés o positivismo a la promo ("sí", "me interesa", "la quiero", "agéndame", "quiero aprovecharla", "qué fecha tienen", "cómo empezamos"), responde ÚNICA y EXACTAMENTE con este texto: "${PROMO_FORM_BUTTON_TEXT}" y marca service_intake_requested = true (NO marques intents.service_packages_promo en ese turno). El sistema adjunta el botón que abre el formulario de la promo. NUNCA pegues el formulario 📌 ni le pidas los datos por chat.`,
+      ...(textPromo.presenterPrice
+        ? [
+            `- Si pregunta por la presentadora: son ${textPromo.presenterPrice} Bs adicionales (en total ${textPromo.price + textPromo.presenterPrice} Bs) y la puede elegir en el formulario. Recomendamos que salga el dueño del negocio.`,
+          ]
+        : []),
+      "- NUNCA confirmes una fecha ni una hora de grabación: el asesor la coordina cuando recibe sus datos.",
+    );
+  }
 
   return lines.join("\n");
 }
@@ -375,6 +513,9 @@ export {
   getActivePromos,
   getActivePromoAmounts,
   getActivePromoVideoCounts,
+  getActiveTextPromo,
+  findActivePromo,
+  isPromoClientText,
   isPromoActive,
   isPromoIntentActive,
   renderPromoContext,

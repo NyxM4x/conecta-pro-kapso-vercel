@@ -49,12 +49,27 @@ const CONTENT_TYPE_OPTIONS = [
   "Incrementar ventas",
 ];
 
+// Preguntas extra del formulario de una PROMOCIÓN (lib/promos.ts). Los paquetes del
+// catálogo no las tienen: solo la promo ofrece presentadora y se agenda por fecha.
+type PresenterChoice = "owner" | "presenter";
+
+const PRESENTER_OPTIONS: { value: PresenterChoice; label: string }[] = [
+  { value: "owner", label: "Saldrá el dueño del negocio (recomendado)" },
+  { value: "presenter", label: "Quiero presentadora profesional" },
+];
+
+const PREFERRED_DATE_MAX_LENGTH = 80;
+
 type LeadInput = Record<LeadFieldKey, string> & {
-  // Nombre del paquete elegido, tal cual está en VIDEO_PACKAGES.
+  // Nombre del paquete elegido, tal cual está en VIDEO_PACKAGES, o el nombre corto de la
+  // promo (Promo.shortName).
   packageName: string;
   // WhatsApp de quien tocó el botón del bot (?wa=). Es el contacto del lead; falta solo si
   // alguien abrió la página sin pasar por el bot.
   originPhone?: string;
+  // Solo en el formulario de una promo.
+  presenter?: PresenterChoice;
+  preferredDate?: string;
 };
 
 // Recorta y valida lo que manda el formulario. Devuelve los datos limpios o la lista de
@@ -77,6 +92,15 @@ function validateLead(
   const origin = typeof raw.originPhone === "string" ? raw.originPhone.replace(/\D/g, "") : "";
   if (origin.length >= 7 && origin.length <= 15) lead.originPhone = origin;
 
+  // Extras de la promo: si vienen se guardan; que sean obligatorios lo decide /api/leads,
+  // que es quien sabe si el paquete es una promo.
+  if (PRESENTER_OPTIONS.some((option) => option.value === raw.presenter)) {
+    lead.presenter = raw.presenter as PresenterChoice;
+  }
+  const preferredDate =
+    typeof raw.preferredDate === "string" ? raw.preferredDate.trim().slice(0, PREFERRED_DATE_MAX_LENGTH) : "";
+  if (preferredDate) lead.preferredDate = preferredDate;
+
   return errors.length > 0 ? { ok: false, errors: [...new Set(errors)] } : { ok: true, lead };
 }
 
@@ -85,6 +109,8 @@ type LeadMessageOptions = {
   verified?: boolean;
   // Ya había dejado sus datos por el chat: el asesor no debe tratarlo como un lead nuevo.
   alreadyLeadInChat?: boolean;
+  // El lead es de una promoción: precio de la presentadora (si la promo la ofrece).
+  promo?: { presenterPrice?: number };
 };
 
 // Mensaje del lead para el grupo de asesores (parse_mode HTML).
@@ -103,8 +129,22 @@ function buildLeadTelegramMessage(
     : ["⚠️ Sin número: abrió la página sin pasar por el botón del bot"];
 
   const lines = [
-    "🌐 <b>Nuevo lead desde la web — Conecta Pro</b>",
-    `📦 Paquete: <b>${e(packageLabel)}</b>`,
+    options.promo
+      ? "🔥 <b>Nuevo lead de PROMOCIÓN desde la web — Conecta Pro</b>"
+      : "🌐 <b>Nuevo lead desde la web — Conecta Pro</b>",
+    `${options.promo ? "🎁 Promo" : "📦 Paquete"}: <b>${e(packageLabel)}</b>`,
+  ];
+
+  if (options.promo && lead.presenter) {
+    lines.push(
+      lead.presenter === "presenter"
+        ? `🎤 Presentadora: <b>Sí</b>${options.promo.presenterPrice ? ` (+${options.promo.presenterPrice} Bs)` : ""}`
+        : "🎤 Presentadora: No, sale el dueño del negocio",
+    );
+  }
+  if (options.promo && lead.preferredDate) lines.push(`📅 Fecha tentativa: ${e(lead.preferredDate)}`);
+
+  lines.push(
     "",
     `👤 Nombre: ${e(lead.name)}`,
     `🏢 Empresa: ${e(lead.company)}`,
@@ -113,7 +153,7 @@ function buildLeadTelegramMessage(
     `🏷️ Rubro: ${e(lead.sector)}`,
     `📲 Redes: ${e(lead.social)}`,
     `🎬 Contenido: ${e(lead.contentType)}`,
-  ];
+  );
 
   if (lead.reference) lines.push(`✨ Referencia: ${e(lead.reference)}`);
   if (options.alreadyLeadInChat) {
@@ -126,7 +166,9 @@ function buildLeadTelegramMessage(
 export {
   LEAD_FIELDS,
   CONTENT_TYPE_OPTIONS,
+  PRESENTER_OPTIONS,
+  PREFERRED_DATE_MAX_LENGTH,
   validateLead,
   buildLeadTelegramMessage,
 };
-export type { LeadField, LeadFieldKey, LeadInput, LeadMessageOptions };
+export type { LeadField, LeadFieldKey, LeadInput, LeadMessageOptions, PresenterChoice };
