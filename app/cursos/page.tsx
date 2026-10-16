@@ -51,13 +51,14 @@ export default async function CursosPage({
       name: course.name,
       details: COURSE_DETAILS[course.id] ?? null,
       schedule,
-      // Con el curso por empezar o en marcha no hay nada que pedir por chat: se paga en la puerta.
+      // Solo para reservar un curso a la venta. Con el curso por empezar o en marcha no hay
+      // nada que pedir por chat (se paga en la puerta), y sin fecha tampoco: un "¿cuándo es la
+      // próxima fecha?" solo gastaría mensajes del bot para contestar que no hay. La fecha
+      // nueva se anuncia en TikTok, como dice la ficha.
       whatsappUrl:
         schedule.state === "on_sale"
           ? whatsappLink(`Hola, quiero reservar mi cupo para el ${course.name}`)
-          : schedule.state === "no_date"
-            ? whatsappLink(`Hola, quiero saber cuándo es la próxima fecha del ${course.name}`)
-            : "",
+          : "",
     };
   });
 

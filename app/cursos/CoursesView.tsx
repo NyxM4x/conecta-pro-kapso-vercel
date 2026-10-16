@@ -173,9 +173,7 @@ function CoursesView({
                 <div className="cp-course-actions">
                   {whatsappUrl && (
                     <a className="cp-btn cp-btn-wa" href={whatsappUrl}>
-                      {schedule.state === "on_sale"
-                        ? "Reservar mi cupo por WhatsApp"
-                        : "Preguntar por la próxima fecha"}
+                      Reservar mi cupo por WhatsApp
                     </a>
                   )}
                   {schedule.state !== "no_date" && (
