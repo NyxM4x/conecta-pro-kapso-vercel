@@ -2847,14 +2847,25 @@ async function notifyLeadToTelegram(params: {
     params.history.filter((message) => message.role === "user").slice(-1)[0]?.content ??
     params.fallbackText;
 
+  // La última oferta que vio fue la promo vigente: el asesor tiene que saber que los datos
+  // son para la PROMOCIÓN y no para un paquete del catálogo.
+  const textPromo = getActiveTextPromo(new Date());
+  const promoLead =
+    textPromo !== null && params.kind !== "ai_agent" && promoIsLastOffer(params.history);
+
   const headline =
     params.kind === "call_request"
       ? "🔴 <b>PRIORIDAD ALTA</b>\n📞 <b>Lead — Solicita llamada</b>"
       : params.kind === "ai_agent"
         ? "🤖 <b>Lead — Agente de IA</b>"
-        : "🟢 <b>Nuevo lead — Conecta Pro</b>";
+        : promoLead
+          ? "🔥 <b>Nuevo lead de PROMOCIÓN — Conecta Pro</b>"
+          : "🟢 <b>Nuevo lead — Conecta Pro</b>";
 
   const notes = [
+    promoLead && textPromo
+      ? `🎁 Promo: <b>${textPromo.shortName} — ${textPromo.videoCount} videos — ${textPromo.price} Bs</b> (no es un paquete del catálogo)`
+      : null,
     params.wantsOfficeVisit
       ? "🏢 Quiere reunirse en la oficina — llámalo para coordinar día y hora (el bot NO agendó nada)"
       : null,
@@ -3494,6 +3505,10 @@ const AssistantTurnSchema = z.object({
 });
 
 type AssistantTurn = z.infer<typeof AssistantTurnSchema>;
+
+// Frase del menú genérico (saludo y fallback), normalizada: reconoce el menú en una
+// respuesta aunque el modelo le cambie un emoji.
+const MENU_GREETING_MARKER = "EN QUE PUEDO AYUDARTE HOY";
 
 const FALLBACK_ASSISTANT_TURN: AssistantTurn = {
   reply:
@@ -8150,15 +8165,45 @@ async function processWebhookEvent(
     turn.intents.service_packages = true;
   }
 
+  // Preguntó por los cursos y la respuesta es el menú genérico ("¿En qué puedo ayudarte
+  // hoy?"). Pasa cuando el modelo calla y la red de silencio cae al menú: "Quiero preguntar
+  // sobre los cursos" recibió el menú en vez de "no tenemos fechas" (17 oct 2026). Con un
+  // curso con fecha va el texto del botón de cursos (el botón sale por ese texto); sin
+  // ninguno, el texto de que no hay fechas (abajo).
+  const menuReplyToCourseQuestion =
+    normalizeForMatch(replyText).includes(MENU_GREETING_MARKER) &&
+    mentionsCourse(unansweredClientText) &&
+    !hasStrongPackageSignal(unansweredClientText);
+
+  if (menuReplyToCourseQuestion && hasCourseWithDate(turnNow)) {
+    replyText = renderCoursesButtonText(turnNow);
+    turn.intents.course_flyer = true;
+  }
+
+  if (menuReplyToCourseQuestion) {
+    await logSystemEvent({
+      level: "info",
+      eventType: "course_reply_replaced_menu",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: {
+        has_course_with_date: hasCourseWithDate(turnNow),
+        client_message: unansweredClientText.slice(0, 200),
+      },
+    });
+  }
+
   // Sin ningún curso con fecha cargada no hay botón de cursos: la respuesta es solo el texto
   // de que no hay fechas confirmadas, aunque el modelo haya querido mandar el botón o el
   // material del curso. Así el cliente no abre una página que solo dice "por confirmar".
   // También cuando el cliente pregunta por un curso y la respuesta igual le ofrece fecha,
-  // cupo, preventa o QR (salvo que esté avisando un pago ya hecho).
+  // cupo, preventa o QR (salvo que esté avisando un pago ya hecho), o le manda el menú.
   const courseReplyWithoutDates =
     !hasCourseWithDate(turnNow) &&
     !turn.payment_confirmation &&
     (turn.intents.course_flyer ||
+      menuReplyToCourseQuestion ||
       detectButtonTextKind(replyText) === "courses" ||
       (mentionsCourse(batchText) &&
         /\b(QR|PREVENTA|RESERVA\w*|CUPO|CUPOS|FECHA|FECHAS|INSCRIBI\w*)\b/.test(
@@ -8250,9 +8295,11 @@ async function processWebhookEvent(
   // Toda la resolución vive en lib/media-intents.ts, como función pura y probada:
   // vencimiento, exclusión con cursos / agente de IA, y el desempate con el flyer normal
   // de paquetes (sale exactamente uno de los dos). Aquí solo se aplica y se registra.
+  // Se mira todo lo que escribió desde la última respuesta: "Vi una promoción" + "quiero
+  // info" pide la promo aunque el último mensaje no la nombre.
   const promoResolution = resolvePromoIntents({
     intents: [...intentsToSend],
-    message: lastMessage.text,
+    message: unansweredClientText,
     now: turnNow,
     courseFlyerMarked: turn.intents.course_flyer,
     aiAgentFlyerMarked: turn.intents.ai_agent_flyer,
@@ -8367,6 +8414,11 @@ async function processWebhookEvent(
       if (lineIntents.length === 0) continue;
       if (openLines.includes(line)) continue;
       if (detectExplicitLineSwitch(lastMessage.text, line)) continue;
+      // Pedir la promo vigente ya es pedir la LÍNEA B, aunque no diga "paquete" ni "video":
+      // "Vi una promoción" en una conversación que venía de cursos se quedaba sin la promo.
+      if (line === "service_packages" && asksForActivePromo(unansweredClientText, turnNow)) {
+        continue;
+      }
 
       for (const intent of lineIntents) intentsToSend.delete(intent);
 
@@ -8471,7 +8523,7 @@ async function processWebhookEvent(
       textPromo &&
       !chosenPackage &&
       !detectSelectedPackageName(lastMessage.text) &&
-      (promoIsLastOffer(history) || asksForActivePromo(lastMessage.text, turnNow))
+      (promoIsLastOffer(history) || asksForActivePromo(unansweredClientText, turnNow))
         ? textPromo.slug
         : null;
 
