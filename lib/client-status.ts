@@ -34,6 +34,7 @@ const BUTTON_LABELS: Record<string, string> = {
 
 const PAGE_LABELS: Record<string, string> = {
   paquetes: "/paquetes",
+  promocion: "/promocion",
   cursos: "/cursos",
   oficina: "/oficina",
 };
@@ -77,7 +78,11 @@ function describeEvent(event: ClientEvent, now: Date): string | null {
   if (page) return `👀 Abrió la página ${PAGE_LABELS[page] ?? page} — ${when}`;
 
   if (content.startsWith("[TELEGRAM_LEAD_SENT] lead recibido desde la página")) {
-    const where = content.includes("/oficina") ? "/oficina (visita)" : "/paquetes";
+    const where = content.includes("/oficina")
+      ? "/oficina (visita)"
+      : content.includes("/promocion")
+        ? "/promocion"
+        : "/paquetes";
     return `✅ Envió sus datos en ${where} — ${when}`;
   }
   if (content.startsWith("[TELEGRAM_LEAD_SENT]")) return `✅ Dejó sus datos por el chat — ${when}`;

@@ -99,7 +99,7 @@ export async function POST(request: Request) {
     try {
       await closeWebLead(supabase, conversation, {
         phone: originPhone,
-        page: office ? "oficina" : "paquetes",
+        page: office ? "oficina" : promo ? "promocion" : "paquetes",
         selectedPackage: pkg ? packageSlug(pkg.name) : promo ? promo.slug : null,
         detail: pkg
           ? { package: pkg.name }

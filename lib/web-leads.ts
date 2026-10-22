@@ -11,7 +11,7 @@
 // mensaje cuesta.
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { siteVisitMarker, webLeadMarker, type SitePage } from "./site-links.ts";
+import { siteVisitMarker, webLeadMarker, type LeadPage, type SitePage } from "./site-links.ts";
 
 // Lo mismo que HUMAN_HANDOFF_PAUSE_MINUTES del webhook: el asesor puede tomar el lead
 // recién a la mañana siguiente.
@@ -108,7 +108,7 @@ async function closeWebLead(
   conversation: ConversationRow,
   params: {
     phone: string;
-    page: "paquetes" | "oficina";
+    page: LeadPage;
     selectedPackage?: string | null;
     detail: Record<string, unknown>;
   },

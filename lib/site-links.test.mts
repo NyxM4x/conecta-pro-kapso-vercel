@@ -405,6 +405,7 @@ test("las marcas de la web tienen el prefijo que buscan el webhook y /cliente", 
   assert.equal(webLeadMarker("paquetes"), "[TELEGRAM_LEAD_SENT] lead recibido desde la página /paquetes");
   assert.ok(webLeadMarker("oficina").startsWith(WEB_LEAD_MARKER_PREFIX));
   assert.equal(siteVisitMarker("cursos"), "[SITE_VISIT:cursos]");
+  assert.equal(webLeadMarker("promocion"), "[TELEGRAM_LEAD_SENT] lead recibido desde la página /promocion");
 });
 
 test("quien acepta la promo recibe el formulario de la promo, no el de los paquetes", () => {
@@ -412,6 +413,7 @@ test("quien acepta la promo recibe el formulario de la promo, no el de los paque
   assert.equal(button?.kind, "packages_form");
   assert.equal(button?.bodyText, PROMO_FORM_BUTTON_TEXT);
   const url = new URL(button!.url);
+  assert.equal(url.pathname, "/promocion");
   assert.equal(url.searchParams.get("p"), "promo-4-videos");
   assert.equal(url.searchParams.get("f"), "1");
 });
@@ -428,7 +430,15 @@ test("con la promo vigente, 'Ver paquetes' sigue abriendo la página entera", ()
     turn({ intents: new Set(["service_packages"]), promoSlug: "promo-4-videos" }),
   );
   assert.equal(button?.kind, "packages");
+  // /paquetes ya no muestra la promo: quien pide los paquetes ve los paquetes.
+  assert.equal(new URL(button!.url).pathname, "/paquetes");
   assert.equal(new URL(button!.url).searchParams.get("p"), null);
+});
+
+test("el formulario de un paquete del catálogo sigue en /paquetes aunque haya promo", () => {
+  const url = new URL(buildPackagesUrl({ baseUrl: BASE, packageName: "Pro", form: true }));
+  assert.equal(url.pathname, "/paquetes");
+  assert.equal(url.searchParams.get("p"), "pro");
 });
 
 test("el texto del formulario de la promo se reconoce como botón de formulario", () => {
@@ -440,7 +450,7 @@ test("el texto del formulario de la promo se reconoce como botón de formulario"
 test("el botón de la promo abre directo su formulario, con el número firmado", () => {
   const button = buildPromoFormButton({ baseUrl: BASE, phone: PHONE, secret: SECRET, promoSlug: "promo-4-videos" });
   const url = new URL(button.url);
-  assert.equal(url.pathname, "/paquetes");
+  assert.equal(url.pathname, "/promocion");
   assert.equal(url.searchParams.get("p"), "promo-4-videos");
   assert.equal(url.searchParams.get("f"), "1");
   assert.ok(verifyLeadPhone(PHONE, url.searchParams.get("t") ?? "", SECRET));

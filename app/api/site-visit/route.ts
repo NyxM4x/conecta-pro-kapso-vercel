@@ -8,7 +8,7 @@
 import { getLeadLinkSecret, verifyLeadPhone, type SitePage } from "../../../lib/site-links";
 import { findConversation, getSupabase, recordSiteVisit } from "../../../lib/web-leads";
 
-const PAGES: SitePage[] = ["paquetes", "cursos", "oficina"];
+const PAGES: SitePage[] = ["paquetes", "promocion", "cursos", "oficina"];
 
 export async function POST(request: Request) {
   const raw = await request.json().catch(() => null);

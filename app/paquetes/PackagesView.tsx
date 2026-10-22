@@ -1,8 +1,8 @@
 "use client";
 
-// Vista de /paquetes: portada, promoción vigente (si hay), tarjetas de paquetes (estilo
-// "Our Process") y, al tocar una, la hoja de detalle con el formulario de datos que llega a
-// Telegram.
+// Vista de /paquetes y /promocion: portada, tarjetas (los paquetes del catálogo, estilo "Our
+// Process", o la promoción vigente) y, al tocar una, la hoja de detalle con el formulario de
+// datos que llega a Telegram. Cada página muestra solo lo suyo y enlaza a la otra al final.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HOW_WE_WORK_GOAL, HOW_WE_WORK_STEPS } from "../../lib/how-we-work";
@@ -61,6 +61,7 @@ const pricePeriod = (period: PackageCard["period"]) => (period === "mes" ? "Bs/m
 const periodPhrase = (period: PackageCard["period"]) => (period === "mes" ? "al mes" : `en ${period}`);
 
 function PackagesView({
+  view,
   packages,
   promos,
   originPhone,
@@ -69,6 +70,8 @@ function PackagesView({
   openForm,
   businessWhatsapp,
 }: {
+  // "packages" en /paquetes, "promo" en /promocion.
+  view: "packages" | "promo";
   packages: PackageCard[];
   promos: PromoCard[];
   originPhone: string;
@@ -200,20 +203,40 @@ function PackagesView({
   // datos" solo le llegaría al bot, que queda apagado para que lo atienda una persona.
   const whatsappBack = businessWhatsapp && open ? `https://wa.me/${businessWhatsapp}` : "";
 
+  // Enlace a la otra página, con el número firmado: el lead que deje allá también se cierra en
+  // su conversación. En /paquetes solo aparece si hay una promo vigente.
+  const signed = new URLSearchParams({
+    ...(originPhone ? { wa: originPhone } : {}),
+    ...(originToken ? { t: originToken } : {}),
+  }).toString();
+  const crossLink =
+    view === "promo"
+      ? { href: `/paquetes${signed ? `?${signed}` : ""}`, label: "Ver nuestros paquetes mensuales" }
+      : promos.length > 0
+        ? { href: `/promocion${signed ? `?${signed}` : ""}`, label: "🔥 Ver la promoción vigente" }
+        : null;
 
   return (
     <main className="cp">
-      <VisitBeacon page="paquetes" />
-      <Hero
-        title="Marketing"
-        copy="Estrategia, guiones, grabación y edición: creamos el contenido de tu negocio para que tú solo te ocupes de vender."
-        ctaLabel={promos.length > 0 ? "Ver promoción" : "Ver paquetes"}
-        ctaHref={promos.length > 0 ? "#promo" : "#paquetes"}
-      />
+      <VisitBeacon page={view === "promo" ? "promocion" : "paquetes"} />
+      {view === "promo" ? (
+        <Hero
+          title="Promoción"
+          copy="Una oferta por tiempo limitado: estrategia, guiones, grabación y edición de tus videos para que tu negocio destaque en TikTok."
+          ctaLabel="Ver promoción"
+          ctaHref="#promo"
+        />
+      ) : (
+        <Hero
+          title="Marketing"
+          copy="Estrategia, guiones, grabación y edición: creamos el contenido de tu negocio para que tú solo te ocupes de vender."
+          ctaLabel="Ver paquetes"
+          ctaHref="#paquetes"
+        />
+      )}
 
-      {/* Promoción vigente: va antes de los paquetes porque es lo que el cliente vino a ver
-          cuando el bot le mandó la promo. Pasada su fecha, la sección desaparece sola. */}
-      {promos.length > 0 && (
+      {/* Promoción vigente, solo en /promocion. Pasada su fecha la página lleva a /paquetes. */}
+      {view === "promo" && promos.length > 0 && (
         <section className="cp-packages cp-promo-section" id="promo">
           <header className="cp-packages-head">
             <h2>
@@ -249,99 +272,111 @@ function PackagesView({
         </section>
       )}
 
-      <section className="cp-packages" id="paquetes">
-        <header className="cp-packages-head">
-          <h2>
-            Nuestros
-            <br />
-            Paquetes
-          </h2>
-          <p>Elige uno, déjanos tus datos y un asesor te escribe por WhatsApp.</p>
-        </header>
+      {view === "packages" && (
+        <section className="cp-packages" id="paquetes">
+          <header className="cp-packages-head">
+            <h2>
+              Nuestros
+              <br />
+              Paquetes
+            </h2>
+            <p>Elige uno, déjanos tus datos y un asesor te escribe por WhatsApp.</p>
+          </header>
 
-        <div className="cp-cards">
-          {packages.map((pkg, index) => (
-            <button
-              key={pkg.slug}
-              type="button"
-              className={`cp-card cp-card-${(index % 4) + 1}${pkg.video ? " cp-card-has-video" : ""}`}
-              onClick={() => openSheet({ kind: "package", index })}
-            >
-              {/* El video del paquete corre desde antes de tocarlo, de fondo y sin audio. */}
-              {pkg.video && (
-                <video
-                  className="cp-card-video"
-                  src={`${pkg.video}.mp4`}
-                  poster={`${pkg.video}.jpg`}
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                  preload="auto"
-                  aria-hidden
-                />
-              )}
-              <span className="cp-card-num">{pad(index)}</span>
-              <span className="cp-card-body">
-                <span className="cp-card-name">{pkg.name}</span>
-                <span className="cp-card-meta">
-                  {pkg.videos} videos · {formatPrice(pkg.price)} {pricePeriod(pkg.period)}
+          <div className="cp-cards">
+            {packages.map((pkg, index) => (
+              <button
+                key={pkg.slug}
+                type="button"
+                className={`cp-card cp-card-${(index % 4) + 1}${pkg.video ? " cp-card-has-video" : ""}`}
+                onClick={() => openSheet({ kind: "package", index })}
+              >
+                {/* El video del paquete corre desde antes de tocarlo, de fondo y sin audio. */}
+                {pkg.video && (
+                  <video
+                    className="cp-card-video"
+                    src={`${pkg.video}.mp4`}
+                    poster={`${pkg.video}.jpg`}
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload="auto"
+                    aria-hidden
+                  />
+                )}
+                <span className="cp-card-num">{pad(index)}</span>
+                <span className="cp-card-body">
+                  <span className="cp-card-name">{pkg.name}</span>
+                  <span className="cp-card-meta">
+                    {pkg.videos} videos · {formatPrice(pkg.price)} {pricePeriod(pkg.period)}
+                  </span>
+                  {pkg.tagline && <span className="cp-card-text">{pkg.tagline}</span>}
+                  {/* Mismo estilo que "Ver paquetes": el de antes pasaba desapercibido. */}
+                  <span className="cp-card-cta">
+                    Ver detalle <span className="cp-btn-arrow cp-btn-arrow-side" aria-hidden>→</span>
+                  </span>
                 </span>
-                {pkg.tagline && <span className="cp-card-text">{pkg.tagline}</span>}
-                {/* Mismo estilo que "Ver paquetes": el de antes pasaba desapercibido. */}
-                <span className="cp-card-cta">
-                  Ver detalle <span className="cp-btn-arrow cp-btn-arrow-side" aria-hidden>→</span>
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
+              </button>
+            ))}
+          </div>
 
-        {/* En el celular las tarjetas se deslizan de lado: sin aviso, el tercer paquete no se ve. */}
-        <p className="cp-swipe-hint" aria-hidden>
-          Desliza para ver los {packages.length} paquetes <span>→</span>
-        </p>
+          {/* En el celular las tarjetas se deslizan de lado: sin aviso, el tercer paquete no se ve. */}
+          <p className="cp-swipe-hint" aria-hidden>
+            Desliza para ver los {packages.length} paquetes <span>→</span>
+          </p>
 
-        {/* Lleva a "Cómo trabajamos", que sin este botón casi nadie bajaba a leer. */}
-        <div className="cp-next">
-          <a className="cp-btn cp-btn-hero" href="#como-trabajamos">
-            ¿Cómo trabajamos? <span className="cp-btn-arrow" aria-hidden>↓</span>
-          </a>
-        </div>
-      </section>
+          {/* Lleva a "Cómo trabajamos", que sin este botón casi nadie bajaba a leer. */}
+          <div className="cp-next">
+            <a className="cp-btn cp-btn-hero" href="#como-trabajamos">
+              ¿Cómo trabajamos? <span className="cp-btn-arrow" aria-hidden>↓</span>
+            </a>
+          </div>
+        </section>
+      )}
 
       {/* Lo que antes el bot mandaba como texto largo por WhatsApp. */}
-      <section className="cp-packages cp-how" id="como-trabajamos">
-        <header className="cp-packages-head">
-          <h2>
-            Cómo
-            <br />
-            Trabajamos
-          </h2>
-          <p>Una metodología organizada para que tengas contenido constante y profesional.</p>
-        </header>
+      {view === "packages" && (
+        <section className="cp-packages cp-how" id="como-trabajamos">
+          <header className="cp-packages-head">
+            <h2>
+              Cómo
+              <br />
+              Trabajamos
+            </h2>
+            <p>Una metodología organizada para que tengas contenido constante y profesional.</p>
+          </header>
 
-        <ol className="cp-how-steps">
-          {HOW_WE_WORK_STEPS.map((step, index) => (
-            <li key={step.title}>
-              <span className="cp-how-num">{pad(index)}</span>
-              <div>
-                <h3>{step.title}</h3>
-                <p>{step.text}</p>
-                {step.points && (
-                  <ul className="cp-includes">
-                    {step.points.map((point) => (
-                      <li key={point}>{point}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
+          <ol className="cp-how-steps">
+            {HOW_WE_WORK_STEPS.map((step, index) => (
+              <li key={step.title}>
+                <span className="cp-how-num">{pad(index)}</span>
+                <div>
+                  <h3>{step.title}</h3>
+                  <p>{step.text}</p>
+                  {step.points && (
+                    <ul className="cp-includes">
+                      {step.points.map((point) => (
+                        <li key={point}>{point}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ol>
 
-        <p className="cp-how-goal">{HOW_WE_WORK_GOAL}</p>
-      </section>
+          <p className="cp-how-goal">{HOW_WE_WORK_GOAL}</p>
+        </section>
+      )}
+
+      {crossLink && (
+        <div className="cp-next">
+          <a className="cp-btn cp-btn-hero" href={crossLink.href}>
+            {crossLink.label} <span className="cp-btn-arrow" aria-hidden>→</span>
+          </a>
+        </div>
+      )}
 
       <footer className="cp-footer">© {new Date().getFullYear()} Conecta Pro</footer>
 

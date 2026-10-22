@@ -26,8 +26,12 @@ import { VIDEO_PACKAGES } from "./packages.ts";
 
 type LinkButtonKind = "packages" | "packages_form" | "courses" | "office";
 
-// Páginas a las que llevan los botones.
-type SitePage = "paquetes" | "cursos" | "oficina";
+// Páginas a las que llevan los botones. La promo tiene la suya (/promocion): en /paquetes
+// salía arriba de los paquetes y quien pedía los paquetes veía primero la promo.
+type SitePage = "paquetes" | "promocion" | "cursos" | "oficina";
+
+// Páginas con formulario de datos: lo que queda en la marca del lead web.
+type LeadPage = "paquetes" | "promocion" | "oficina";
 
 type LinkButton = {
   kind: LinkButtonKind;
@@ -70,7 +74,7 @@ const siteVisitMarker = (page: SitePage) => `${SITE_VISIT_MARKER_PREFIX}${page}]
 // Empieza como el del lead por chat para que todo lo que ya busca [TELEGRAM_LEAD_SENT] lo
 // cuente; el webhook usa el prefijo completo para saber que vino de la web.
 const WEB_LEAD_MARKER_PREFIX = "[TELEGRAM_LEAD_SENT] lead recibido desde la página";
-const webLeadMarker = (page: "paquetes" | "oficina") => `${WEB_LEAD_MARKER_PREFIX} /${page}`;
+const webLeadMarker = (page: LeadPage) => `${WEB_LEAD_MARKER_PREFIX} /${page}`;
 
 // ---------------------------------------------------------------------------
 // URL del sitio
@@ -223,7 +227,8 @@ function buildPackagesUrl(params: {
   secret?: string | null;
   form?: boolean;
 }): string {
-  const url = new URL("/paquetes", params.baseUrl);
+  // La promo abre su propia página; un paquete del catálogo, /paquetes.
+  const url = new URL(params.promoSlug ? "/promocion" : "/paquetes", params.baseUrl);
   setSignedPhone(url, params.phone, params.secret);
   const slug = params.promoSlug || (params.packageName ? packageSlug(params.packageName) : "");
   if (slug) url.searchParams.set("p", slug);
@@ -504,4 +509,4 @@ export {
   verifyLeadPhone,
   webLeadMarker,
 };
-export type { LinkButton, LinkButtonKind, LinkButtonParams, SitePage };
+export type { LeadPage, LinkButton, LinkButtonKind, LinkButtonParams, SitePage };
