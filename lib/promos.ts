@@ -56,6 +56,17 @@ type Promo = {
   // usa imagen: el webhook reemplaza la respuesta del modelo por este texto revisado, así
   // el cliente recibe siempre la misma oferta y no una paráfrasis.
   clientText?: string;
+  // Otros nombres con los que los clientes piden ESTA promo (lo que dicen los asesores, los
+  // anuncios o una promo anterior parecida). Van al prompt para que el modelo no responda
+  // que "no está en el catálogo".
+  nicknames?: string[];
+  // Los mismos apodos como red determinista, sobre el texto ya normalizado (mayúsculas, sin
+  // tildes). Un monto aproximado ("el de 1000 Bs") va aquí con contexto de dinero o de
+  // paquete, nunca como número suelto: "tengo 1000 seguidores" no pide la promo.
+  clientHints?: RegExp;
+  // Montos que también identifican la promo (además de `price`). Solo los usa la
+  // desambiguación con la PROMO DEL LIVE: "promo 1000" es esta promo, no el QR de un curso.
+  aliasAmounts?: number[];
 };
 
 // Texto oficial de la promo de 4 videos por 999 Bs, tal cual lo entregó el equipo.
@@ -121,6 +132,14 @@ const PROMOS: Promo[] = [
     ],
     presenterPrice: 200,
     clientText: PROMO_999_TEXT,
+    // Clientes reales (19–21 oct 2026): "paquete expres", "quisiera adquirir el paquete
+    // express" y "tomar el paquete de 1000 bs" recibieron el catálogo, y al último el bot le
+    // dijo que ese paquete no existía. Así la llaman los asesores y así se llamaba la promo
+    // de agosto (Paquete Exprés, 4 videos por 1.000 Bs).
+    nicknames: ["paquete exprés", "el paquete de 1000 Bs", "la promo de 1000"],
+    clientHints:
+      /\bEXPRES{1,2}\b|\b1\.?000\s*(BS|BOB|BOLIVIANOS?)\b|\b(PAQUETE|PROMO|PROMOCION|PLAN)\s+(DE\s+)?1\.?000\b/,
+    aliasAmounts: [1000],
   },
   {
     id: "promo_bolivia_2026_08",
@@ -387,7 +406,19 @@ function isPromoIntentActive(intent: PromoIntent, now: Date): boolean {
 // (esta promoción de videos) con la PROMO DEL LIVE, que usa la misma palabra clave
 // seguida del precio del CURSO anunciado en la transmisión.
 function getActivePromoAmounts(now: Date): number[] {
+  return getActivePromos(now).flatMap((promo) => [promo.price, ...(promo.aliasAmounts ?? [])]);
+}
+
+// Precios exactos de las promos vigentes: un "999" suelto en el mensaje ya es la promo.
+// Los montos aproximados (aliasAmounts) no, porque un 1000 suelto puede ser cualquier cosa.
+function getActivePromoPrices(now: Date): number[] {
   return getActivePromos(now).map((promo) => promo.price);
+}
+
+// ¿El cliente nombró una promo vigente por uno de sus apodos ("paquete exprés", "el de
+// 1000 Bs")? `normalized` ya viene en mayúsculas y sin tildes.
+function mentionsActivePromoNickname(normalized: string, now: Date): boolean {
+  return getActivePromos(now).some((promo) => promo.clientHints?.test(normalized) ?? false);
 }
 
 // Cantidades de video de las promos vigentes ("4 videos"). Mientras la promo está
@@ -465,6 +496,11 @@ function renderPromoContext(now: Date): string {
         new Date(new Date(promo.endsAt).getTime() - 1).toISOString(),
       )} (hora de Bolivia).`,
       ...promo.details.map((detail) => `  • ${detail}`),
+      ...(promo.nicknames?.length
+        ? [
+            `  • Los clientes también la llaman ${promo.nicknames.map((name) => `"${name}"`).join(", ")}: es ESTA misma promo (el precio correcto es ${promo.price} Bs). NUNCA respondas que ese paquete no existe o no está en el catálogo.`,
+          ]
+        : []),
     );
   }
 
@@ -484,6 +520,7 @@ function renderPromoContext(now: Date): string {
       .map((promo) => promo.videoCount)
       .join(" o ")} videos NO es una cantidad fuera de los paquetes — es exactamente esta promo. En ese caso NO respondas que solo existen los paquetes de ${renderPackageSizes()}, NO marques advisor_handoff (ni "out_of_catalog" ni "custom_quantity") y NO ofrezcas cotización a medida: ofrécele la promo y marca intents.service_packages_promo = true.`,
     "- NUNCA prometas la promo para después de su última fecha de vigencia ni la extiendas.",
+    "- Si el cliente pregunta por \"el paquete\" o \"la publicidad que vi\" sin decir cuál, y no queda claro si es la promo o los paquetes del catálogo, NO asumas: pregúntale en una línea si le interesa la promoción de los videos o los paquetes mensuales, y no marques ningún intent hasta que lo diga.",
   );
 
   if (textPromo) {
@@ -512,8 +549,10 @@ export {
   renderReliefContext,
   getActivePromos,
   getActivePromoAmounts,
+  getActivePromoPrices,
   getActivePromoVideoCounts,
   getActiveTextPromo,
+  mentionsActivePromoNickname,
   findActivePromo,
   isPromoClientText,
   isPromoActive,

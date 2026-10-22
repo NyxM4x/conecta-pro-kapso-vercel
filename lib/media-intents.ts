@@ -20,9 +20,10 @@ import {
   normalizeForMatch,
 } from "./keywords.ts";
 import {
-  getActivePromoAmounts,
+  getActivePromoPrices,
   getActivePromoVideoCounts,
   isPromoIntentActive,
+  mentionsActivePromoNickname,
 } from "./promos.ts";
 
 const PROMO_INTENT = "service_packages_promo";
@@ -45,9 +46,10 @@ type PromoResolution = {
   reasons: PromoResolutionReason[];
 };
 
-// ¿El cliente está pidiendo la promo VIGENTE? Tres formas de nombrarla:
+// ¿El cliente está pidiendo la promo VIGENTE? Cuatro formas de nombrarla:
 //   - por la palabra promo/oferta/descuento,
-//   - por su precio ("el de 1000", "la de 1.000 bs"),
+//   - por su precio exacto ("la de 999"),
+//   - por uno de sus apodos ("paquete exprés", "el de 1000 Bs": ver Promo.clientHints),
 //   - por su cantidad de videos ("quiero los 4 videos") — se exige la palabra "video"
 //     para no confundirlo con cualquier otro 4 del mensaje ("a las 4", "4 sucursales").
 // Sin promo vigente siempre es false: "¿tienen promoción?" en agosto 9 no pide nada que
@@ -60,7 +62,8 @@ function asksForActivePromo(message: string, now: Date): boolean {
   if (isCourseQuery(message)) return false;
 
   if (PROMO_REQUEST_KEYWORDS.test(normalized)) return true;
-  if (containsExactNumber(normalized, getActivePromoAmounts(now))) return true;
+  if (containsExactNumber(normalized, getActivePromoPrices(now))) return true;
+  if (mentionsActivePromoNickname(normalized, now)) return true;
 
   return (
     VIDEO_WORD_KEYWORDS.test(normalized) &&

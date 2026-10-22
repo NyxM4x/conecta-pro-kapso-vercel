@@ -416,6 +416,43 @@ test("una consulta por la promo de 999 manda la promo y no el botón de paquetes
   assert.deepEqual(result.intents, ["service_packages_promo"]);
 });
 
+// Mensajes reales del 19–21 oct 2026 que recibieron el catálogo en vez de la promo.
+test("la promo de 999 también se pide como paquete exprés o como el de 1000 Bs", () => {
+  assert.equal(asksForActivePromo("paquete expres", PROMO_999_VIGENTE), true);
+  assert.equal(
+    asksForActivePromo("Buenas tardes quisiera adquirir el paquete express", PROMO_999_VIGENTE),
+    true,
+  );
+  assert.equal(
+    asksForActivePromo(
+      "nos gustaría ya avanzar y tomar el paquete de 1000 bs, comenzaríamos mañana jueves no?",
+      PROMO_999_VIGENTE,
+    ),
+    true,
+  );
+  assert.equal(asksForActivePromo("la de 1.000 bolivianos", PROMO_999_VIGENTE), true);
+});
+
+test("un 1000 sin dinero ni paquete no es la promo", () => {
+  assert.equal(asksForActivePromo("tengo 1000 seguidores, quiero el Pro", PROMO_999_VIGENTE), false);
+  assert.equal(asksForActivePromo("vendo 1000 gorras al mes", PROMO_999_VIGENTE), false);
+});
+
+test("los apodos de la promo no valen fuera de su ventana", () => {
+  assert.equal(asksForActivePromo("paquete express", new Date("2026-11-02T12:00:00-04:00")), false);
+});
+
+test("el paquete exprés cambia el botón de paquetes por la promo", () => {
+  const result = resolvePromoIntents({
+    intents: ["service_packages"],
+    message: "Buenas tardes quisiera adquirir el paquete express",
+    now: PROMO_999_VIGENTE,
+    courseFlyerMarked: false,
+    aiAgentFlyerMarked: false,
+  });
+  assert.deepEqual(result.intents, ["service_packages_promo"]);
+});
+
 console.log(`${passed} pruebas de guardas OK`);
 
 if (failures.length > 0) {

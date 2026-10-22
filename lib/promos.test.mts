@@ -14,6 +14,7 @@ import {
   getActiveTextPromo,
   isPromoClientText,
   getActivePromoAmounts,
+  getActivePromoPrices,
   getActivePromos,
   getActiveReliefCampaigns,
   getClosedReliefCampaigns,
@@ -265,7 +266,10 @@ const PROMO_999 = PROMOS.find((promo) => promo.id === "promo_4_videos_999_2026_1
 test("la promo de 999 está vigente en su ventana y se responde con texto", () => {
   assert.equal(isPromoIntentActive(PROMO, IN_999), true);
   assert.equal(getActiveTextPromo(IN_999)?.id, PROMO_999.id);
-  assert.deepEqual(getActivePromoAmounts(IN_999), [999]);
+  // 1000 es su apodo ("el paquete de 1000 Bs"): con él, "promo 1000" no es la promo del live.
+  assert.deepEqual(getActivePromoAmounts(IN_999), [999, 1000]);
+  // Como número suelto solo cuenta el precio exacto.
+  assert.deepEqual(getActivePromoPrices(IN_999), [999]);
 });
 
 test("antes y después de su ventana la promo de 999 no existe", () => {
@@ -309,6 +313,13 @@ test("el contexto de la promo de 999 explica el texto oficial y el botón al ace
   assert.ok(context.includes(PROMO_FORM_BUTTON_TEXT));
   assert.match(context, /200 Bs adicionales \(en total 1199 Bs\)/);
   assert.doesNotMatch(context, /1\.000 Bs/);
+});
+
+test("el contexto avisa que el paquete exprés y el de 1000 Bs son esta promo", () => {
+  const context = renderPromoContext(IN_999);
+  assert.match(context, /"paquete exprés"/);
+  assert.match(context, /NUNCA respondas que ese paquete no existe/);
+  assert.match(context, /NO asumas: pregúntale/);
 });
 
 console.log(`TZ=${process.env.TZ ?? "(sistema)"} — ${passed} pruebas OK`);

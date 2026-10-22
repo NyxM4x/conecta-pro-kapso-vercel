@@ -85,6 +85,7 @@ import {
   getActivePromoVideoCounts,
   getActiveTextPromo,
   isPromoClientText,
+  isPromoIntentActive,
   renderPromoContext,
   renderReliefContext,
   mentionsReliefCampaign,
@@ -3659,6 +3660,10 @@ async function alertIfOpenAiQuotaError(
 type ReceiptCheck = {
   isReceipt: boolean;
   reason: string;
+  // La imagen es la captura de un anuncio o flyer que ofrece una promoción de videos (la
+  // promo de 4 videos por 999 Bs llega así, como captura del anuncio de TikTok). Con la
+  // misma llamada de visión: no cuesta una consulta más.
+  showsPromoOffer: boolean;
   source: "vision" | "fallback";
 };
 
@@ -3671,6 +3676,11 @@ const ReceiptVisionSchema = z.object({
   reason: z
     .string()
     .describe("Explicación de una frase corta, en español, de lo que se ve en la imagen"),
+  shows_promo_offer: z
+    .boolean()
+    .describe(
+      "true si la imagen es una captura de un anuncio, publicación o flyer que ofrece una promoción de videos (por ejemplo '4 videos', '999 Bs', 'promoción')",
+    ),
 });
 
 // Descarga los bytes de la imagen: URL directa de Kapso si vino en el webhook,
@@ -3749,6 +3759,10 @@ async function classifyReceiptImage(params: {
                 "selfies, memes, fotos de productos o lugares, documentos de identidad,",
                 "capturas de chats o de redes sociales, o imágenes ilegibles.",
                 "Ante la duda sobre si hay una transacción real, responde false.",
+                "Aparte, responde shows_promo_offer = true si la imagen es la captura de un",
+                "anuncio, publicación o flyer que ofrece una promoción de videos (un precio",
+                "como 999 Bs, una cantidad como '4 videos', la palabra promoción u oferta).",
+                "En reason describe lo que se ve, incluido el texto principal si lo hay.",
               ].join(" "),
             },
             { type: "image", image },
@@ -3761,6 +3775,7 @@ async function classifyReceiptImage(params: {
     check = {
       isReceipt: result.output.is_receipt,
       reason: result.output.reason.trim(),
+      showsPromoOffer: !result.output.is_receipt && result.output.shows_promo_offer,
       source: "vision",
     };
   } catch (error) {
@@ -3773,6 +3788,7 @@ async function classifyReceiptImage(params: {
     check = {
       isReceipt: true,
       reason: "No se pudo verificar la imagen",
+      showsPromoOffer: false,
       source: "fallback",
     };
 
@@ -3797,6 +3813,7 @@ async function classifyReceiptImage(params: {
     contactPhone: params.phone,
     metadata: {
       is_receipt: check.isReceipt,
+      shows_promo_offer: check.showsPromoOffer,
       detection_source: check.source,
       reason: check.reason,
     },
@@ -4255,6 +4272,24 @@ function replyContainsIntakeForm(reply: string): boolean {
   return (
     normalized.includes("NOMBRE DE TU EMPRESA") &&
     normalized.includes("RUBRO O SECTOR")
+  );
+}
+
+// ¿La respuesta pide datos con campos 📌 escritos a mano por el modelo? replyContainsIntakeForm
+// solo reconoce el formulario de paquetes palabra por palabra, y el modelo también improvisa:
+// a una clienta de la promo le pegó "📌 Nombre: / 📌 Nombre de tu negocio y rubro:" (los
+// campos del agente de IA) en vez del botón, y a otro cliente de paquetes le pidió cuántos
+// mensajes recibe al día (21 y 19 oct 2026). Los textos de pago también usan 📌 ("Tu nombre
+// completo", "Tu número de celular"), pero nunca piden el negocio o la empresa.
+function replyPastesLeadFieldsInChat(reply: string): boolean {
+  if (!reply) return false;
+  const fields = reply.split("\n").filter((line) => line.trim().startsWith("📌"));
+  if (fields.length < 2) return false;
+  const normalized = normalizeForMatch(fields.join("\n"));
+  return (
+    /\bNOMBRE\b/.test(normalized) &&
+    /\b(NEGOCIO|EMPRESA|EMPRENDIMIENTO|RUBRO)\b/.test(normalized) &&
+    !normalized.includes("COMPROBANTE")
   );
 }
 
@@ -4899,12 +4934,23 @@ async function hasTelegramLeadBeenSent(conversationId?: string): Promise<boolean
 type WebActivity = {
   leadAt: Date | null;
   leadPage: string | null;
+  // El lead llegó en una conversación anterior del mismo número (ver getWebActivity).
+  leadFromOtherConversation: boolean;
   lastVisitAt: Date | null;
   lastVisitPage: string | null;
 };
 
-async function getWebActivity(conversationId?: string): Promise<WebActivity> {
-  const empty: WebActivity = { leadAt: null, leadPage: null, lastVisitAt: null, lastVisitPage: null };
+// Cuánto atrás se busca, por teléfono, un lead de la página dejado en otra conversación.
+const WEB_LEAD_PHONE_LOOKBACK_HOURS = 72;
+
+async function getWebActivity(conversationId?: string, phone?: string): Promise<WebActivity> {
+  const empty: WebActivity = {
+    leadAt: null,
+    leadPage: null,
+    leadFromOtherConversation: false,
+    lastVisitAt: null,
+    lastVisitPage: null,
+  };
   if (!conversationId) return empty;
 
   const supabase = getSupabaseClient();
@@ -4935,6 +4981,35 @@ async function getWebActivity(conversationId?: string): Promise<WebActivity> {
     } else if (!activity.lastVisitAt && content.startsWith(SITE_VISIT_MARKER_PREFIX)) {
       activity.lastVisitAt = at;
       activity.lastVisitPage = /^\[SITE_VISIT:(\w+)\]/.exec(content)?.[1] ?? null;
+    }
+  }
+
+  // Kapso abre una conversación nueva cuando la anterior terminó, y el lead de la página
+  // queda en la vieja. Una clienta dejó sus datos un día y al siguiente el bot se los volvió
+  // a pedir: "ya llené una vez, ¿solo hablaré con la inteligencia artificial?" (21 oct 2026).
+  // Por eso el lead se busca también por teléfono en los últimos días.
+  if (!activity.leadAt && phone) {
+    const since = new Date(Date.now() - WEB_LEAD_PHONE_LOOKBACK_HOURS * 60 * 60 * 1000);
+    const { data: phoneLead, error: phoneLeadError } = await supabase
+      .from("kapso_messages")
+      .select("content, created_at")
+      .eq("contact_phone", phone)
+      .eq("direction", "outbound")
+      .like("content", `${WEB_LEAD_MARKER_PREFIX}%`)
+      .gte("created_at", since.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (phoneLeadError) {
+      console.error("supabase check web lead by phone failed", phoneLeadError);
+    } else if (phoneLead) {
+      activity.leadAt = new Date(phoneLead.created_at);
+      activity.leadFromOtherConversation = true;
+      activity.leadPage = String(phoneLead.content ?? "")
+        .slice(WEB_LEAD_MARKER_PREFIX.length)
+        .trim()
+        .replace(/^\//, "");
     }
   }
 
@@ -6205,7 +6280,7 @@ async function processWebhookEvent(
     // Último botón de cursos (deja el marcador [MEDIA_SENT:course_flyer], ver saveLinkButtonSent).
     getMediaIntentLastSentAt(lastMessage.from, "course_flyer"),
     // ¿Ya dejó sus datos en el formulario de /paquetes?
-    getWebActivity(lastMessage.conversationId),
+    getWebActivity(lastMessage.conversationId, lastMessage.from),
   ]);
 
   // Promo del live (PROMO[monto]/PROMOCION[monto], con tolerancia a typos): primero
@@ -6383,7 +6458,7 @@ async function processWebhookEvent(
         : `⚠️ NO HAY NINGÚN CURSO CON FECHA CARGADA. Ante CUALQUIER pregunta por los cursos (información, fechas, precios, temario, el link o la página, pagar o reservar), responde ÚNICA y EXACTAMENTE con este texto, sin agregar nada: "${renderNoCourseDatesText(turnNow)}" — y NO marques intents.course_flyer, intents.location_video ni intents.payment_qr.`,
       // El hueco del formulario web: sin esto el bot le volvía a pedir los datos por chat.
       ...(webActivity.leadAt
-        ? [`Este cliente YA DEJÓ SUS DATOS en el formulario de la página de ${webActivity.leadPage === "oficina" ? "visita a la oficina" : "paquetes"} (${formatNowInBolivia(webActivity.leadAt)}) y el asesor ya los tiene. NUNCA le pidas el formulario ni sus datos otra vez, y NO marques service_intake_requested, lead_data_submitted ni office_visit_requested. Si pregunta por su pedido, dile que un asesor ya tiene sus datos y le hablará pronto. Sus otras dudas respóndelas con normalidad.`]
+        ? [`Este cliente YA DEJÓ SUS DATOS en el formulario de la página de ${webActivity.leadPage === "oficina" ? "visita a la oficina" : webActivity.leadPage === "promocion" ? "la promoción" : "paquetes"} (${formatNowInBolivia(webActivity.leadAt)}) y el asesor ya los tiene. NUNCA le pidas el formulario ni sus datos otra vez, y NO marques service_intake_requested, lead_data_submitted ni office_visit_requested. Si pregunta por su pedido, dile que un asesor ya tiene sus datos y le hablará pronto. Sus otras dudas respóndelas con normalidad.`]
         : formButtonPending
           ? [
               // Lo que de verdad pasó en la página (marcas de /api/site-visit): no se adivina.
@@ -6479,6 +6554,20 @@ async function processWebhookEvent(
       : null;
 
   const rejectedByVision = receiptCheck !== null && !receiptCheck.isReceipt;
+  // La foto es el anuncio de la promo vigente: cuenta como si la hubiera pedido por nombre.
+  // En una conversación de cursos no: ahí la "promoción" de la foto suele ser la de un curso.
+  const imageShowsActivePromo =
+    rejectedByVision &&
+    receiptCheck?.showsPromoOffer === true &&
+    !courseContext &&
+    !mentionsCourse(unansweredClientText) &&
+    isPromoIntentActive("service_packages_promo", turnNow);
+  // Texto con el que las guardas deciden si el cliente pidió la promo (resolvePromoIntents,
+  // continuidad de línea, formulario de la promo). Con la captura del anuncio se le suma la
+  // palabra PROMO: "[foto del anuncio] + en qué consiste el paquete?" pide la promo.
+  const promoRequestText = imageShowsActivePromo
+    ? `${unansweredClientText}\nPROMO`
+    : unansweredClientText;
   // PDF sin QR previo: no es comprobante, pero tampoco se ignora — suele ser
   // material real del cliente que merece respuesta.
   const documentWithoutQr = Boolean(receiptMedia?.isDocument) && !documentReceiptEligible;
@@ -6578,6 +6667,12 @@ async function processWebhookEvent(
     contextParts.push(
       `El último mensaje del usuario es ${mediaLabel} y viene de la PROMO DEL LIVE (ver arriba): es la captura de la transmisión con la que acredita la promoción. NO le preguntes qué es esa imagen, para qué te la envía ni en qué puedes ayudarlo con ella, y NO la trates como comprobante de pago (no marques payment_confirmation). Simplemente continúa: confírmale el precio promocional de ${promoAmount} Bs y envíale el QR (intents.payment_qr=true).`,
     );
+  } else if (imageShowsActivePromo) {
+    // Captura del anuncio de la promo ("[foto del anuncio] + en qué consiste el paquete?"):
+    // antes el modelo no sabía qué decía la imagen y le mandaba el catálogo de 3 paquetes.
+    contextParts.push(
+      `El último mensaje del usuario es una IMAGEN: la captura de un anuncio o publicación con una PROMOCIÓN de videos (lo que se ve: "${receiptCheck?.reason ?? ""}"). Es la promo vigente de arriba: lo que pregunte sobre "el paquete" o "esto" se refiere a ESA promo, no a los paquetes del catálogo. Marca intents.service_packages_promo = true. NO la trates como comprobante (no marques payment_confirmation) y no le preguntes qué es la imagen.`,
+    );
   } else if (rejectedByVision && imageHadPaymentContext) {
     contextParts.push(
       "El último mensaje del usuario es una IMAGEN que NO es un comprobante de pago (se verificó su contenido). Ignórala por completo: no la menciones, no la describas, no agradezcas ningún comprobante y NO marques payment_confirmation. Continúa la conversación desde donde quedó, como si ese mensaje no hubiera llegado; si no había nada pendiente, responde de forma breve y natural.",
@@ -6585,8 +6680,14 @@ async function processWebhookEvent(
   } else if (receiptMedia?.isImage && !receiptDetected) {
     // Imagen en un chat sin contexto de pago que no es un comprobante (o no se pudo
     // verificar): no se asume nada, se le pregunta qué es.
+    // Lo que vio la visión va en el contexto: sin eso el modelo adivinaba ("[foto] + quiero
+    // info del paquete" recibía el catálogo aunque la foto fuera de otra cosa).
+    const seen =
+      receiptCheck?.source === "vision" && receiptCheck.reason
+        ? ` Lo que se ve en ella: "${receiptCheck.reason}".`
+        : "";
     contextParts.push(
-      "El último mensaje del usuario es una IMAGEN y no es un comprobante de pago. No asumas nada sobre ella: pídele contexto con amabilidad sobre en qué puede ayudarle ese archivo y no marques payment_confirmation.",
+      `El último mensaje del usuario es una IMAGEN y no es un comprobante de pago.${seen} No asumas a qué servicio se refiere por la imagen: si su texto no deja claro qué quiere (un curso, la promoción, los paquetes o el agente de IA), pregúntaselo en una línea antes de mandar cualquier botón, y no marques payment_confirmation.`,
     );
   } else if (documentWithoutQr) {
     contextParts.push(
@@ -8159,8 +8260,20 @@ async function processWebhookEvent(
   if (normalizeForMatch(replyText).includes(HOW_WE_WORK_MARKER)) {
     replyText = PACKAGES_BUTTON_TEXT;
     turn.intents.service_packages = true;
-  } else if (replyContainsIntakeForm(replyText) && !turn.office_visit_requested) {
-    replyText = PACKAGES_FORM_BUTTON_TEXT;
+  } else if (
+    !turn.office_visit_requested &&
+    (replyContainsIntakeForm(replyText) ||
+      // Los campos del agente de IA solo valen en la LÍNEA C: en paquetes o en la promo
+      // también van al botón.
+      (replyPastesLeadFieldsInChat(replyText) &&
+        !mediaStatus.ai_agent_flyer &&
+        !turn.intents.ai_agent_flyer &&
+        !AI_AGENT_KEYWORDS.test(normalizeForMatch(unansweredClientText))))
+  ) {
+    // Si lo último que vio fue la promo, el texto es el de la promo: el botón que sale
+    // después (decideLinkButton) ya abre su formulario.
+    replyText =
+      textPromo && promoIsLastOffer(history) ? PROMO_FORM_BUTTON_TEXT : PACKAGES_FORM_BUTTON_TEXT;
     turn.service_intake_requested = true;
     turn.intents.service_packages = true;
   }
@@ -8216,6 +8329,26 @@ async function processWebhookEvent(
     turn.intents.course_flyer = false;
     turn.intents.location_video = false;
     turn.intents.payment_qr = false;
+  }
+
+  // El texto de "no hay fechas de cursos" solo es para quien habla de cursos. Seis contactos
+  // nuevos que solo escribieron "Buenas tardes" lo recibieron como saludo (17–21 oct 2026):
+  // a quien no dijo qué busca le corresponde el menú.
+  if (
+    replyText.includes("no tenemos fechas oficiales confirmadas") &&
+    !mentionsCourse(unansweredClientText) &&
+    !courseContext
+  ) {
+    replyText = FALLBACK_ASSISTANT_TURN.reply;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "no_course_dates_reply_replaced_menu",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: { client_message: unansweredClientText.slice(0, 200) },
+    });
   }
 
   // Ya dejó sus datos en la página: nunca se le vuelve a pedir el formulario.
@@ -8299,7 +8432,7 @@ async function processWebhookEvent(
   // info" pide la promo aunque el último mensaje no la nombre.
   const promoResolution = resolvePromoIntents({
     intents: [...intentsToSend],
-    message: unansweredClientText,
+    message: promoRequestText,
     now: turnNow,
     courseFlyerMarked: turn.intents.course_flyer,
     aiAgentFlyerMarked: turn.intents.ai_agent_flyer,
@@ -8416,7 +8549,7 @@ async function processWebhookEvent(
       if (detectExplicitLineSwitch(lastMessage.text, line)) continue;
       // Pedir la promo vigente ya es pedir la LÍNEA B, aunque no diga "paquete" ni "video":
       // "Vi una promoción" en una conversación que venía de cursos se quedaba sin la promo.
-      if (line === "service_packages" && asksForActivePromo(unansweredClientText, turnNow)) {
+      if (line === "service_packages" && asksForActivePromo(promoRequestText, turnNow)) {
         continue;
       }
 
@@ -8497,9 +8630,10 @@ async function processWebhookEvent(
   // El texto de la promo lleva PEGADO el botón al formulario de la promo, en el mismo
   // mensaje: quien se anima al leerla deja sus datos ahí mismo, sin esperar a escribir "sí"
   // (un mensaje menos) y sin pasar por la ficha de la promo (un paso menos). Si ya dejó sus
-  // datos, el texto sale solo: no hay nada más que pedirle.
+  // datos, el texto sale solo: no hay nada más que pedirle. Un lead de una conversación
+  // anterior no cuenta: pudo ser otro paquete, y el de la promo el asesor no lo tiene.
   if (siteBaseUrl && promoTextTurn && textPromo) {
-    if (!telegramLeadSent && !webActivity.leadAt) {
+    if (!telegramLeadSent && (!webActivity.leadAt || webActivity.leadFromOtherConversation)) {
       linkButton = buildPromoFormButton({
         baseUrl: siteBaseUrl,
         phone: lastMessage.from,
@@ -8523,7 +8657,7 @@ async function processWebhookEvent(
       textPromo &&
       !chosenPackage &&
       !detectSelectedPackageName(lastMessage.text) &&
-      (promoIsLastOffer(history) || asksForActivePromo(unansweredClientText, turnNow))
+      (promoIsLastOffer(history) || asksForActivePromo(promoRequestText, turnNow))
         ? textPromo.slug
         : null;
 
@@ -8773,7 +8907,14 @@ async function processWebhookEvent(
       });
     }
 
-    if (turn.service_intake_requested) {
+    // El texto de la promo con su botón "Llenar mis datos" también pide el formulario: sin la
+    // marca, el bot no sabía que esperaba datos, y a quien escribió "ya llené mis datos,
+    // ¿cuándo empezamos?" le volvió a mandar el botón como si nunca se lo hubiera pedido
+    // (21 oct 2026). Con intake_sent, el "ya lo envié" se contrasta con lo que llegó de la web.
+    const promoFormButtonSent =
+      promoTextTurn && linkButtonAttached && linkButton?.kind === "packages_form";
+
+    if (turn.service_intake_requested || promoFormButtonSent) {
       await saveOutboundMessage({
         conversationId: mediaConversationId,
         phone: lastMessage.from,
