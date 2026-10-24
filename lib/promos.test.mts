@@ -8,6 +8,10 @@
 import assert from "node:assert/strict";
 import { renderPackageSizes } from "./packages.ts";
 import {
+  EXPIRED_VIDEO_PROMO_REPLY,
+  acknowledgesExpiredVideoPromo,
+  getExpiredPromoAmounts,
+  mentionsExpiredVideoPromo,
   getActivePromoAmounts,
   getActivePromos,
   getActiveReliefCampaigns,
@@ -250,6 +254,42 @@ test("el corte es el mismo en todos los formatos en que Supabase devuelve timest
 test("una fecha ilegible se ignora en vez de dejar al cliente sin material", () => {
   assert.equal(isMediaAssetInWindow({ expires_at: "no-es-una-fecha" }, AFTER), true);
   assert.equal(isMediaAssetInWindow({ starts_at: "" }, AFTER), true);
+});
+
+// --- Promo Exprés vencida ------------------------------------------------------
+
+const EXPRESS_NOW = at("2026-10-24T12:00:00-04:00");
+
+test("clientes que nombran la promo Exprés vencida son reconocidos", () => {
+  for (const frase of [
+    "la promo de 999",
+    "promo 1000",
+    "¿siguen con la promoción de 1.000 Bs?",
+    "4 videos por 1000",
+    "el paquete exprés",
+    "quiero la promo de 4 videos",
+  ]) {
+    assert.equal(mentionsExpiredVideoPromo(frase, EXPRESS_NOW), true, frase);
+  }
+});
+
+test("mensajes sin relación con la promo Exprés no se marcan", () => {
+  for (const frase of ["hola", "el paquete de 2500 Bs", "somos 4 en el equipo", "a las 1000 horas", ""]) {
+    assert.equal(mentionsExpiredVideoPromo(frase, EXPRESS_NOW), false, frase);
+  }
+});
+
+test("con la promo vigente no se marca como vencida", () => {
+  assert.equal(mentionsExpiredVideoPromo("promo de 1000", at("2026-08-06T10:00:00-04:00")), false);
+});
+
+test("los montos de la promo vencida se excluyen de la promo del live", () => {
+  assert.deepEqual(getExpiredPromoAmounts(EXPRESS_NOW), [1000, 999]);
+});
+
+test("la respuesta que avisa del fin se reconoce; la que confirma el precio no", () => {
+  assert.equal(acknowledgesExpiredVideoPromo(EXPIRED_VIDEO_PROMO_REPLY), true);
+  assert.equal(acknowledgesExpiredVideoPromo("Sí, son 4 videos por 1.000 Bs"), false);
 });
 
 console.log(`TZ=${process.env.TZ ?? "(sistema)"} — ${passed} pruebas OK`);

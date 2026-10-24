@@ -85,6 +85,11 @@ import {
   renderReliefContext,
   mentionsReliefCampaign,
   getReliefClosedReply,
+  getExpiredPromoAmounts,
+  mentionsExpiredVideoPromo,
+  acknowledgesExpiredVideoPromo,
+  renderExpiredVideoPromoContext,
+  EXPIRED_VIDEO_PROMO_REPLY,
 } from "../../../../lib/promos";
 import {
   MEDIA_RESEND_WINDOW_HOURS,
@@ -6201,7 +6206,12 @@ async function processWebhookEvent(
   // piden diciendo "promo" + su precio, y sin este filtro un "promo 1000" de la promo de
   // 4 videos se leería como promo del live y dispararía el QR del CURSO por 1.000 Bs.
   // Si el monto coincide con el de una promo de video vigente, no es la promo del live.
-  const activePromoAmounts = getActivePromoAmounts(turnNow);
+  // También se excluyen los montos de promos YA vencidas: "promo 999" sigue llegando
+  // después del cierre y no es la promo de ningún live.
+  const activePromoAmounts = [
+    ...getActivePromoAmounts(turnNow),
+    ...getExpiredPromoAmounts(turnNow),
+  ];
   const detectLivePromoAmount = (text: string): number | null => {
     const amount = detectPromoAmount(text);
     if (amount === null) return null;
@@ -6244,6 +6254,10 @@ async function processWebhookEvent(
   // Cliente que viene por el video de la promo de edición a 50 Bs (ya vencida).
   const mentionsEditPromo50 = mentionsExpiredEditPromo(lastMessage.text);
 
+  // Cliente que pregunta por la promo Exprés de 4 videos (999/1.000 Bs), ya finalizada.
+  const mentionsExpressPromo =
+    !mentionsEditPromo50 && mentionsExpiredVideoPromo(lastMessage.text, turnNow);
+
   // Enlace suelto: solo importa cuando NO hay nada más que explique el mensaje. Con
   // adjunto gana el flujo del comprobante; con la promo del live el link es la
   // acreditación de la transmisión; con la promo de 50 Bs gana esa explicación.
@@ -6252,6 +6266,7 @@ async function processWebhookEvent(
     !receiptMedia &&
     !promoDetected &&
     !mentionsEditPromo50 &&
+    !mentionsExpressPromo &&
     !hasExplicitPaymentPhrase;
 
   // Línea abierta de la conversación. Se calcula ANTES de generar el turno porque lo
@@ -6588,6 +6603,10 @@ async function processWebhookEvent(
         EDITOR_PHONE +
         `, y el precio, los plazos y la forma de pago los coordina directamente con él. Deja claro que ese servicio es DISTINTO de los paquetes de producción de Conecta Pro (grabación + edición, ${renderPackageSizes()} videos), que sí puedes ofrecerle si le interesa. NO marques intents.service_packages ni envíes el formulario de datos en este turno.`,
     );
+  }
+
+  if (mentionsExpressPromo) {
+    contextParts.push(renderExpiredVideoPromoContext());
   }
 
   if (paymentAcknowledged) {
@@ -7477,6 +7496,34 @@ async function processWebhookEvent(
         contactPhone: lastMessage.from,
         metadata: {
           reply_replaced: replacedReply,
+          lead_flags_cleared: killedLeadFlags,
+          client_message: lastMessage.text.slice(0, 200),
+        },
+      });
+    }
+  }
+
+  // Promo Exprés (999/1.000 Bs) finalizada: si el LLM no avisó que terminó, o dejó
+  // pasar la imagen de la promo / el formulario de leads, se corrige aquí.
+  if (turn.should_reply && mentionsExpressPromo) {
+    const acknowledgedExpiry = acknowledgesExpiredVideoPromo(turn.reply);
+    const killedLeadFlags = turn.service_intake_requested || turn.lead_data_submitted;
+
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.intents.service_packages_promo = false;
+
+    if (!acknowledgedExpiry) turn.reply = EXPIRED_VIDEO_PROMO_REPLY;
+
+    if (!acknowledgedExpiry || killedLeadFlags) {
+      await logSystemEvent({
+        level: "info",
+        eventType: "express_promo_expired_notice",
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          reply_replaced: !acknowledgedExpiry,
           lead_flags_cleared: killedLeadFlags,
           client_message: lastMessage.text.slice(0, 200),
         },

@@ -32,6 +32,9 @@ type Promo = {
   // Precio promocional en Bs. Se usa además para desambiguar la promo del live
   // (ver getActivePromoAmounts).
   price: number;
+  // Otros montos con los que los clientes nombran esta promo (ej. "999" en vez de
+  // "1000"). Solo se usan para reconocerla cuando ya venció.
+  aliasAmounts?: number[];
   // Cantidad de videos de la promo. Es una cantidad que NO está en el catálogo normal
   // (ver lib/packages.ts), así que mientras la promo está vigente el backend tiene que
   // reconocerla como "esta promo" y no como un pedido fuera de los paquetes.
@@ -50,6 +53,7 @@ const PROMOS: Promo[] = [
     startsAt: "2026-08-06T00:00:00-04:00",
     endsAt: "2026-08-08T00:00:00-04:00",
     price: 1000,
+    aliasAmounts: [999],
     videoCount: 4,
     line: "service_packages",
     details: [
@@ -313,6 +317,75 @@ function getActivePromoVideoCounts(now: Date): number[] {
   return getActivePromos(now).map((promo) => promo.videoCount);
 }
 
+// Promos cuya ventana ya pasó. Los clientes siguen llegando por la publicación o el
+// flyer, así que el bot tiene que saber reconocerlas y decir que terminaron.
+function getExpiredPromos(now: Date): Promo[] {
+  return PROMOS.filter((promo) => now.getTime() >= new Date(promo.endsAt).getTime());
+}
+
+// Montos (precio + alias) de las promos vencidas. El webhook los usa para que un
+// "promo 1000" no se lea como PROMO DEL LIVE y dispare el QR de un curso.
+function getExpiredPromoAmounts(now: Date): number[] {
+  return getExpiredPromos(now).flatMap((promo) => [promo.price, ...(promo.aliasAmounts ?? [])]);
+}
+
+const EXPIRED_PROMO_WORDS = /\b(PROMO|PROMOS|PROMOCION|PROMOCIONES|OFERTA|OFERTAS|EXPRES|EXPRESS)\b/;
+const EXPIRED_PROMO_MONEY = /\b(BS|BOB|BOLIVIANOS?)\b/;
+const EXPIRED_PROMO_VIDEOS = /\bVIDEOS?\b/;
+
+// ¿El cliente pregunta por una promo de video que ya terminó (ej. "la promo de 999",
+// "el paquete exprés", "4 videos por 1000")? Mientras la promo esté vigente devuelve
+// false: ahí manda renderPromoContext.
+function mentionsExpiredVideoPromo(text: string, now: Date): boolean {
+  if (!text) return false;
+  if (getActivePromos(now).length > 0) return false;
+
+  const normalized = text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase();
+  const numbers = (normalized.replace(/(\d)[.,](\d)/g, "$1$2").match(/\d+/g) ?? []).map(Number);
+
+  return getExpiredPromos(now).some((promo) => {
+    const amounts = [promo.price, ...(promo.aliasAmounts ?? [])];
+    const hasAmount = numbers.some((n) => amounts.includes(n));
+    const hasVideoCount = numbers.includes(promo.videoCount) && EXPIRED_PROMO_VIDEOS.test(normalized);
+    const hasPromoWord = EXPIRED_PROMO_WORDS.test(normalized);
+
+    // "exprés" + paquete/promo: es el nombre de la promo.
+    if (/\bEXPRES{1,2}\b/.test(normalized) && (hasPromoWord || /\bPAQUETE\b/.test(normalized))) {
+      return true;
+    }
+    // El monto necesita contexto: "1000 Bs", "promo 999", "1000 por 4 videos".
+    if (hasAmount) {
+      return hasPromoWord || EXPIRED_PROMO_MONEY.test(normalized) || EXPIRED_PROMO_VIDEOS.test(normalized);
+    }
+    // "la promo de 4 videos" sin monto.
+    return hasVideoCount && hasPromoWord;
+  });
+}
+
+const EXPIRED_VIDEO_PROMO_REPLY = `Gracias por escribirnos 😊 La promoción del Paquete Exprés (4 videos por 1.000 Bs) ya finalizó y por ahora no tenemos ninguna promoción vigente.
+
+Si te interesa, tenemos nuestros paquetes de producción de ${renderPackageSizes()} videos (estrategia, guiones, grabación, edición y publicación) — dime y te cuento 🎬`;
+
+// ¿La respuesta del modelo ya dice que la promo terminó?
+const EXPIRED_VIDEO_PROMO_ACK =
+  /\bYA\s+NO\b|\bNO\s+(SE\s+ENCUENTRA|ESTA|ESTABA|TENEMOS|HAY)\b(?:\s+\S+){0,3}?\s*\b(VIGENTE|PROMOCION|PROMO)\b|\bFINALIZ(O|ADA|ADO)\b|\bTERMIN(O|ADA|ADO)\b|\bVENCI(O|DA|DO)\b|\bEXPIR(O|ADA|ADO)\b/;
+
+function acknowledgesExpiredVideoPromo(reply: string): boolean {
+  const normalized = reply
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase();
+  return EXPIRED_VIDEO_PROMO_ACK.test(normalized);
+}
+
+// Contexto para el prompt del turno cuando el cliente nombra una promo vencida.
+function renderExpiredVideoPromoContext(): string {
+  return `El cliente pregunta por la PROMOCIÓN EXPRESS (4 videos por 999/1.000 Bs). Esa promoción YA FINALIZÓ y NO tenemos ninguna promoción vigente. Díselo con amabilidad y claridad en la primera línea. NUNCA confirmes ese precio, no des un monto alternativo, no prometas reactivarla ni digas que un asesor puede hacer ese precio. Después ofrécele los paquetes normales (${renderPackageSizes()} videos). NO marques intents.service_packages_promo.`;
+}
+
 // "jueves 6 de agosto" en hora de Bolivia, para el copy del contexto.
 function formatPromoDay(iso: string): string {
   return new Intl.DateTimeFormat("es-BO", {
@@ -378,5 +451,10 @@ export {
   isPromoActive,
   isPromoIntentActive,
   renderPromoContext,
+  getExpiredPromoAmounts,
+  mentionsExpiredVideoPromo,
+  acknowledgesExpiredVideoPromo,
+  renderExpiredVideoPromoContext,
+  EXPIRED_VIDEO_PROMO_REPLY,
 };
 export type { Promo, PromoIntent, ReliefCampaign };
