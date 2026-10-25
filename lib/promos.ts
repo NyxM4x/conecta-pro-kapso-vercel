@@ -330,6 +330,7 @@ function getExpiredPromoAmounts(now: Date): number[] {
 }
 
 const EXPIRED_PROMO_WORDS = /\b(PROMO|PROMOS|PROMOCION|PROMOCIONES|OFERTA|OFERTAS|EXPRES|EXPRESS)\b/;
+const SAW_PROMO = /\b(VI|VIMOS|VIO|VEO|VIENDO)\b(?:\s+\S+){0,6}?\s*\b(PROMO|PROMOS|PROMOCION|PROMOCIONES|OFERTA)\b/;
 const EXPIRED_PROMO_MONEY = /\b(BS|BOB|BOLIVIANOS?)\b/;
 const EXPIRED_PROMO_VIDEOS = /\bVIDEOS?\b/;
 
@@ -361,7 +362,9 @@ function mentionsExpiredVideoPromo(text: string, now: Date): boolean {
       return hasPromoWord || EXPIRED_PROMO_MONEY.test(normalized) || EXPIRED_PROMO_VIDEOS.test(normalized);
     }
     // "la promo de 4 videos" sin monto.
-    return hasVideoCount && hasPromoWord;
+    if (hasVideoCount && hasPromoWord) return true;
+    // "vi la promoción" a secas: llegan por la publicación sin citar monto ni nombre.
+    return SAW_PROMO.test(normalized) && !/\bCURSOS?\b/.test(normalized);
   });
 }
 

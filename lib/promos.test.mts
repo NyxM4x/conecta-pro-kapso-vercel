@@ -268,13 +268,14 @@ test("clientes que nombran la promo Exprés vencida son reconocidos", () => {
     "4 videos por 1000",
     "el paquete exprés",
     "quiero la promo de 4 videos",
+    "Hola vi la promoción",
   ]) {
     assert.equal(mentionsExpiredVideoPromo(frase, EXPRESS_NOW), true, frase);
   }
 });
 
 test("mensajes sin relación con la promo Exprés no se marcan", () => {
-  for (const frase of ["hola", "el paquete de 2500 Bs", "somos 4 en el equipo", "a las 1000 horas", ""]) {
+  for (const frase of ["hola", "el paquete de 2500 Bs", "somos 4 en el equipo", "vi el curso de la promoción", "a las 1000 horas", ""]) {
     assert.equal(mentionsExpiredVideoPromo(frase, EXPRESS_NOW), false, frase);
   }
 });
