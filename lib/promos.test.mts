@@ -9,6 +9,10 @@ import assert from "node:assert/strict";
 import { renderPackageSizes } from "./packages.ts";
 import { CTA_BODY_MAX_CHARS, PROMO_FORM_BUTTON_TEXT, canAttachButtonToReply } from "./site-links.ts";
 import {
+  EXPIRED_VIDEO_PROMO_REPLY,
+  acknowledgesExpiredVideoPromo,
+  getExpiredPromoAmounts,
+  mentionsExpiredVideoPromo,
   PROMOS,
   findActivePromo,
   getActiveTextPromo,
@@ -320,6 +324,56 @@ test("el contexto avisa que el paquete exprés y el de 1000 Bs son esta promo", 
   assert.match(context, /"paquete exprés"/);
   assert.match(context, /NUNCA respondas que ese paquete no existe/);
   assert.match(context, /NO asumas: pregúntale/);
+});
+
+// --- Promo de 999 finalizada ------------------------------------------------------
+
+const AFTER_999 = at("2026-10-25T12:00:00-04:00");
+
+test("la promo de 999 ya no está vigente después del 25 de octubre", () => {
+  assert.equal(getActiveTextPromo(AFTER_999), null);
+  assert.equal(isPromoIntentActive(PROMO, AFTER_999), false);
+  assert.match(renderPromoContext(AFTER_999), /NINGUNA vigente/);
+});
+
+test("clientes que nombran la promo vencida son reconocidos", () => {
+  for (const frase of [
+    "Hola vi la promoción",
+    "la promo de 999",
+    "promo 1000",
+    "¿siguen con la promoción de 1.000 Bs?",
+    "4 videos por 999",
+    "el paquete exprés",
+    "quiero la promo de 4 videos",
+  ]) {
+    assert.equal(mentionsExpiredVideoPromo(frase, AFTER_999), true, frase);
+  }
+});
+
+test("mensajes sin relación con la promo vencida no se marcan", () => {
+  for (const frase of [
+    "hola",
+    "el paquete de 2500 Bs",
+    "somos 4 en el equipo",
+    "vi el curso de la promoción",
+    "tengo 1000 seguidores",
+    "",
+  ]) {
+    assert.equal(mentionsExpiredVideoPromo(frase, AFTER_999), false, frase);
+  }
+});
+
+test("con la promo vigente no se marca como vencida", () => {
+  assert.equal(mentionsExpiredVideoPromo("vi la promoción", IN_999), false);
+});
+
+test("los montos de las promos vencidas se excluyen de la promo del live", () => {
+  assert.deepEqual(getExpiredPromoAmounts(AFTER_999), [999, 1000, 1000]);
+});
+
+test("la respuesta que avisa del fin se reconoce; la que confirma el precio no", () => {
+  assert.equal(acknowledgesExpiredVideoPromo(EXPIRED_VIDEO_PROMO_REPLY), true);
+  assert.equal(acknowledgesExpiredVideoPromo("Sí, son 4 videos por 999 Bs"), false);
 });
 
 console.log(`TZ=${process.env.TZ ?? "(sistema)"} — ${passed} pruebas OK`);
