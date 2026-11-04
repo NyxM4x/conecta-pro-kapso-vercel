@@ -11,3 +11,6 @@
 
 # Videos originales sin comprimir (pesan ~50 MB cada uno). En public/ van las versiones comprimidas.
 material-original/
+
+# Cache de TypeScript: no versionar (rompe el build de Nixpacks en Dokploy)
+*.tsbuildinfo
