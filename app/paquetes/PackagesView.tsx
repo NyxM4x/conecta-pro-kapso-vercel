@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { HOW_WE_WORK_GOAL, HOW_WE_WORK_STEPS } from "../../lib/how-we-work";
 import {
   CONTENT_TYPE_OPTIONS,
+  SOCIAL_NETWORK_OPTIONS,
   LEAD_FIELDS,
   PREFERRED_DATE_MAX_LENGTH,
   PRESENTER_OPTIONS,
@@ -152,6 +153,11 @@ function PackagesView({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!selectedName || sending) return;
+
+    if (!form.socialNetwork) {
+      setError("Elige en qué red social te encuentras.");
+      return;
+    }
 
     if (contentTypes.length === 0) {
       setError("Elige al menos un tipo de contenido.");
@@ -564,19 +570,36 @@ function PackagesView({
                       {!field.required && <small> (opcional)</small>}
                     </span>
                     {field.kind === "chips" ? (
-                      <span className="cp-chips" role="group">
-                        {CONTENT_TYPE_OPTIONS.map((option) => (
-                          <button
-                            key={option}
-                            type="button"
-                            aria-pressed={contentTypes.includes(option)}
-                            className={contentTypes.includes(option) ? "is-on" : ""}
-                            onClick={() => toggleContentType(option)}
-                          >
-                            {option}
-                          </button>
-                        ))}
-                      </span>
+                      field.key === "socialNetwork" ? (
+                        <span className="cp-chips" role="radiogroup">
+                          {SOCIAL_NETWORK_OPTIONS.map((option) => (
+                            <button
+                              key={option}
+                              type="button"
+                              role="radio"
+                              aria-checked={form.socialNetwork === option}
+                              className={form.socialNetwork === option ? "is-on" : ""}
+                              onClick={() => setForm({ ...form, socialNetwork: option })}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="cp-chips" role="group">
+                          {CONTENT_TYPE_OPTIONS.map((option) => (
+                            <button
+                              key={option}
+                              type="button"
+                              aria-pressed={contentTypes.includes(option)}
+                              className={contentTypes.includes(option) ? "is-on" : ""}
+                              onClick={() => toggleContentType(option)}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </span>
+                      )
                     ) : field.kind === "textarea" ? (
                       <textarea
                         rows={3}

@@ -16,6 +16,7 @@ type LeadFieldKey =
   | "company"
   | "role"
   | "sector"
+  | "socialNetwork"
   | "social"
   | "contentType"
   | "reference";
@@ -34,7 +35,8 @@ const LEAD_FIELDS: LeadField[] = [
   { key: "company", label: "Nombre de tu empresa o emprendimiento", placeholder: "Ej. Café Aroma", required: true, kind: "text", maxLength: 100 },
   { key: "role", label: "Cargo dentro de la empresa", placeholder: "Ej. Dueño, gerente, marketing", required: true, kind: "text", maxLength: 80 },
   { key: "sector", label: "Rubro o sector", placeholder: "Gastronomía, belleza, moda, salud…", required: true, kind: "text", maxLength: 80 },
-  { key: "social", label: "Instagram o redes sociales", placeholder: "@tunegocio", required: true, kind: "text", maxLength: 150 },
+  { key: "socialNetwork", label: "¿En qué red social te encuentras?", placeholder: "", required: true, kind: "chips", maxLength: 20 },
+  { key: "social", label: "¿Con qué nombre te encontramos?", placeholder: "@tunegocio", required: true, kind: "text", maxLength: 150 },
   { key: "contentType", label: "¿Qué tipo de contenido te interesa?", placeholder: "", required: true, kind: "chips", maxLength: 150 },
   { key: "reference", label: "¿Tienes alguna referencia de contenido que te guste?", placeholder: "Pega un link o descríbela (opcional)", required: false, kind: "textarea", maxLength: 500 },
 ];
@@ -48,6 +50,10 @@ const CONTENT_TYPE_OPTIONS = [
   "Marketing agresivo",
   "Incrementar ventas",
 ];
+
+// Opciones de "¿En qué red social te encuentras?": se elige una sola. Sirve para saber en qué
+// red encontramos al cliente; el nombre de su cuenta va aparte, en el campo "social".
+const SOCIAL_NETWORK_OPTIONS = ["TikTok", "Facebook", "Instagram"];
 
 // Preguntas extra del formulario de una PROMOCIÓN (lib/promos.ts). Los paquetes del
 // catálogo no las tienen: solo la promo ofrece presentadora y se agenda por fecha.
@@ -84,6 +90,12 @@ function validateLead(
     const value = typeof raw[field.key] === "string" ? (raw[field.key] as string).trim() : "";
     if (field.required && !value) errors.push(field.label);
     lead[field.key] = value.slice(0, field.maxLength);
+  }
+
+  // La red es una de las opciones; un texto cualquiera cuenta como faltante.
+  if (lead.socialNetwork && !SOCIAL_NETWORK_OPTIONS.includes(lead.socialNetwork)) {
+    lead.socialNetwork = "";
+    errors.push(LEAD_FIELDS.find((field) => field.key === "socialNetwork")!.label);
   }
 
   lead.packageName = typeof raw.packageName === "string" ? raw.packageName.trim().slice(0, 40) : "";
@@ -151,7 +163,7 @@ function buildLeadTelegramMessage(
     `💼 Cargo: ${e(lead.role)}`,
     ...contactLines,
     `🏷️ Rubro: ${e(lead.sector)}`,
-    `📲 Redes: ${e(lead.social)}`,
+    `📲 Red: <b>${e(lead.socialNetwork)}</b> — ${e(lead.social)}`,
     `🎬 Contenido: ${e(lead.contentType)}`,
   );
 
@@ -166,6 +178,7 @@ function buildLeadTelegramMessage(
 export {
   LEAD_FIELDS,
   CONTENT_TYPE_OPTIONS,
+  SOCIAL_NETWORK_OPTIONS,
   PRESENTER_OPTIONS,
   PREFERRED_DATE_MAX_LENGTH,
   validateLead,

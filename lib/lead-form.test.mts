@@ -22,6 +22,7 @@ const COMPLETE = {
   company: "Café Aroma",
   role: "Dueña",
   sector: "Gastronomía",
+  socialNetwork: "Instagram",
   social: "@cafearoma",
   contentType: "Videos, Fotos",
   reference: "",
@@ -44,7 +45,7 @@ test("la referencia es opcional y lo demás es obligatorio", () => {
   const result = validateLead({ ...COMPLETE, role: " ", social: "" });
   assert.equal(result.ok, false);
   if (!result.ok) {
-    assert.deepEqual(result.errors, ["Cargo dentro de la empresa", "Instagram o redes sociales"]);
+    assert.deepEqual(result.errors, ["Cargo dentro de la empresa", "¿Con qué nombre te encontramos?"]);
   }
 });
 
@@ -130,3 +131,22 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`  ✗ ${failure}`);
   process.exit(1);
 }
+
+test("la red social es obligatoria y solo acepta TikTok, Facebook o Instagram", () => {
+  const sinRed = validateLead({ ...COMPLETE, socialNetwork: "" });
+  assert.equal(sinRed.ok, false);
+  const invalida = validateLead({ ...COMPLETE, socialNetwork: "Twitter" });
+  assert.equal(invalida.ok, false);
+  for (const red of ["TikTok", "Facebook", "Instagram"]) {
+    assert.equal(validateLead({ ...COMPLETE, socialNetwork: red }).ok, true);
+  }
+});
+
+test("el mensaje a los asesores dice en qué red encontramos al cliente y con qué nombre", () => {
+  const result = validateLead({ ...COMPLETE, socialNetwork: "TikTok" });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    const message = buildLeadTelegramMessage(result.lead, "Normal");
+    assert.match(message, /Red: <b>TikTok<\/b> — @cafearoma/);
+  }
+});
