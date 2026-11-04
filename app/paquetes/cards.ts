@@ -17,9 +17,13 @@ const TAGLINES: Record<string, string> = {
 // Video de la portada de la ficha de cada paquete (por slug), sin extensión: ".mp4" es el
 // video comprimido y ".jpg" su primer cuadro. Los originales están en material-original/.
 // Un paquete sin video muestra el degradado de siempre.
+// El del Básico se sirve desde Supabase Storage (bucket público conecta-pro/paquetes) para
+// no cargar el VPS: la tarjeta solo le agrega ".mp4" y ".jpg" a esta URL base.
 const PACKAGE_VIDEOS: Record<string, string> = {
   pro: "/paquetes/paquetePro",
   normal: "/paquetes/paqueteNormal",
+  basico:
+    "https://oeihvtbnfbewrjmydwgt.supabase.co/storage/v1/object/public/conecta-pro/paquetes/paqueteBasico",
 };
 
 function buildPackageCards(): PackageCard[] {
