@@ -23,7 +23,12 @@ export async function POST(request: Request) {
     );
   }
 
-  const url = `${new URL(request.url).origin}/api/telegram/webhook`;
+  // Detrás de un proxy (Traefik en Dokploy) request.url trae "localhost:3000", que Telegram
+  // rechaza. El dominio público viaja en X-Forwarded-Host / X-Forwarded-Proto.
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
+  const origin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : new URL(request.url).origin;
+  const url = `${origin}/api/telegram/webhook`;
 
   const webhook = await callTelegramApi("setWebhook", {
     url,
