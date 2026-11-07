@@ -396,7 +396,7 @@ test("señal fuerte de paquete: 'paquete', 6/12/18 y 2500/3500/5500", () => {
 
 // --- Promo de 4 videos por 999 Bs (octubre 2026) -----------------------------------
 
-const PROMO_999_VIGENTE = new Date("2026-10-20T12:00:00-04:00");
+const PROMO_999_VIGENTE = new Date("2026-11-10T12:00:00-04:00");
 
 test("la promo de 999 se pide por la palabra, por el precio o por los 4 videos", () => {
   assert.equal(asksForActivePromo("Hola, info de la promoción", PROMO_999_VIGENTE), true);
@@ -439,7 +439,7 @@ test("un 1000 sin dinero ni paquete no es la promo", () => {
 });
 
 test("los apodos de la promo no valen fuera de su ventana", () => {
-  assert.equal(asksForActivePromo("paquete express", new Date("2026-11-02T12:00:00-04:00")), false);
+  assert.equal(asksForActivePromo("paquete express", new Date("2026-11-15T12:00:00-04:00")), false);
 });
 
 test("el paquete exprés cambia el botón de paquetes por la promo", () => {

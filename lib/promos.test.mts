@@ -264,7 +264,7 @@ test("una fecha ilegible se ignora en vez de dejar al cliente sin material", () 
 
 // --- Promo de 4 videos por 999 Bs (texto oficial, sin imagen) ----------------------
 
-const IN_999 = at("2026-10-20T12:00:00-04:00");
+const IN_999 = at("2026-11-10T12:00:00-04:00");
 const PROMO_999 = PROMOS.find((promo) => promo.id === "promo_4_videos_999_2026_10")!;
 
 test("la promo de 999 está vigente en su ventana y se responde con texto", () => {
@@ -277,7 +277,7 @@ test("la promo de 999 está vigente en su ventana y se responde con texto", () =
 });
 
 test("antes y después de su ventana la promo de 999 no existe", () => {
-  assert.equal(getActiveTextPromo(at("2026-10-15T23:59:59-04:00")), null);
+  assert.equal(getActiveTextPromo(at("2026-11-06T23:59:59-04:00")), null);
   assert.equal(getActiveTextPromo(at(PROMO_999.endsAt)), null);
   assert.equal(findActivePromo(PROMO_999.slug, at(PROMO_999.endsAt)), null);
 });
@@ -292,8 +292,10 @@ test("la promo se encuentra por su slug (link del bot) y por su nombre corto (fo
 test("el texto oficial trae el precio, los 4 videos y la presentadora", () => {
   const text = PROMO_999.clientText ?? "";
   assert.match(text, /4 VIDEOS PROFESIONALES POR SOLO 999 Bs/);
-  assert.match(text, /200 Bs adicionales/);
-  assert.match(text, /¿Te agendamos una fecha/);
+  assert.match(text, /Presentadora profesional: \+200 Bs/);
+  assert.match(text, /Publicidad en TikTok Ads: \+200 Bs/);
+  assert.match(text, /válida hasta el 13 de noviembre/);
+  assert.match(text, /¿Te gustaría reservar tu sesión/);
 });
 
 test("el texto oficial y su botón caben en UN solo mensaje de WhatsApp", () => {
@@ -328,9 +330,9 @@ test("el contexto avisa que el paquete exprés y el de 1000 Bs son esta promo", 
 
 // --- Promo de 999 finalizada ------------------------------------------------------
 
-const AFTER_999 = at("2026-10-25T12:00:00-04:00");
+const AFTER_999 = at("2026-11-14T12:00:00-04:00");
 
-test("la promo de 999 ya no está vigente después del 25 de octubre", () => {
+test("la promo de 999 ya no está vigente después del 13 de noviembre", () => {
   assert.equal(getActiveTextPromo(AFTER_999), null);
   assert.equal(isPromoIntentActive(PROMO, AFTER_999), false);
   assert.match(renderPromoContext(AFTER_999), /NINGUNA vigente/);
@@ -369,6 +371,12 @@ test("con la promo vigente no se marca como vencida", () => {
 
 test("los montos de las promos vencidas se excluyen de la promo del live", () => {
   assert.deepEqual(getExpiredPromoAmounts(AFTER_999), [999, 1000, 1000]);
+});
+
+test("la promo vale TODO el 13 de noviembre y muere el 14 a las 00:00 (Bolivia)", () => {
+  assert.notEqual(getActiveTextPromo(at("2026-11-13T23:59:59-04:00")), null);
+  assert.equal(getActiveTextPromo(at("2026-11-14T00:00:00-04:00")), null);
+  assert.match(EXPIRED_VIDEO_PROMO_REPLY, /13 de noviembre/);
 });
 
 test("la respuesta que avisa del fin se reconoce; la que confirma el precio no", () => {

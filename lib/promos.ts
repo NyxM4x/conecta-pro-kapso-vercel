@@ -70,31 +70,29 @@ type Promo = {
 };
 
 // Texto oficial de la promo de 4 videos por 999 Bs, tal cual lo entregó el equipo.
-const PROMO_999_TEXT = `🚀🔥 ¡PROMOCIÓN ESPECIAL DE CONNECTA PRO!
+const PROMO_999_TEXT = `🚀 ¡PROMOCIÓN ESPECIAL PARA TU NEGOCIO!
 
-🎬 4 VIDEOS PROFESIONALES POR SOLO 999 Bs.
+🔥 4 VIDEOS PROFESIONALES POR SOLO 999 Bs.
 
-¿Qué incluye nuestro paquete? 👇
-
-✅ Estrategia de contenido personalizada.
-
+✅ Estrategia de contenido para tu negocio.
 ✅ Creación de guiones persuasivos.
+✅ 1 sesión de grabación (los 4 videos el mismo día).
+✅ Edición profesional de los 4 videos.
+✅ Administración y publicación en TikTok.
 
-✅ Grabación profesional de los 4 videos.
+🎬 SERVICIOS ADICIONALES:
 
-✅ Edición profesional.
+🎤 Presentadora profesional: +200 Bs. Para que sea la imagen de tus videos.
 
-✅ Administración de tu cuenta de TikTok.
+📈 Publicidad en TikTok Ads: +200 Bs. Invertimos ese monto en publicidad para que tus videos puedan llegar a muchas más personas y atraer potenciales clientes a tu negocio.
 
-📌 Importante: Los 4 videos se graban el mismo día y los propietarios del negocio serán los protagonistas.
+💰 Forma de pago: 50% al iniciar y 50% al finalizar.
 
-🎤 ¿Quieres una presentadora profesional? Puedes agregarla por solo 200 Bs adicionales. (*Tambien puedes salir tu, recomendamos que salga el dueño del negocio para conectar con el publico*)
+⏳ Promoción válida hasta el 13 de noviembre.
 
-💰 Forma de pago: 50% al iniciar y 50% al finalizar el paquete.
+🔥 ¡No solo creamos videos, creamos contenido para ayudarte a vender más!
 
-🔥 ¡Haz que tu negocio destaque en TikTok con contenido estratégico y profesional!
-
-📲 ¿Te agendamos una fecha para aprovechar esta promoción?`;
+📲 ¿Te gustaría reservar tu sesión de grabación y aprovechar esta promoción?`;
 
 const PROMOS: Promo[] = [
   {
@@ -103,9 +101,11 @@ const PROMOS: Promo[] = [
     intent: "service_packages_promo",
     name: "Promoción especial — 4 videos profesionales por 999 Bs",
     shortName: "Promo 4 videos",
-    // Duró aproximadamente una semana: el equipo la dio por finalizada el 25 de octubre.
-    startsAt: "2026-10-16T00:00:00-04:00",
-    endsAt: "2026-10-25T00:00:00-04:00",
+    // Primera tanda: 16–24 de octubre. El equipo la relanzó el 7 de noviembre con la misma
+    // oferta (más Publicidad en TikTok Ads) y la da por terminada el 13 de noviembre
+    // inclusive: por eso vence el 14 a las 00:00 hora de Bolivia.
+    startsAt: "2026-11-07T00:00:00-04:00",
+    endsAt: "2026-11-14T00:00:00-04:00",
     price: 999,
     videoCount: 4,
     line: "service_packages",
@@ -114,7 +114,9 @@ const PROMOS: Promo[] = [
       "Incluye: estrategia de contenido personalizada, creación de guiones persuasivos, grabación profesional de los 4 videos, edición profesional y administración de la cuenta de TikTok.",
       "Los 4 videos se graban el MISMO día y los protagonistas son los propietarios del negocio.",
       "Presentadora profesional OPCIONAL: 200 Bs adicionales (en total 1.199 Bs). También puede salir el cliente; recomendamos que salga el dueño del negocio para conectar con el público.",
+      "Publicidad en TikTok Ads OPCIONAL: 200 Bs adicionales. Ese monto se invierte en publicidad para que los videos lleguen a más personas y atraigan clientes potenciales. Se puede sumar con la presentadora (999 + 200 + 200 = 1.399 Bs).",
       "Forma de pago: 50% al iniciar y 50% al finalizar el paquete.",
+      "La promoción es válida SOLO hasta el 13 de noviembre (inclusive). Si el cliente pregunta hasta cuándo, díselo con esa fecha. A partir del 14 de noviembre ya no existe.",
       "Lo que no está en esta lista (dron, más videos, manejo de otras redes) NO viene en la promo: si lo pide, un asesor se lo cotiza aparte.",
       "La fecha de grabación la coordina un asesor después de que el cliente deja sus datos: NUNCA confirmes tú un día ni una hora.",
     ],
@@ -129,6 +131,8 @@ const PROMOS: Promo[] = [
       "Los 4 videos se graban el mismo día.",
       "Los propietarios del negocio son los protagonistas: así se conecta mejor con el público.",
       "Forma de pago: 50% al iniciar y 50% al finalizar el paquete.",
+      "Servicios adicionales opcionales: presentadora profesional (+200 Bs) y publicidad en TikTok Ads (+200 Bs).",
+      "Promoción válida hasta el 13 de noviembre.",
     ],
     presenterPrice: 200,
     clientText: PROMO_999_TEXT,
@@ -473,7 +477,7 @@ function mentionsExpiredVideoPromo(text: string, now: Date): boolean {
   });
 }
 
-const EXPIRED_VIDEO_PROMO_REPLY = `Gracias por escribirnos 😊 La promoción de los 4 videos fue una oferta temporal de aproximadamente una semana y ya finalizó, así que por ahora no tenemos ninguna promoción vigente.
+const EXPIRED_VIDEO_PROMO_REPLY = `Gracias por escribirnos 😊 La promoción de los 4 videos por 999 Bs estuvo vigente hasta el 13 de noviembre y ya finalizó, así que por ahora no tenemos ninguna promoción vigente.
 
 Si te interesa, tenemos nuestros paquetes de producción de ${renderPackageSizes()} videos (estrategia, guiones, grabación, edición y publicación) — dime y te cuento 🎬`;
 
@@ -487,7 +491,7 @@ function acknowledgesExpiredVideoPromo(reply: string): boolean {
 
 // Contexto para el prompt del turno cuando el cliente nombra una promo vencida.
 function renderExpiredVideoPromoContext(): string {
-  return `El cliente pregunta por la PROMOCIÓN DE 4 VIDEOS (999 Bs / 1.000 Bs). Esa promoción YA FINALIZÓ (duró aproximadamente una semana) y NO tenemos ninguna promoción vigente. Díselo con amabilidad y claridad en la primera línea. NUNCA envíes su texto oficial, no confirmes ese precio, no des un monto alternativo, no prometas reactivarla ni digas que un asesor puede hacer ese precio. Después ofrécele los paquetes normales (${renderPackageSizes()} videos). NO marques intents.service_packages_promo ni envíes el formulario de datos.`;
+  return `El cliente pregunta por la PROMOCIÓN DE 4 VIDEOS (999 Bs / 1.000 Bs). Esa promoción YA FINALIZÓ (estuvo vigente hasta el 13 de noviembre) y NO tenemos ninguna promoción vigente. Díselo con amabilidad y claridad en la primera línea. NUNCA envíes su texto oficial, no confirmes ese precio, no des un monto alternativo, no prometas reactivarla ni digas que un asesor puede hacer ese precio. Después ofrécele los paquetes normales (${renderPackageSizes()} videos). NO marques intents.service_packages_promo ni envíes el formulario de datos.`;
 }
 
 // Promo vigente que se responde con su texto literal (clientText), si hay una.
@@ -593,6 +597,7 @@ function renderPromoContext(now: Date): string {
       ...(textPromo.presenterPrice
         ? [
             `- Si pregunta por la presentadora: son ${textPromo.presenterPrice} Bs adicionales (en total ${textPromo.price + textPromo.presenterPrice} Bs) y la puede elegir en el formulario. Recomendamos que salga el dueño del negocio.`,
+            "- Si pregunta por la publicidad en TikTok Ads: son 200 Bs adicionales y ese monto se invierte en publicidad para que los videos lleguen a más personas; si le interesa, lo coordina el asesor al recibir sus datos.",
           ]
         : []),
       "- NUNCA confirmes una fecha ni una hora de grabación: el asesor la coordina cuando recibe sus datos.",
