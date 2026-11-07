@@ -600,6 +600,7 @@ function renderPromoContext(now: Date): string {
             "- Si pregunta por la publicidad en TikTok Ads: son 200 Bs adicionales y ese monto se invierte en publicidad para que los videos lleguen a más personas; si le interesa, lo coordina el asesor al recibir sus datos.",
           ]
         : []),
+      "- CLIENTE QUE NO QUIERE ENTRAR A LA WEB (\"dime por aquí\", \"no puedo abrir el link\", \"explícame aquí\", insiste en preguntar lo mismo): NO lo mandes otra vez a la web ni lo presiones. Dale la información por texto, en pocas líneas y con los datos de arriba (qué incluye, precio, adicionales, pago 50/50 y que vale hasta el 13 de noviembre). Cierra invitándolo a llenar sus datos dentro del botón si está de acuerdo en trabajar con nosotros: eso marca service_intake_requested = true y el sistema adjunta el botón de la promo. Mientras no diga que sí, solo responde sus dudas.",
       "- NUNCA confirmes una fecha ni una hora de grabación: el asesor la coordina cuando recibe sus datos.",
     );
   }

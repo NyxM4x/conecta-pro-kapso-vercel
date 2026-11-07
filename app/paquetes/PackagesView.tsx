@@ -499,7 +499,7 @@ function PackagesView({
                       Válida hasta el {selectedPromo.validUntil}.
                     </p>
                     <button type="button" className="cp-btn cp-btn-accent" onClick={() => setStep("form")}>
-                      ¡La quiero!
+                      QUIERO ADQUIRIR LA PROMO
                     </button>
 
                     <h4>Qué incluye</h4>
