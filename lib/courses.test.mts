@@ -5,7 +5,7 @@
 // Lo que se protege aquí:
 //   1. Un curso se apaga SOLO al pasar su fecha: deja de anunciarse y pasa a "sin fecha
 //      vigente", sin que nadie edite nada. Es la regla de oro de la operación.
-//   2. El día del curso, desde la hora de inicio y durante 90 minutos, el curso ya no se
+//   2. El día del curso, desde la hora de inicio y durante 330 minutos (5 h 30, los cursos duran de 4 a 5 horas), el curso ya no se
 //      vende pero SÍ se informa (caso real: alumnos que ya pagaron preguntaban la
 //      ubicación y el bot les decía que no había fecha).
 //   3. Los cursos y la oficina son lugares distintos, y una fecha puntual puede dictarse
@@ -64,8 +64,8 @@ for (const course of COURSES) {
   const justoAntesDelCierre = new Date(cierrePreventa.getTime() - 60_000); // 15:49
   const mananaDelDia = new Date(inicio - 6 * 60 * 60_000); // 10:00 del día del curso
   const recienEmpezado = new Date(inicio + 10 * 60_000);
-  const casiTermina = new Date(inicio + 89 * 60_000); // 17:29 para un curso a las 16:00
-  const terminoVentana = new Date(inicio + 90 * 60_000); // 17:30
+  const casiTermina = new Date(inicio + 329 * 60_000); // 21:29 para un curso a las 16:00
+  const terminoVentana = new Date(inicio + 330 * 60_000); // 21:30
   const diaSiguiente = new Date(inicio + 24 * 60 * 60_000);
   // 00:00 del día del curso en Bolivia (startsAt ya viene con offset -04:00).
   const medianocheDelDia = new Date(`${course.startsAt.slice(0, 10)}T00:00:00-04:00`);
@@ -217,9 +217,9 @@ test("si el curso recibe una fecha nueva, la ubicación vuelve a la habitual", (
 
 test("el override sigue durante el curso y vence al terminar la ventana de información", () => {
   // Quien llega tarde a una fecha excepcional necesita el lugar excepcional, no el de
-  // siempre: la excepción cubre también los 90 minutos del curso en marcha.
-  const durante = at("2026-08-16T17:29:59-04:00");
-  const alTerminar = at("2026-08-16T17:30:00-04:00");
+  // siempre: la excepción cubre también las 5 h 30 del curso en marcha.
+  const durante = at("2026-08-16T21:29:59-04:00");
+  const alTerminar = at("2026-08-16T21:30:00-04:00");
 
   assert.equal(getCourseLocation(CURSO_EN_OFICINA, durante).mapsUrl, MAPS_OFICINA);
   assert.equal(getCourseLocation(CURSO_EN_OFICINA, alTerminar).mapsUrl, MAPS_CURSOS);

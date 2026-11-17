@@ -19,7 +19,14 @@
 // Sin dependencias de Next para que lo usen el webhook, la página y las pruebas con Node.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { hasCourseWithDate, hasSellableCourse } from "./courses.ts";
+import {
+  formatCourseDate,
+  getActiveBundle,
+  getActiveCourses,
+  hasCourseWithDate,
+  hasSellableCourse,
+  isPresaleClosed,
+} from "./courses.ts";
 import { normalizeForMatch } from "./keywords.ts";
 import type { OfficeVisitType } from "./office-form.ts";
 import { VIDEO_PACKAGES } from "./packages.ts";
@@ -139,10 +146,35 @@ const OFFICE_COURSE_BUTTON_TEXT =
 // FLUJO A, consulta general o información de un curso, SOLO cuando hay un curso con fecha
 // cargada (si no, renderNoCourseDatesText y sin botón). Con la preventa cerrada o el curso
 // en marcha no se invita a pedir el QR.
+const NL = String.fromCharCode(10);
+
 function renderCoursesButtonText(now: Date): string {
-  return hasSellableCourse(now)
-    ? "Puedes ver nuestros cursos dentro de este botón 👇 Ahí está lo que vas a aprender, la fecha y el precio. Si te interesa, escríbenos por aquí y te pasamos el QR para reservar tu cupo 😊"
-    : "Puedes ver nuestros cursos dentro de este botón 👇 Ahí está lo que vas a aprender, la fecha y el precio 😊";
+  // Mensaje breve y cálido: el curso, la fecha y el precio. Todo lo demás (temario, lugar,
+  // qué traer) está en la página detrás del botón, que viaja pegado a este mismo mensaje.
+  const shortName = (name: string) => name.replace(/^Curso de\s+/i, "");
+  const sellable = getActiveCourses(now).filter((course) => !isPresaleClosed(course, now));
+
+  if (sellable.length === 0) {
+    return "¡Claro! 😊 Tienes todo el detalle del curso dentro de este botón 👇 Qué vas a aprender, la fecha y el lugar";
+  }
+
+  const closing =
+    "Si quieres asegurar tu cupo, escríbeme por aquí y te paso el QR 🙌 Y si tienes alguna duda, con gusto te ayudo 😊";
+
+  if (sellable.length === 1) {
+    const [course] = sellable;
+    return `¡Claro! 😊 Tenemos el curso de *${shortName(course.name)}* el ${formatCourseDate(course.startsAt)}, con preventa a ${course.pricePreventa} Bs. Tienes todo el detalle del curso dentro de este botón 👇 Temario, lugar y más. ${closing}`;
+  }
+
+  const lines = sellable.map(
+    (course) =>
+      `• ${shortName(course.name)} — ${formatCourseDate(course.startsAt)} — ${course.pricePreventa} Bs`,
+  );
+  const bundle = getActiveBundle(now);
+  if (bundle) {
+    lines.push(`🔥 Los dos juntos: ${bundle.price} Bs (pagando antes del primer curso)`);
+  }
+  return `¡Claro! 😊 Estos son nuestros próximos cursos:${NL}${lines.join(NL)}${NL}Tienes el detalle de cada curso dentro de este botón 👇 Temario, lugar y más. ${closing}`;
 }
 
 // Saludo según la hora de Bolivia, para el texto de "sin fechas".

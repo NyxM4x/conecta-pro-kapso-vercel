@@ -30,45 +30,32 @@ type CourseDetails = {
 // página, solo con su nombre y su fecha.
 const COURSE_DETAILS: Record<string, CourseDetails> = {
   creacion_contenido: {
-    tagline: "Aprende a crear contenido para redes y a usar el algoritmo de TikTok a tu favor.",
+    tagline: "Aprende a crear videos profesionales que atraigan clientes y generen ventas en tus redes.",
     facts: [
       { value: "Presencial", label: "Modalidad" },
-      { value: "Santa Cruz", label: "De la Sierra, Bolivia" },
+      { value: "4 a 5 horas", label: "Duración" },
     ],
     topics: [
-      "Cómo funciona el algoritmo de TikTok y cómo usarlo a tu favor",
-      "El algoritmo de TikTok LIVE: que tus transmisiones en vivo lleguen a más gente",
-      "Cómo planificar y grabar contenido que funcione en TikTok e Instagram",
+      "Estrategias de contenido para generar ventas",
+      "Cómo grabar videos profesionales con tu celular",
+      "Cómo crear guiones persuasivos y virales",
+      "Cómo publicar correctamente en TikTok",
+      "Cómo diferenciarte de tu competencia y atraer clientes",
     ],
   },
   capcut_pro: {
-    tagline: "Edición persuasiva desde tu celular para crear videos que vendan en redes.",
+    tagline: "Aprende a editar videos profesionales y persuasivos, con prácticas personalizadas paso a paso.",
     facts: [
-      { value: "5 horas", label: "Aprox., en un solo día" },
-      { value: "Presencial", label: "100% práctico" },
+      { value: "Presencial", label: "Modalidad" },
+      { value: "4 a 5 horas", label: "Duración" },
     ],
     topics: [
-      "Cortes precisos y dinámicos",
-      "Subtítulos que llamen la atención",
-      "Textos persuasivos dentro del video",
-      "Animaciones y efectos",
-      "Efectos de sonido",
-      "Uso correcto de la música",
-      "Transiciones profesionales",
-      "Cómo darle ritmo a tus videos",
-      "Técnicas para mantener la atención del espectador",
-      "Cómo estructurar una edición enfocada en vender",
+      "Edición de videos desde cero",
+      "Edición profesional y persuasiva",
+      "Efectos, transiciones y subtítulos dinámicos",
+      "Herramientas para mejorar tus videos",
+      "Prácticas personalizadas paso a paso",
     ],
-    bonus: [
-      "Poner texto detrás de una persona",
-      "Eliminar fondos",
-      "Poner imágenes, videos y elementos detrás del sujeto",
-      "Trucos para una edición más profesional y llamativa",
-    ],
-    bring:
-      "Tu celular con CapCut instalado y tu cuenta iniciada. Recomendamos tener CapCut Pro activo para usar todas las funciones que se enseñan.",
-    outcome:
-      "Sales sabiendo transformar un video sencillo en un contenido dinámico, persuasivo y listo para redes.",
   },
 };
 

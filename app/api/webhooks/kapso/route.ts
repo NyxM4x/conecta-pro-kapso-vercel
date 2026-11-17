@@ -24,6 +24,8 @@ import {
 import type { PayerData, PaymentReason } from "../../../../lib/payment-alerts";
 import {
   getChatModel,
+  getFallbackChatModel,
+  resolveFallbackProvider,
   getTopUpUrl,
   getTranscriptionModel,
   isQuotaError,
@@ -53,6 +55,7 @@ import {
   detectMentionedCourses,
   formatNowInBolivia,
   hasCourseWithDate,
+  renderQrAmountNote,
 } from "../../../../lib/courses";
 import {
   LINK_BUTTON_RESEND_HOURS,
@@ -152,6 +155,14 @@ import {
   detectCoursePaymentRequest,
 } from "../../../../lib/keywords";
 import type { CoursePaymentRequest } from "../../../../lib/keywords";
+import {
+  decideQrRouting,
+  QR_ASK_PURPOSE_REPLY,
+  QR_OTHER_ABOVE_REPLY,
+  QR_OTHER_SENT_REPLY,
+  WAITLIST_SENTENCE,
+} from "../../../../lib/qr-routing";
+import { shouldBlockReceiptThanks, stripPlaceholderBrackets } from "../../../../lib/reply-guards";
 
 type IncomingMessage = {
   from: string;
@@ -411,8 +422,8 @@ Conecta Pro tiene TRES líneas activas:
 
 LÍNEA A — Cursos:
 - Conecta Pro dicta cursos presenciales en Santa Cruz de la Sierra, Bolivia: Curso de Creación de
-  Contenido y Curso de Edición Persuasiva en CapCut Pro (también le dicen "curso de CapCut" o "de
-  edición en CapCut": es el mismo).
+  Contenido y Curso de Edición de Videos Personalizada (también le dicen "curso de edición" o "de
+  CapCut": es el mismo).
 - ⚠️ FECHAS, PRECIOS Y UBICACIÓN: NUNCA los recites de memoria. Llegan en el contexto adicional de
   cada mensaje bajo "CURSOS — FECHAS Y PRECIOS VIGENTES" — esa es la ÚNICA fuente de verdad, se
   actualiza sola y solo incluye los cursos con fecha vigente. Si un curso no aparece ahí como
@@ -429,44 +440,41 @@ LÍNEA A — Cursos:
   Al dar la ubicación de un curso marca intents.location_video = true para que el sistema envíe el
   video de cómo llegar, SALVO que el bloque de cursos vigentes indique lo contrario para ese curso.
 - CONTENIDO del Curso de Creación de Contenido (temas CONFIRMADOS, puedes afirmarlos con
-  seguridad):
-  • ALGORITMO DE TIKTOK, incluido el algoritmo de TIKTOK LIVE (transmisiones en vivo): cómo
-    funciona y cómo aprovecharlo para que el contenido y los lives lleguen a más gente.
-  • Creación de contenido para redes sociales en general: cómo planificar y grabar contenido que
-    funcione en TikTok e Instagram.
-  Si el cliente pregunta si se enseña el algoritmo de TikTok o de TikTok LIVE, la respuesta es SÍ.
-  Confírmalo de forma breve y con entusiasmo, agregando una frase corta de valor (por ejemplo que
-  se ve cómo funciona el algoritmo y cómo usarlo a favor en los lives). NO te extiendas en un
-  temario largo ni inventes módulos, horarios por tema, certificados ni materiales.
-- Curso de Edición Persuasiva en CapCut Pro (datos CONFIRMADOS, puedes afirmarlos con seguridad):
-  • De qué se trata: edición persuasiva DESDE EL CELULAR con CapCut, para crear videos más
-    profesionales y dinámicos que ayuden a VENDER en redes sociales.
-  • Modalidad: 100% PRESENCIAL y PRÁCTICA. No es para sentarse solo a mirar: cada alumno edita en
-    su propio celular y aplica las herramientas mientras aprende.
-  • Duración: unas 5 horas (entre 4 y 5 horas aproximadamente), en un solo día.
-  • Qué traer: su celular con CapCut instalado y su cuenta iniciada. Se RECOMIENDA tener CapCut
-    Pro activo para poder usar todas las funciones que se enseñan. Si preguntan si es obligatorio,
-    responde que es lo recomendado para aprovechar todas las funciones; no digas que sin Pro no
-    puede asistir.
-  • Temario: cortes precisos y dinámicos; subtítulos que llamen la atención; textos persuasivos
-    dentro del video; animaciones y efectos; efectos de sonido; uso correcto de la música;
-    transiciones profesionales; cómo darle ritmo a los videos; técnicas para mantener la atención
-    del espectador; cómo estructurar una edición enfocada en vender.
-  • BONUS de edición avanzada: poner texto detrás de una persona; eliminar fondos; poner
-    imágenes, videos y elementos detrás del sujeto; trucos para una edición más profesional y
-    llamativa.
-  • Resultado: salir sabiendo transformar un video sencillo en un contenido dinámico, persuasivo y
-    listo para redes sociales.
-  NO inventes certificados, materiales, cupos ni temas fuera de esta lista.
+  seguridad). Enfoque: enseñar a crear videos profesionales que atraigan clientes y generen ventas
+  en redes sociales. Duración: de 4 a 5 horas, presencial.
+  • Estrategias de contenido para generar ventas.
+  • Cómo grabar videos profesionales con el celular.
+  • Cómo crear guiones persuasivos y virales.
+  • Cómo publicar correctamente en TikTok.
+  • Cómo diferenciarte de la competencia y atraer clientes.
+  NO inventes módulos, horarios por tema, certificados ni materiales. Si preguntan por algo fuera de
+  esta lista (por ejemplo el algoritmo de TikTok LIVE), aplica la REGLA CRÍTICA SOBRE TEMAS de abajo:
+  en positivo, sin negarlo ni afirmarlo.
+- Curso de Edición de Videos Personalizada (datos CONFIRMADOS, puedes afirmarlos con seguridad).
+  Enfoque: edición de videos profesional y persuasiva, con prácticas personalizadas paso a paso.
+  Duración: de 4 a 5 horas, presencial.
+  • Edición de videos desde cero.
+  • Edición profesional y persuasiva.
+  • Efectos, transiciones y subtítulos dinámicos.
+  • Herramientas para mejorar los videos.
+  • Prácticas personalizadas paso a paso.
+  NO inventes qué hay que llevar, bonos, certificados, materiales, cupos ni temas fuera de esta
+  lista. Si preguntan qué app se usa o qué deben llevar y no está en el contexto, di que un asesor
+  se lo confirma (advisor_handoff).
+- PRECIOS Y COMBO (la fuente de verdad es el contexto adicional "CURSOS — FECHAS Y PRECIOS
+  VIGENTES"): un curso suelto cuesta lo que diga ahí; los DOS cursos juntos tienen un precio
+  de combo que solo existe hasta que empieza el primer curso. Quien quiere los dos debe pagar los
+  dos desde la primera vez, antes del primer curso. Si pregunta por el precio, dale el de un curso
+  Y el del combo, y pregúntale si quiere uno o los dos. En la puerta no hay combo.
 - REGLA CRÍTICA SOBRE TEMAS DEL CURSO — NUNCA NIEGUES UN TEMA: si el cliente pregunta por un tema
   que NO está en la lista confirmada de ESE curso (ej. monetización, fotografía, Instagram Reels,
   publicidad paga), NUNCA respondas que el curso "no lo incluye" ni que "no tiene un enfoque
   específico" en eso — negar un tema hace perder la venta y además no lo sabes con certeza.
   En ese caso responde en POSITIVO y breve con el enfoque de ESE curso (Creación de Contenido:
-  creación de contenido y el algoritmo de TikTok; CapCut: edición persuasiva desde el celular para
-  vender en redes), y que un asesor le confirma el detalle del temario. Ejemplo de tono:
+  creación de contenido para vender con videos profesionales; Edición: edición de videos
+  profesional y persuasiva, con práctica paso a paso), y que un asesor le confirma el detalle del temario. Ejemplo de tono:
 
-  "El curso se enfoca en creación de contenido y en el algoritmo de TikTok 🎯 Un asesor te confirma el detalle del temario. Si quieres asegurar tu cupo, te paso el QR de pago 😊"
+  "El curso se enfoca en crear videos profesionales que vendan en redes 🎯 Un asesor te confirma el detalle del temario. Si quieres asegurar tu cupo, te paso el QR de pago 😊"
 
   Marca advisor_handoff = true con advisor_handoff_reason = "course_topic_unconfirmed" para que el
   asesor confirme el detalle real (el bot SÍ responde en este mismo turno, no se queda en
@@ -827,7 +835,7 @@ GUÍA POR SITUACIÓN
   - EL DÍA DEL CURSO, CON EL CURSO YA EN MARCHA: si el contexto adicional lista un curso como "SE
     ESTÁ DICTANDO AHORA MISMO", quien pregunta por ese curso casi siempre es un alumno que ya pagó y
     recién lee (o está llegando tarde). Dile que el curso se está llevando a cabo ahora mismo y dale
-    lo que necesite: la ubicación de ESE curso, que es hoy y a qué hora empezó. NO vendas: sin QR,
+    lo que necesite: la ubicación de ESE curso, que es hoy, a qué hora empezó y cuánto dura (de 4 a 5 horas en total: quien escribe suele llegar tarde, así que dile con calidez que lo están pasando ahora mismo y que todavía está a tiempo de llegar). NO vendas: sin QR,
     sin precios, sin preventa. NUNCA le digas que la fecha ya pasó ni que no hay fecha.
   - EL DÍA DEL CURSO, ANTES DE QUE EMPIECE: que un curso sea "HOY" NO significa que la preventa
     haya cerrado. El día del curso el QR SIGUE saliendo hasta 10 minutos antes de la hora de
@@ -851,15 +859,13 @@ GUÍA POR SITUACIÓN
     salvo que ese curso indique lo contrario en el bloque. Si NO está vigente
     (no aparece en la lista de cursos vigentes), usa el flujo "CLIENTE MENCIONA UN CURSO CUYA
     FECHA YA PASÓ" más abajo — NUNCA inventes ni repitas una fecha vieja.
-  - INFORMACIÓN DEL CURSO DE CAPCUT ("info del curso de CapCut", "¿de qué trata?", "¿cómo es el
-    curso de edición?"), con el curso vigente: da PRIMERO los datos importantes, cortos y uno por
-    línea, en este orden: fecha y hora; precios (preventa y hasta cuándo, y precio en puerta, tal
-    cual vienen en el contexto adicional); modalidad presencial y práctica; duración; que traiga
-    su celular con CapCut Pro y su cuenta. Después la ubicación de ESE curso en su propia línea y,
-    al final, UNA frase corta de lo que va a aprender (edición persuasiva para vender en redes, con
-    bonus de edición avanzada) ofreciendo pasarle el temario completo. NO pegues el temario entero
-    en ese primer mensaje: el temario y el bonus van solo cuando pregunten qué se aprende o qué
-    temas se ven.
+  - INFORMACIÓN DE UN CURSO (si es una pregunta general o un pedido de información, manda el
+    "TEXTO DEL BOTÓN DE CURSOS", ver arriba). Para una pregunta PUNTUAL ("¿cuánto dura?", "¿qué se
+    aprende?", "¿cuánto cuesta?"), responde corto y cálido con lo confirmado del curso (fecha y
+    hora, precio de un curso y del combo, presencial, duración de 4 a 5 horas) y recuérdale que
+    puede ver todo el detalle en el botón (el sistema se lo adjunta a este mismo mensaje cuando
+    marcas intents.course_flyer = true) y que si quiere asegurar su cupo le pasas el QR. NO pegues el
+    temario entero: va solo cuando pregunten qué se aprende o qué temas se ven.
   - Pregunta POR LA UBICACIÓN DEL CURSO ("¿dónde es el curso?", "¿cómo llego?", "¿en qué dirección
     es?", "pásame la ubicación del curso"): responde con la ubicación de ESE curso tal cual viene
     en el bloque de cursos vigentes, en su propia línea, y marca intents.location_video = true
@@ -1834,9 +1840,12 @@ function replyConfirmsAppointment(reply: string): boolean {
 const COURSE_PAYER_DATA_REPLY = `¡Gracias! 🙌 Ya tenemos tus datos. Nuestro equipo valida tu pago y te agrega al grupo del curso 😊`;
 
 // Curso en marcha: ya no se vende. Reemplaza cualquier respuesta que ofrezca el cupo.
-const COURSE_IN_PROGRESS_NO_SALE_REPLY = `Este curso ya se está llevando a cabo ahora mismo 😊 Si ya pagaste tu cupo y necesitas la ubicación o algún dato para llegar, dime y te ayudo.
+const COURSE_IN_PROGRESS_NO_SALE_REPLY = `Este curso se está llevando a cabo ahora mismo 😊 Dura de 4 a 5 horas, así que si ya pagaste tu cupo todavía estás a tiempo de llegar. Dime si necesitas la ubicación.
 
-Para la próxima fecha puedes seguirnos en TikTok como @marketero7, ahí la anunciamos apenas sale 🎓`;
+Y si aún no te inscribiste, ¿quieres que te agreguemos a la lista de espera para avisarte si abrimos una nueva fecha el próximo mes? 🎓`;
+
+// El cliente aceptó entrar a la lista de espera (ver COURSE_IN_PROGRESS_NO_SALE_REPLY).
+const COURSE_WAITLIST_JOINED_REPLY = `¡Listo! 🙌 Te anotamos en la lista de espera y te avisamos apenas abramos una nueva fecha 😊`;
 
 // Audio que no se pudo transcribir: el bot no sabe qué dijo el cliente.
 const AUDIO_UNREADABLE_REPLY = `¡Hola! 😊 No pude escuchar tu audio. ¿Me lo puedes escribir, por favor? Así te ayudo enseguida.`;
@@ -3554,18 +3563,50 @@ async function generateAssistantTurn(params: {
   phone?: string;
 }): Promise<AssistantTurn> {
   try {
-    const result = await generateText({
-      model: getChatModel(),
-      system: params.extraContext
-        ? `${SYSTEM_PROMPT}\n\nContexto adicional para este mensaje:\n${params.extraContext}`
-        : SYSTEM_PROMPT,
-      messages: params.history.map((message) => ({
-        role: message.role,
-        content: message.content,
-      })),
-      temperature: 0.4,
-      output: Output.object({ schema: AssistantTurnSchema }),
-    });
+    const request = (model: ReturnType<typeof getChatModel>) =>
+      generateText({
+        model,
+        system: params.extraContext
+          ? `${SYSTEM_PROMPT}
+
+Contexto adicional para este mensaje:
+${params.extraContext}`
+          : SYSTEM_PROMPT,
+        messages: params.history.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        temperature: 0.4,
+        output: Output.object({ schema: AssistantTurnSchema }),
+      });
+
+    let result: Awaited<ReturnType<typeof request>>;
+
+    try {
+      result = await request(getChatModel());
+    } catch (primaryError) {
+      // Sin cupo o sin crédito en el proveedor principal: se reintenta con el otro.
+      const fallbackModel = getFallbackChatModel();
+      if (!fallbackModel) throw primaryError;
+
+      console.error("primary AI provider failed, retrying with fallback", primaryError);
+      await alertIfOpenAiQuotaError(primaryError, "respuestas del bot (principal)");
+      await logSystemEvent({
+        level: "warning",
+        eventType: "ai_provider_fallback_used",
+        conversationId: params.conversationId,
+        messageId: params.messageId,
+        contactPhone: params.phone,
+        errorMessage: getErrorMessage(primaryError),
+        metadata: {
+          primary: resolveAiProvider().provider,
+          fallback: resolveFallbackProvider()?.provider,
+          fallback_model: resolveFallbackProvider()?.model,
+        },
+      });
+
+      result = await request(fallbackModel);
+    }
 
     const turn = result.output;
     const reply = turn.reply.trim();
@@ -3672,7 +3713,10 @@ type ReceiptCheck = {
   source: "vision" | "fallback";
 };
 
-const RECEIPT_VISION_TIMEOUT_MS = 8000;
+// 8 s abortaba el 26 % de las verificaciones (37 de 155, ago–nov 2026): se da más tiempo y un
+// segundo intento antes de rendirse.
+const RECEIPT_VISION_TIMEOUT_MS = 20_000;
+const RECEIPT_VISION_ATTEMPTS = 2;
 
 const ReceiptVisionSchema = z.object({
   is_receipt: z
@@ -3731,67 +3775,82 @@ async function classifyReceiptImage(params: {
   messageId?: string;
   phone?: string;
 }): Promise<ReceiptCheck> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RECEIPT_VISION_TIMEOUT_MS);
+  let check: ReceiptCheck | null = null;
+  let lastError: unknown = null;
 
-  let check: ReceiptCheck;
+  for (let attempt = 1; attempt <= RECEIPT_VISION_ATTEMPTS && check === null; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RECEIPT_VISION_TIMEOUT_MS);
 
-  try {
-    const image = await downloadIncomingMedia({
-      mediaId: params.mediaId,
-      mediaUrl: params.mediaUrl,
-      signal: controller.signal,
-    });
+    try {
+      const image = await downloadIncomingMedia({
+        mediaId: params.mediaId,
+        mediaUrl: params.mediaUrl,
+        signal: controller.signal,
+      });
 
-    const result = await generateText({
-      model: getChatModel(),
-      abortSignal: controller.signal,
-      temperature: 0,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: [
-                "Eres un verificador de comprobantes de pago para un negocio de Bolivia.",
-                "Responde is_receipt = true SOLO si la imagen muestra evidencia de una",
-                "transacción: monto pagado, fecha/hora de operación, nombre de un banco o",
-                "billetera (Banco Unión, BNB, Mercantil Santa Cruz, BCP, Banco Económico,",
-                "Banco Ganadero, BancoSol, Fassil, Tigo Money, pago por QR Simple, etc.),",
-                "número de operación o una captura de pantalla de una app bancaria.",
-                "Responde is_receipt = false para cualquier otra cosa: fotos de personas o",
-                "selfies, memes, fotos de productos o lugares, documentos de identidad,",
-                "capturas de chats o de redes sociales, o imágenes ilegibles.",
-                "Ante la duda sobre si hay una transacción real, responde false.",
-                "Aparte, responde shows_promo_offer = true si la imagen es la captura de un",
-                "anuncio, publicación o flyer que ofrece una promoción de videos (un precio",
-                "como 999 Bs, una cantidad como '4 videos', la palabra promoción u oferta).",
-                "En reason describe lo que se ve, incluido el texto principal si lo hay.",
-              ].join(" "),
-            },
-            { type: "image", image },
-          ],
-        },
-      ],
-      output: Output.object({ schema: ReceiptVisionSchema }),
-    });
+      // Segundo intento con el otro proveedor (si hay clave): el primero suele fallar por
+      // cupo diario del tier gratuito o por lentitud.
+      const visionModel =
+        attempt > 1 ? (getFallbackChatModel() ?? getChatModel()) : getChatModel();
 
+      const result = await generateText({
+        model: visionModel,
+        abortSignal: controller.signal,
+        temperature: 0,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: [
+                  "Eres un verificador de comprobantes de pago para un negocio de Bolivia.",
+                  "Responde is_receipt = true SOLO si la imagen muestra evidencia de una",
+                  "transacción: monto pagado, fecha/hora de operación, nombre de un banco o",
+                  "billetera (Banco Unión, BNB, Mercantil Santa Cruz, BCP, Banco Económico,",
+                  "Banco Ganadero, BancoSol, Fassil, Tigo Money, pago por QR Simple, etc.),",
+                  "número de operación o una captura de pantalla de una app bancaria.",
+                  "Responde is_receipt = false para cualquier otra cosa: fotos de personas o",
+                  "selfies, memes, fotos de productos o lugares, documentos de identidad,",
+                  "capturas de chats o de redes sociales, o imágenes ilegibles.",
+                  "Ante la duda sobre si hay una transacción real, responde false.",
+                  "Aparte, responde shows_promo_offer = true si la imagen es la captura de un",
+                  "anuncio, publicación o flyer que ofrece una promoción de videos (un precio",
+                  "como 999 Bs, una cantidad como '4 videos', la palabra promoción u oferta).",
+                  "En reason describe lo que se ve, incluido el texto principal si lo hay.",
+                ].join(" "),
+              },
+              { type: "image", image },
+            ],
+          },
+        ],
+        output: Output.object({ schema: ReceiptVisionSchema }),
+      });
+
+      check = {
+        isReceipt: result.output.is_receipt,
+        reason: result.output.reason.trim(),
+        showsPromoOffer: !result.output.is_receipt && result.output.shows_promo_offer,
+        source: "vision",
+      };
+    } catch (error) {
+      lastError = error;
+      console.error(`receipt vision check failed (attempt ${attempt}/${RECEIPT_VISION_ATTEMPTS})`, error);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  if (check === null) {
+    await alertIfOpenAiQuotaError(lastError, "verificación de comprobantes");
+
+    // SIN VERIFICAR. Antes se asumía "es comprobante" para no perder un pago real, pero el 26 %
+    // de las verificaciones fallaban y 8 terminaron en alertas 💰 que quizá eran falsas. Ahora
+    // la imagen no cuenta como comprobante ni como rechazada: el bot dice que un asesor la
+    // revisa y el equipo recibe el aviso en Telegram (ver receiptUnverified).
     check = {
-      isReceipt: result.output.is_receipt,
-      reason: result.output.reason.trim(),
-      showsPromoOffer: !result.output.is_receipt && result.output.shows_promo_offer,
-      source: "vision",
-    };
-  } catch (error) {
-    console.error("receipt vision check failed", error);
-    await alertIfOpenAiQuotaError(error, "verificación de comprobantes");
-
-    // Conservador a propósito: si no pudimos ver la imagen, preferimos el
-    // comportamiento anterior (tratarla como comprobante) antes que perder un
-    // pago real. El evento queda registrado para poder medirlo.
-    check = {
-      isReceipt: true,
+      isReceipt: false,
       reason: "No se pudo verificar la imagen",
       showsPromoOffer: false,
       source: "fallback",
@@ -3803,11 +3862,9 @@ async function classifyReceiptImage(params: {
       conversationId: params.conversationId,
       messageId: params.messageId,
       contactPhone: params.phone,
-      errorMessage: getErrorMessage(error),
-      metadata: { fallback_used: true, had_media_url: Boolean(params.mediaUrl) },
+      errorMessage: getErrorMessage(lastError),
+      metadata: { fallback_used: true, unverified: true, had_media_url: Boolean(params.mediaUrl) },
     });
-  } finally {
-    clearTimeout(timeout);
   }
 
   await logSystemEvent({
@@ -5082,6 +5139,12 @@ const COURSE_OFFICE_VISIT_ALERT_MARKER = "[TELEGRAM_COURSE_OFFICE_VISIT_SENT]";
 // minutos para empezar). El bot ya no manda el QR, pero es una venta a punto de perderse:
 // el equipo tiene esos minutos para pasarle el QR a mano o cobrarle en la puerta.
 const PRESALE_CLOSED_QR_ALERT_MARKER = "[TELEGRAM_PRESALE_CLOSED_QR_SENT]";
+const COURSE_WAITLIST_ALERT_MARKER = "[TELEGRAM_COURSE_WAITLIST_SENT]";
+const RECEIPT_UNVERIFIED_ALERT_MARKER = "[TELEGRAM_RECEIPT_UNVERIFIED_SENT]";
+
+// Texto fijo cuando la visión no pudo leer la imagen que llegó con contexto de pago.
+const RECEIPT_UNVERIFIED_REPLY =
+  "¡Recibimos tu imagen! 😊 Un asesor la revisa y te confirma en breve. Mientras tanto, indícame tu nombre completo y el motivo del pago, por favor.";
 
 async function notifyCourseOfficeVisitToTelegram(params: {
   phone: string;
@@ -5146,6 +5209,69 @@ async function notifyPresaleClosedQrToTelegram(params: {
       phone: params.phone,
       content: `${PRESALE_CLOSED_QR_ALERT_MARKER} aviso de preventa cerrada enviado a Telegram`,
       rawPayload: { type: "telegram_notification", event: "presale_closed_qr" },
+    });
+  }
+}
+
+// LISTA DE ESPERA DE CURSOS. Sin ningún curso con fecha, quien pregunta o pide pagar un curso
+// no se pierde: el equipo recibe su contacto (una vez por conversación) para avisarle cuando
+// abra una fecha nueva.
+async function notifyCourseWaitlistToTelegram(params: {
+  phone: string;
+  conversationId?: string;
+  clientMessage: string;
+}): Promise<boolean> {
+  if (await hasTelegramMarkerBeenSent(params.conversationId, COURSE_WAITLIST_ALERT_MARKER)) {
+    return true;
+  }
+
+  const notified = await sendTelegramNotification(
+    buildTelegramBody({
+      headline: "📋 <b>Lista de espera — Curso sin fecha</b>",
+      phone: params.phone,
+      clientMessage: params.clientMessage,
+      contextLabel: "Quiere un curso y no hay cupo disponible (sin fecha, o el curso ya está en marcha)",
+      note: "El bot NO le dio QR. Avísale cuando abra una fecha nueva.",
+    }),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: `${COURSE_WAITLIST_ALERT_MARKER} lista de espera enviada a Telegram`,
+      rawPayload: { type: "telegram_notification", event: "course_waitlist" },
+    });
+  }
+
+  return notified;
+}
+
+// Imagen con contexto de pago que la visión no pudo leer: un humano la revisa.
+async function notifyReceiptUnverifiedToTelegram(params: {
+  phone: string;
+  conversationId?: string;
+  clientMessage: string;
+}): Promise<void> {
+  if (await hasTelegramMarkerBeenSent(params.conversationId, RECEIPT_UNVERIFIED_ALERT_MARKER)) {
+    return;
+  }
+
+  const notified = await sendTelegramNotification(
+    buildTelegramBody({
+      headline: "🧾 <b>Imagen de pago SIN VERIFICAR</b>",
+      phone: params.phone,
+      clientMessage: params.clientMessage,
+      note: "La verificación automática falló. Revisa la imagen en el chat: puede ser un comprobante real.",
+    }),
+  );
+
+  if (notified) {
+    await saveOutboundMessage({
+      conversationId: params.conversationId,
+      phone: params.phone,
+      content: `${RECEIPT_UNVERIFIED_ALERT_MARKER} aviso de imagen sin verificar enviado a Telegram`,
+      rawPayload: { type: "telegram_notification", event: "receipt_unverified" },
     });
   }
 }
@@ -6420,6 +6546,28 @@ async function processWebhookEvent(
     courseSellable,
   });
 
+  // ENRUTADO DEL QR (lib/qr-routing.ts). El QR no es solo de cursos: se pide también para
+  // pagar paquetes de videos. Lo decide el contexto de la conversación. Sin comprobante ni
+  // promo del live de por medio, que tienen sus propios flujos.
+  const qrRouting = decideQrRouting({
+    asksForQr:
+      !receiptMedia &&
+      !hasExplicitPaymentPhrase &&
+      !promoDetected &&
+      detectCoursePaymentRequest(unansweredClientText) !== null,
+    mentionsCourseNow: mentionsCourse(unansweredClientText),
+    strongPackageNow: hasStrongPackageSignal(unansweredClientText),
+    courseContext,
+    otherLineContext:
+      packagesPresented ||
+      mediaStatus.service_packages ||
+      mediaStatus.service_packages_promo ||
+      hasExplicitPackageIntent(unansweredClientText) ||
+      flowState.flowStage === "intake_sent",
+    courseSellable,
+  });
+  const qrExplicitRequest = detectCoursePaymentRequest(unansweredClientText) === "qr_request";
+
   // ¿Este turno es de CURSOS? La conversación ya está anclada en cursos, o el cliente nombra
   // el curso o la compra de su entrada. Un turno así nunca recibe el formulario de datos de
   // empresa (lo recibieron "quiero comprar mi entrada" y "me interesa curso", sep 2026).
@@ -6568,7 +6716,11 @@ async function processWebhookEvent(
         })
       : null;
 
-  const rejectedByVision = receiptCheck !== null && !receiptCheck.isReceipt;
+  const rejectedByVision =
+    receiptCheck !== null && !receiptCheck.isReceipt && receiptCheck.source === "vision";
+  // La visión falló dos veces: ni comprobante ni rechazada. Solo importa si el cliente venía
+  // pagando; sin contexto de pago, la imagen sigue el camino de "¿qué es esta imagen?".
+  const receiptUnverified = receiptCheck?.source === "fallback" && imageHadPaymentContext;
   // La foto es el anuncio de la promo vigente: cuenta como si la hubiera pedido por nombre.
   // En una conversación de cursos no: ahí la "promoción" de la foto suele ser la de un curso.
   const imageShowsActivePromo =
@@ -6687,6 +6839,10 @@ async function processWebhookEvent(
     // antes el modelo no sabía qué decía la imagen y le mandaba el catálogo de 3 paquetes.
     contextParts.push(
       `El último mensaje del usuario es una IMAGEN: la captura de un anuncio o publicación con una PROMOCIÓN de videos (lo que se ve: "${receiptCheck?.reason ?? ""}"). Es la promo vigente de arriba: lo que pregunte sobre "el paquete" o "esto" se refiere a ESA promo, no a los paquetes del catálogo. Marca intents.service_packages_promo = true. NO la trates como comprobante (no marques payment_confirmation) y no le preguntes qué es la imagen.`,
+    );
+  } else if (receiptUnverified) {
+    contextParts.push(
+      `El último mensaje del usuario es una IMAGEN que el sistema NO pudo verificar (puede ser un comprobante real). Responde EXACTAMENTE con este texto, sin agregar nada: "${RECEIPT_UNVERIFIED_REPLY}" NO digas "gracias por el comprobante", NO marques payment_confirmation y NO le envíes el QR.`,
     );
   } else if (rejectedByVision && imageHadPaymentContext) {
     contextParts.push(
@@ -7025,8 +7181,15 @@ async function processWebhookEvent(
     const stillSilent = retry.off_topic || !retry.should_reply;
     // Último recurso: paquetes si habló de publicidad/servicios y todavía no recibió la
     // presentación (repetir el texto largo sería peor que el menú); si no, el menú.
+    // "Un vídeo como tal, ¿cuánto sería el costo?" (17 nov 2026): "VIDEO" en singular no está en
+    // SERVICE_PACKAGES_KEYWORDS y caía en el menú genérico. Preguntar el precio de un video es
+    // una consulta de paquetes.
+    const normalizedBatch = normalizeForMatch(batchText);
+    const asksVideoPrice =
+      /\bVIDEO\b/.test(normalizedBatch) &&
+      /\b(COSTO|COSTOS|PRECIO|PRECIOS|CUANTO|VALOR|COBRAN|SALE|CUESTA)\b/.test(normalizedBatch);
     const fallbackToPackages =
-      SERVICE_PACKAGES_KEYWORDS.test(normalizeForMatch(batchText)) &&
+      (SERVICE_PACKAGES_KEYWORDS.test(normalizedBatch) || asksVideoPrice) &&
       !mentionsCourse(batchText) &&
       !howWeWorkSent;
     turn = stillSilent
@@ -7832,6 +7995,26 @@ async function processWebhookEvent(
     turn.intents.ai_agent_flyer = false;
   }
 
+  // IMAGEN SIN VERIFICAR: texto fijo y aviso al equipo. Nunca la plantilla de comprobante.
+  if (receiptUnverified && !receiptReplyTemplate) {
+    turn.should_reply = true;
+    turn.off_topic = false;
+    turn.is_greeting = false;
+    turn.reply = RECEIPT_UNVERIFIED_REPLY;
+    turn.payment_confirmation = false;
+    turn.service_intake_requested = false;
+    turn.lead_data_submitted = false;
+    turn.intents.payment_qr = false;
+    turn.intents.service_packages = false;
+    turn.intents.service_packages_promo = false;
+
+    await notifyReceiptUnverifiedToTelegram({
+      phone: lastMessage.from,
+      conversationId: lastMessage.conversationId,
+      clientMessage: batchText,
+    });
+  }
+
   // DATOS DEL PAGO. Si el cliente mandó (parte de) los datos que se le pidieron por su
   // comprobante, la respuesta es fija: el acuse, o lo que todavía falta. Una pregunta suya
   // ("¿a qué hora es?") la responde el modelo.
@@ -8302,6 +8485,116 @@ async function processWebhookEvent(
   // del botón (ver lib/site-links.ts). Si el modelo (o una red de seguridad) igual escribe el
   // texto largo de "¿Cómo trabajamos...?" o pega el formulario 📌, se cambia por el texto
   // corto del botón. La visita a la oficina conserva su formulario: ahí el asesor llama.
+  // ENRUTADO DEL QR: texto fijo y material según el motivo del pago (lib/qr-routing.ts). Va
+  // aquí, después de todas las redes de seguridad, para que gane sobre ellas. El modelo no
+  // reescribe estos textos: así nunca promete un QR que no sale ni pega "[QR de Pago]".
+  // LISTA DE ESPERA: el bot le ofreció anotarlo (curso en marcha o sin fechas) y el cliente
+  // dijo que sí. El texto del ofrecimiento siempre dice "lista de espera".
+  const lastAssistantMessage = [...history].reverse().find((message) => message.role === "assistant");
+  const waitlistOfferPending =
+    lastAssistantMessage !== undefined &&
+    normalizeForMatch(lastAssistantMessage.content).includes("LISTA DE ESPERA") &&
+    normalizeForMatch(lastAssistantMessage.content).includes("?");
+
+  if (
+    turn.should_reply &&
+    waitlistOfferPending &&
+    !receiptMedia &&
+    !hasExplicitPaymentPhrase &&
+    acceptsPaymentOffer(unansweredClientText)
+  ) {
+    await notifyCourseWaitlistToTelegram({
+      phone: lastMessage.from,
+      conversationId: lastMessage.conversationId,
+      clientMessage: unansweredClientText,
+    });
+
+    turn.reply = COURSE_WAITLIST_JOINED_REPLY;
+    turn.payment_confirmation = false;
+    turn.intents.payment_qr = false;
+    turn.intents.course_flyer = false;
+    turn.intents.location_video = false;
+    turn.service_intake_requested = false;
+
+    await logSystemEvent({
+      level: "info",
+      eventType: "course_waitlist_joined",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: { client_message: unansweredClientText.slice(0, 200) },
+    });
+  }
+
+  let qrOtherApproved = false;
+
+  if (turn.should_reply && !turn.payment_confirmation && qrRouting.action !== "none") {
+    const noCourseDates = !hasCourseWithDate(turnNow);
+    let qrReplacement: string | null = null;
+
+    if (qrRouting.action === "send_other") {
+      const goesOut = !qrSentRecently || qrExplicitRequest || turn.explicit_resend_request;
+      qrOtherApproved = true;
+      turn.intents.payment_qr = true;
+      turn.intents.course_flyer = false;
+      turn.intents.location_video = false;
+      turn.intents.service_packages = false;
+      turn.intents.service_packages_promo = false;
+      turn.service_intake_requested = false;
+      forceQrResend = forceQrResend || (qrExplicitRequest && goesOut);
+      qrReplacement = goesOut ? QR_OTHER_SENT_REPLY : QR_OTHER_ABOVE_REPLY;
+    } else if (qrRouting.action === "ask_purpose") {
+      turn.intents.payment_qr = false;
+      qrReplacement = QR_ASK_PURPOSE_REPLY;
+    } else if (qrRouting.action === "deny_no_course" && noCourseDates) {
+      turn.intents.payment_qr = false;
+      turn.intents.course_flyer = false;
+      turn.intents.location_video = false;
+      const onWaitlist = await notifyCourseWaitlistToTelegram({
+        phone: lastMessage.from,
+        conversationId: lastMessage.conversationId,
+        clientMessage: unansweredClientText,
+      });
+      qrReplacement = onWaitlist
+        ? `${renderNoCourseDatesText(turnNow)}
+${WAITLIST_SENTENCE}`
+        : renderNoCourseDatesText(turnNow);
+    }
+
+    if (qrReplacement !== null) {
+      turn.reply = qrReplacement;
+
+      await logSystemEvent({
+        level: "info",
+        eventType: `qr_routing_${qrRouting.action}`,
+        conversationId: lastMessage.conversationId,
+        messageId: lastMessage.messageId,
+        contactPhone: lastMessage.from,
+        metadata: {
+          purpose: qrRouting.purpose,
+          course_sellable: courseSellable,
+          qr_sent_recently: qrSentRecently,
+          client_message: unansweredClientText.slice(0, 200),
+        },
+      });
+    }
+  }
+
+  // El QR del banco es de monto libre: con un QR de curso en este turno se le dice cuánto pagar
+  // (un curso o el combo), salvo que la respuesta ya traiga el monto.
+  if (
+    turn.should_reply &&
+    turn.intents.payment_qr &&
+    courseSellable &&
+    !qrOtherApproved &&
+    !/\bBS\b/.test(normalizeForMatch(turn.reply))
+  ) {
+    const amountNote = renderQrAmountNote(turnNow);
+    if (amountNote) turn.reply = `${turn.reply}
+
+${amountNote}`;
+  }
+
   let replyText = applyExactHowWeWorkText(turn.reply);
 
   if (normalizeForMatch(replyText).includes(HOW_WE_WORK_MARKER)) {
@@ -8362,6 +8655,7 @@ async function processWebhookEvent(
   const courseReplyWithoutDates =
     !hasCourseWithDate(turnNow) &&
     !turn.payment_confirmation &&
+    !qrOtherApproved &&
     (turn.intents.course_flyer ||
       menuReplyToCourseQuestion ||
       detectButtonTextKind(replyText) === "courses" ||
@@ -8396,6 +8690,41 @@ async function processWebhookEvent(
       contactPhone: lastMessage.from,
       metadata: { client_message: unansweredClientText.slice(0, 200) },
     });
+  }
+
+  // GUARDAS DE SALIDA (lib/reply-guards.ts). Lo último antes de enviar.
+  // 1) "¡Gracias por el comprobante!" solo si en este turno llegó un comprobante.
+  if (
+    shouldBlockReceiptThanks({
+      reply: replyText,
+      receiptThisTurn: receiptDetected,
+      explicitPaymentPhrase: hasExplicitPaymentPhrase,
+      receiptMedia: Boolean(receiptMedia),
+    })
+  ) {
+    await logSystemEvent({
+      level: "warning",
+      eventType: "receipt_thanks_blocked_no_receipt",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: { client_message: unansweredClientText.slice(0, 200), reply_preview: replyText.slice(0, 120) },
+    });
+    replyText = FALLBACK_ASSISTANT_TURN.reply;
+  }
+
+  // 2) Nada de "[QR de Pago]" ni otros adjuntos inventados entre corchetes.
+  const strippedReply = stripPlaceholderBrackets(replyText);
+  if (strippedReply !== replyText) {
+    await logSystemEvent({
+      level: "warning",
+      eventType: "reply_placeholder_stripped",
+      conversationId: lastMessage.conversationId,
+      messageId: lastMessage.messageId,
+      contactPhone: lastMessage.from,
+      metadata: { reply_preview: replyText.slice(0, 160) },
+    });
+    replyText = strippedReply.length > 0 ? strippedReply : FALLBACK_ASSISTANT_TURN.reply;
   }
 
   // Ya dejó sus datos en la página: nunca se le vuelve a pedir el formulario.
@@ -8517,6 +8846,7 @@ async function processWebhookEvent(
   // el LLM haya clasificado mal y marcado ambos intents a la vez.
   if (
     intentsToSend.has("payment_qr") &&
+    !qrOtherApproved &&
     (turn.intents.service_packages ||
       intentsToSend.has("service_packages_promo") ||
       turn.service_intake_requested)
@@ -8768,7 +9098,8 @@ async function processWebhookEvent(
   // Sin ningún curso con fecha cargada no sale NADA de cursos: ni el QR (no hay qué pagar)
   // ni el video de cómo llegar (no hay a dónde ir).
   if (!hasCourseWithDate(turnNow)) {
-    intentsToSend.delete("payment_qr");
+    // El QR de paquetes u otros motivos sí sale (ver ENRUTADO DEL QR).
+    if (!qrOtherApproved) intentsToSend.delete("payment_qr");
     intentsToSend.delete("location_video");
   }
   if (intentsToSend.has("location_video") && !/https?:\/\//i.test(replyText)) {

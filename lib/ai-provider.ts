@@ -79,6 +79,33 @@ function getChatModel(env: ProviderEnv = process.env) {
   return openai(config.model);
 }
 
+// RESPALDO ENTRE PROVEEDORES. Si el principal se queda sin cupo o sin crédito (el tier gratuito
+// de OpenRouter se agota a diario), la misma llamada se reintenta UNA vez con el otro, siempre
+// que su clave esté configurada. Sin clave del otro proveedor no hay respaldo (null).
+//
+//   principal openrouter -> respaldo OpenAI     (necesita OPENAI_API_KEY)
+//   principal openai     -> respaldo OpenRouter (necesita OPENROUTER_API_KEY)
+function resolveFallbackProvider(env: ProviderEnv = process.env): AiProviderConfig | null {
+  const primary = resolveAiProvider(env);
+
+  if (primary.provider === "openrouter") {
+    return env.OPENAI_API_KEY
+      ? resolveAiProvider({ ...env, AI_PROVIDER: "openai" })
+      : null;
+  }
+
+  return env.OPENROUTER_API_KEY
+    ? resolveAiProvider({ ...env, AI_PROVIDER: "openrouter" })
+    : null;
+}
+
+function getFallbackChatModel(env: ProviderEnv = process.env) {
+  const fallback = resolveFallbackProvider(env);
+  if (!fallback) return null;
+
+  return getChatModel({ ...env, AI_PROVIDER: fallback.provider });
+}
+
 // LA TRANSCRIPCIÓN DE AUDIOS NO DEPENDE DE AI_PROVIDER: OpenRouter no tiene endpoint de
 // transcripción (su API es solo chat-completions). Tiene su propio orden de intento:
 //
@@ -148,10 +175,12 @@ export {
   DEFAULT_TRANSCRIPTION_MODEL,
   OPENROUTER_BASE_URL,
   getChatModel,
+  getFallbackChatModel,
   getTopUpUrl,
   getTranscriptionModel,
   isQuotaError,
   resolveAiProvider,
+  resolveFallbackProvider,
   resolveTranscriptionTargets,
 };
 export type { AiProvider, AiProviderConfig, TranscriptionTarget };

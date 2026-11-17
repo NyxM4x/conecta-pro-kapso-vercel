@@ -53,7 +53,7 @@ const PHONE = "59171234567";
 const SECRET = "secreto-de-prueba";
 // Con el Curso de Creación de Contenido (13 de septiembre) a la venta: el botón de cursos
 // solo sale si hay un curso con fecha cargada.
-const NOW = new Date("2026-09-10T15:00:00-04:00");
+const NOW = new Date("2026-11-18T15:00:00-04:00");
 // Sin ningún curso con fecha cargada.
 const NO_DATES = new Date("2030-01-01T09:00:00-04:00");
 
@@ -336,8 +336,8 @@ test("sin fechas, el texto es el de 'no hay fechas confirmadas' con saludo segú
 });
 
 test("con la preventa cerrada el texto del botón no invita a pedir el QR", () => {
-  // Curso de CapCut: 20 de septiembre a las 16:00; la preventa cierra 10 minutos antes.
-  const doorOnly = new Date("2026-09-20T15:55:00-04:00");
+  // Curso de edición: 29 de noviembre a las 16:00; la preventa cierra 10 minutos antes.
+  const doorOnly = new Date("2026-11-29T15:55:00-04:00");
   assert.doesNotMatch(renderCoursesButtonText(doorOnly), /QR/);
   assert.match(renderCoursesButtonText(NOW), /QR/);
 });

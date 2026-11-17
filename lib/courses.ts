@@ -26,10 +26,12 @@ import { MAPS_CURSOS } from "./locations.ts";
 
 const BOLIVIA_TZ = "America/La_Paz";
 
-// Cuánto tiempo después de la hora de inicio se sigue informando un curso. Con cursos a
-// las 16:00, 90 minutos cubren hasta las 17:30: quien llega tarde o recién lee el día del
-// curso todavía recibe la ubicación.
-const COURSE_INFO_MINUTES_AFTER_START = 90;
+// Cuánto tiempo después de la hora de inicio se sigue informando un curso. Los cursos duran
+// de 4 a 5 horas: con 330 minutos (5 h 30) un curso de las 16:00 sigue "en marcha" hasta las
+// 21:30. Quien llega tarde o escribe a media clase (hay mucha gente así) recibe la ubicación y
+// la duración, no un "esa fecha ya pasó". Antes eran 90 minutos y a las 17:30 el curso se
+// daba por terminado con la clase todavía en curso.
+const COURSE_INFO_MINUTES_AFTER_START = 330;
 
 // Cuánto ANTES de la hora de inicio cierra la preventa con QR. Antes el corte era la
 // medianoche del día del curso: quien escribía a las 10 de la mañana del domingo ya no
@@ -85,23 +87,36 @@ const COURSES: Course[] = [
   {
     id: "creacion_contenido",
     name: "Curso de Creación de Contenido",
-    startsAt: "2026-09-13T16:00:00-04:00",
-    // Preventa en oferta por septiembre 2026: 300 Bs en vez de los 350 habituales.
-    // La oferta vence con esta fecha (el curso deja de anunciarse solo), así que la
-    // próxima fecha que se cargue debe volver a 350 salvo que se decida lo contrario.
+    startsAt: "2026-11-22T16:00:00-04:00",
+    // Noviembre 2026: 300 Bs un curso suelto. Pagando en la puerta cada curso cuesta 500 Bs
+    // (decisión del dueño: así nadie paga los dos en la puerta por menos que el combo).
     pricePreventa: 300,
-    pricePresencial: 450,
+    pricePresencial: 500,
     aliases: ["CREACION DE CONTENIDO", "CREACION", "CONTENIDO"],
   },
   {
+    // El id se queda en "capcut_pro": el ancla de la página (/cursos#capcut-pro) y los
+    // links ya enviados dependen de él. El curso de noviembre se llama "Edición de Videos
+    // Personalizada".
     id: "capcut_pro",
-    name: "Curso de Edición Persuasiva en CapCut Pro",
-    startsAt: "2026-09-20T16:00:00-04:00",
-    pricePreventa: 450,
-    pricePresencial: 550,
-    aliases: ["CAPCUT", "CAP CUT", "EDICION", "EDITAR", "PERSUASIVA"],
+    name: "Curso de Edición de Videos Personalizada",
+    startsAt: "2026-11-29T16:00:00-04:00",
+    pricePreventa: 300,
+    pricePresencial: 500,
+    aliases: ["CAPCUT", "CAP CUT", "EDICION", "EDITAR", "PERSUASIVA", "PERSONALIZADA"],
   },
 ];
+
+// COMBO: los dos cursos por un solo pago, sin importar que se dicten en domingos distintos.
+// Solo se vende mientras NINGUNO de los dos haya empezado ni cerrado su preventa, o sea hasta
+// 10 minutos antes del primero: quien quiera los dos paga los dos desde la primera vez, antes
+// de que pase el primer domingo. En la puerta no hay combo (cada curso cuesta su precio en
+// puerta, 500 Bs).
+const COURSE_BUNDLE = {
+  price: 500,
+  courseIds: ["creacion_contenido", "capcut_pro"],
+} as const;
+
 
 const startTime = (course: Course) => new Date(course.startsAt).getTime();
 const infoEndTime = (course: Course) =>
@@ -188,6 +203,22 @@ function getDoorSaleCourses(now: Date): Course[] {
 // de PRESALE_CLOSES_MINUTES_BEFORE_START minutos (ahí solo se paga en la puerta).
 function hasSellableCourse(now: Date): boolean {
   return getActiveCourses(now).some((course) => !isPresaleClosed(course, now));
+}
+
+// El combo vigente: los dos cursos del combo a la venta con QR. null si alguno ya empezó,
+// cerró su preventa o no está cargado.
+function getActiveBundle(now: Date): { price: number; courses: Course[] } | null {
+  const courses = COURSE_BUNDLE.courseIds
+    .map((id) => COURSES.find((course) => course.id === id))
+    .filter((course): course is Course => course !== undefined);
+
+  if (courses.length !== COURSE_BUNDLE.courseIds.length) return null;
+
+  const allSellable = courses.every(
+    (course) => getCourseStatus(course, now) === "upcoming" && !isPresaleClosed(course, now),
+  );
+
+  return allSellable ? { price: COURSE_BUNDLE.price, courses } : null;
 }
 
 // ¿Hay algún curso con fecha cargada (próximo o dictándose ahora)? Es el mismo criterio de
@@ -295,7 +326,7 @@ function renderCourseContext(now: Date): string {
 
   if (inProgress.length > 0) {
     lines.push(
-      "- Cursos que SE ESTÁN DICTANDO AHORA MISMO (hoy). Ya NO se venden: NO envíes el QR (intents.payment_qr = false), NO ofrezcas preventa, NO des precios y NO invites a inscribirse. Pero SÍ das toda su información a quien la pida — muchos son alumnos que YA pagaron y recién preguntan el mismo día. Si preguntan por el curso, di que se está llevando a cabo ahora mismo (empezó a la hora indicada) y responde lo que necesiten: la ubicación (marca intents.location_video = true salvo aviso contrario abajo), que es hoy y el horario. Si alguien que aún no pagó quiere inscribirse, dile con amabilidad que este curso ya está en marcha y que puede seguirnos en TikTok como @marketero7 para enterarse de la próxima fecha. NUNCA digas que la fecha ya pasó ni que no hay fecha para este curso:",
+      "- Cursos que SE ESTÁN DICTANDO AHORA MISMO (hoy). Ya NO se venden: NO envíes el QR (intents.payment_qr = false), NO ofrezcas preventa, NO des precios y NO invites a inscribirse. Pero SÍ das toda su información a quien la pida — muchos son alumnos que YA pagaron y recién preguntan el mismo día. Si preguntan por el curso, di que se está llevando a cabo ahora mismo (empezó a la hora indicada) y responde lo que necesiten: la ubicación (marca intents.location_video = true salvo aviso contrario abajo), que es hoy, a qué hora empezó y cuánto dura (de 4 a 5 horas en total: quien escribe suele estar llegando tarde, así que dile con calidez que lo están pasando ahora mismo, dale la ubicación y la duración aproximada, y que todavía está a tiempo de llegar). Si alguien que aún no pagó quiere inscribirse, dile con amabilidad que este curso ya está en marcha y pregúntale si quiere que lo agreguemos a la LISTA DE ESPERA para avisarle si abrimos una nueva fecha el próximo mes (usa literalmente las palabras lista de espera). Si responde que sí, el sistema lo anota. NUNCA digas que la fecha ya pasó ni que no hay fecha para este curso:",
     );
 
     for (const course of inProgress) {
@@ -327,7 +358,15 @@ function renderCourseContext(now: Date): string {
     );
   } else {
     lines.push(
-      "- Fuera del curso que se está dictando hoy, NINGÚN otro curso tiene fecha vigente: no hay nada que vender. Para próximas fechas, que nos sigan en TikTok como @marketero7. NUNCA inventes una fecha.",
+      "- Fuera del curso que se está dictando hoy, NINGÚN otro curso tiene fecha vigente: no hay nada que vender. Para próximas fechas, ofrécele agregarlo a la LISTA DE ESPERA (usa literalmente las palabras lista de espera) para avisarle si abrimos una nueva fecha; si dice que sí, el sistema lo anota. NUNCA inventes una fecha.",
+    );
+  }
+
+  const bundle = getActiveBundle(now);
+  if (bundle) {
+    const [first] = bundle.courses;
+    lines.push(
+      `- COMBO VIGENTE: los DOS cursos juntos por ${bundle.price} Bs (en vez de ${bundle.courses.length * bundle.courses[0].pricePreventa} Bs sueltos). Se paga TODO de una vez con el QR, y solo hasta ${formatPresaleDeadline(first)} (10 minutos antes de que empiece el primer curso). Después del primer curso YA NO hay combo: cada curso se paga por separado. En la puerta tampoco hay combo (cada curso cuesta ${first.pricePresencial} Bs). Si el cliente quiere los dos, dile que conviene pagar el combo desde ahora; si quiere uno solo, son ${first.pricePreventa} Bs. El QR es el mismo y el cliente escribe el monto que corresponde (${bundle.price} Bs el combo, ${first.pricePreventa} Bs un curso). Al pagar el combo, pídele nombre completo y celular y anota que es el combo (ambos cursos).`,
     );
   }
 
@@ -343,6 +382,20 @@ function renderCourseContext(now: Date): string {
   );
 
   return lines.join("\n");
+}
+
+// Línea con el monto a pagar que acompaña al QR. El QR del banco es de MONTO LIBRE (Bs. 0.00):
+// el cliente escribe cuánto paga, así que hay que decírselo. null si no hay nada que cobrar.
+function renderQrAmountNote(now: Date): string | null {
+  const sellable = getActiveCourses(now).filter((course) => !isPresaleClosed(course, now));
+  if (sellable.length === 0) return null;
+
+  const single = sellable[0].pricePreventa;
+  const bundle = getActiveBundle(now);
+
+  return bundle
+    ? `💰 Monto a pagar: ${single} Bs un curso, o ${bundle.price} Bs los dos cursos (combo). Escribe ese monto al pagar con el QR 😊`
+    : `💰 Monto a pagar: ${single} Bs. Escríbelo al pagar con el QR 😊`;
 }
 
 // Respuesta fija del día del curso (antes de que empiece) para cuando el modelo igual quiso
@@ -410,6 +463,9 @@ export {
   isCourseDay,
   isPresaleClosed,
   hasSellableCourse,
+  getActiveBundle,
+  renderQrAmountNote,
+  COURSE_BUNDLE,
   hasCourseWithDate,
   hasActiveLocationOverride,
   formatCourseDate,

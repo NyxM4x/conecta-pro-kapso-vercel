@@ -82,9 +82,12 @@ function CourseDate({ schedule }: { schedule: CourseSchedule }) {
 
 function CoursesView({
   courses,
+  bundle,
   paymentDemo,
 }: {
   courses: CourseCard[];
+  // Combo de los dos cursos por un solo pago (lib/courses.ts, getActiveBundle). null si ya no se vende.
+  bundle: { price: number; whatsappUrl: string } | null;
   // Demostración del pago dentro de la página (/cursos?demo=pago).
   paymentDemo: { courseName: string; price: number } | null;
 }) {
@@ -112,6 +115,23 @@ function CoursesView({
         {paymentDemo && (
           <div className="cp-pay-demo">
             <CoursePayment courseName={paymentDemo.courseName} price={paymentDemo.price} demo />
+          </div>
+        )}
+
+        {bundle && (
+          <div className="cp-prices cp-bundle">
+            <div>
+              <strong>Combo: {formatPrice(bundle.price)} Bs</strong>
+              <span>
+                Los dos cursos por un solo pago. Se paga con QR antes de que empiece el primer curso.
+                {bundle.whatsappUrl && (
+                  <>
+                    {" "}
+                    <a href={bundle.whatsappUrl}>Quiero el combo</a>
+                  </>
+                )}
+              </span>
+            </div>
           </div>
         )}
 

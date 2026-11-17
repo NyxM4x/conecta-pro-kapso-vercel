@@ -60,6 +60,8 @@ type PaymentReason =
 type PaymentTag =
   | { kind: "course"; courseId: string; courseName: string; courseStartsAt: string }
   | { kind: "course_unknown"; options: CourseRef[] }
+  // Pagó el combo: los dos cursos con un solo pago (lib/courses.ts, COURSE_BUNDLE).
+  | { kind: "course_bundle"; options: CourseRef[] }
   | { kind: "packages" }
   | { kind: "other" }
   | { kind: "unknown" };
@@ -106,6 +108,10 @@ function resolvePaymentReason(params: {
     if (!params.courseMaterialSent) return { kind: "unknown", options };
   }
 
+  // Sin ningún curso con fecha no se puede preguntar "¿para cuál curso es?" (la lista salía
+  // vacía, 13 nov 2026): se pregunta el motivo, que cubre paquetes de videos y lo demás.
+  if (params.activeCourses.length === 0) return { kind: "unknown", options };
+
   if (params.activeCourses.length === 1) {
     return { kind: "course", course: options[0] };
   }
@@ -131,6 +137,8 @@ const courseTag = (course: CourseRef): PaymentTag => ({
   courseName: course.name,
   courseStartsAt: course.startsAt,
 });
+
+const BUNDLE_WORDS = /\b(AMBOS|LOS DOS|LOS 2|COMBO|DOS CURSOS|2 CURSOS|LAS DOS|PAQUETE DE CURSOS)\b/;
 
 const PACKAGES_MOTIVE =
   /\b(PAQUETE|PAQUETES|VIDEOS|GRABACION|GRABACIONES|PUBLICIDAD|MARKETING|MENSUALIDAD|MENSUAL|AGENTE)\b/;
@@ -188,6 +196,15 @@ function resolveTag(reason: PaymentReason, text: string, motive: string | null):
 
   const options = toCatalog(reason.options);
   const mentioned = detectMentionedCourses(text, options);
+
+  // "los dos", "ambos", "el combo": pagó el combo. Con dos cursos nombrados también.
+  if (
+    options.length >= 2 &&
+    (mentioned.length >= 2 || BUNDLE_WORDS.test(normalizeForMatch(text)))
+  ) {
+    return { kind: "course_bundle", options: reason.options };
+  }
+
   if (mentioned.length === 1) return courseTag(toCourseRef(mentioned[0]));
 
   if (reason.kind === "course_unknown") return { kind: "course_unknown", options: reason.options };
@@ -232,7 +249,9 @@ function isPayerDataComplete(reason: PaymentReason, data: PayerData): boolean {
   if (reason.kind === "packages") return true;
   if (data.names.length === 0) return false;
   if (reason.kind === "course") return true;
-  if (reason.kind === "course_unknown") return data.tag.kind === "course";
+  if (reason.kind === "course_unknown") {
+    return data.tag.kind === "course" || data.tag.kind === "course_bundle";
+  }
   return data.tag.kind !== "unknown";
 }
 
@@ -265,7 +284,7 @@ function renderReceiptReply(reason: PaymentReason, dataComplete: boolean): strin
       `${courseIntro} Para registrarte bien, indícame:`,
       "📌 Tu nombre completo (verifica que esté bien escrito)",
       "📌 Tu número de celular",
-      `📌 ¿Para cuál curso es? ${reason.options.map(courseOptionLabel).join(" o ")}`,
+      `📌 ¿Para cuál curso es? ${reason.options.map(courseOptionLabel).join(" o ")}${reason.options.length >= 2 ? " (o los dos, combo)" : ""}`,
     ].join("\n");
   }
 
@@ -287,7 +306,11 @@ function describeMissingPayerData(reason: PaymentReason, data: PayerData): strin
   const missing: string[] = [];
   if (reason.kind === "packages") return missing;
   if (data.names.length === 0) missing.push("tu nombre completo");
-  if (reason.kind === "course_unknown" && data.tag.kind !== "course") {
+  if (
+    reason.kind === "course_unknown" &&
+    data.tag.kind !== "course" &&
+    data.tag.kind !== "course_bundle"
+  ) {
     missing.push(`para cuál curso es: ${reason.options.map(courseOptionLabel).join(" o ")}`);
   }
   if (reason.kind === "unknown" && data.tag.kind === "unknown") missing.push("el motivo del pago");
@@ -304,7 +327,7 @@ function renderMissingPayerDataReply(reason: PaymentReason, data: PayerData): st
 
 // Cuando el cliente ya mandó sus datos.
 function renderPayerDataReceivedReply(tag: PaymentTag): string {
-  return tag.kind === "course"
+  return tag.kind === "course" || tag.kind === "course_bundle"
     ? "¡Gracias! 🙌 Ya tenemos tus datos. Nuestro equipo valida tu pago y te agrega al grupo del curso 😊"
     : "¡Gracias! 🙌 Ya tenemos tus datos. Nuestro equipo valida tu pago y te escribe en breve 😊";
 }
@@ -313,6 +336,8 @@ function renderTagLabel(tag: PaymentTag): string {
   switch (tag.kind) {
     case "course":
       return `🎓 ${tag.courseName} — ${formatCourseShortDate(tag.courseStartsAt)}`;
+    case "course_bundle":
+      return "🎓 Combo: los dos cursos (500 Bs)";
     case "course_unknown":
       return tag.options.length > 0
         ? `🎓 Curso — ⚠️ no se sabe cuál (${tag.options.map(courseOptionLabel).join(" o ")})`

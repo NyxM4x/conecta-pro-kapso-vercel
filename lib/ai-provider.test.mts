@@ -24,6 +24,7 @@ import {
   getTranscriptionModel,
   isQuotaError,
   resolveAiProvider,
+  resolveFallbackProvider,
   resolveTranscriptionTargets,
 } from "./ai-provider.ts";
 
@@ -172,6 +173,31 @@ test("no confunde un error cualquiera con falta de saldo", () => {
 test("manda a recargar al proveedor que está activo", () => {
   assert.match(getTopUpUrl({ ...CLAVES, AI_PROVIDER: "openrouter" }), /openrouter\.ai/);
   assert.match(getTopUpUrl({ ...CLAVES, AI_PROVIDER: "openai" }), /platform\.openai\.com/);
+});
+
+test("respaldo: OpenRouter principal -> OpenAI si hay OPENAI_API_KEY", () => {
+  const fallback = resolveFallbackProvider({
+    AI_PROVIDER: "openrouter",
+    OPENROUTER_API_KEY: "or",
+    OPENAI_API_KEY: "oa",
+    OPENAI_MODEL: "gpt-4o-mini",
+  });
+  assert.equal(fallback?.provider, "openai");
+  assert.equal(fallback?.model, "gpt-4o-mini");
+});
+
+test("respaldo: OpenAI principal -> OpenRouter si hay OPENROUTER_API_KEY", () => {
+  const fallback = resolveFallbackProvider({
+    AI_PROVIDER: "openai",
+    OPENAI_API_KEY: "oa",
+    OPENROUTER_API_KEY: "or",
+  });
+  assert.equal(fallback?.provider, "openrouter");
+});
+
+test("respaldo: sin la clave del otro proveedor no hay respaldo", () => {
+  assert.equal(resolveFallbackProvider({ AI_PROVIDER: "openrouter", OPENROUTER_API_KEY: "or" }), null);
+  assert.equal(resolveFallbackProvider({ AI_PROVIDER: "openai", OPENAI_API_KEY: "oa" }), null);
 });
 
 console.log(`${passed} pruebas de proveedor de IA OK`);

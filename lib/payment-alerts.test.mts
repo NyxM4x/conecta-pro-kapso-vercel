@@ -12,6 +12,7 @@ import {
   extractPayerData,
   isPayerDataComplete,
   renderMissingPayerDataReply,
+  renderTagLabel,
   renderReceiptReply,
   resolvePaymentReason,
   toCourseRef,
@@ -69,7 +70,7 @@ test("con dos fechas, el curso del que habló el cliente decide", () => {
   const reason = reasonFor({
     courseMaterialSent: true,
     recentMessages: [
-      { role: "assistant", content: "Tenemos el Curso de Creación de Contenido y el de Edición Persuasiva en CapCut Pro" },
+      { role: "assistant", content: "Tenemos el Curso de Creación de Contenido y el de Edición de Videos Personalizada" },
       { role: "user", content: "Me interesa el de capcut" },
     ],
   });
@@ -81,7 +82,7 @@ test("con dos fechas y el bot nombrando las dos, no se sabe cuál", () => {
   const reason = reasonFor({
     courseContext: true,
     recentMessages: [
-      { role: "assistant", content: "Tenemos el Curso de Creación de Contenido y el de Edición Persuasiva en CapCut Pro" },
+      { role: "assistant", content: "Tenemos el Curso de Creación de Contenido y el de Edición de Videos Personalizada" },
       { role: "user", content: "Si esta bien me pasa su qr" },
     ],
   });
@@ -163,7 +164,7 @@ test("al comprobante se le pide solo lo que falta", () => {
 
   const unknownCourse: PaymentReason = { kind: "course_unknown", options: DOS_CURSOS.map(toCourseRef) };
   const askCourse = renderReceiptReply(unknownCourse, false);
-  assert.match(askCourse, /¿Para cuál curso es\? Creación de Contenido \(04\/10\) o Edición Persuasiva en CapCut Pro \(11\/10\)/);
+  assert.match(askCourse, /¿Para cuál curso es\? Creación de Contenido \(04\/10\) o Edición de Videos Personalizada \(11\/10\)/);
 
   const unknown: PaymentReason = { kind: "unknown", options: DOS_CURSOS.map(toCourseRef) };
   const askMotive = renderReceiptReply(unknown, false);
@@ -185,7 +186,7 @@ test("la alerta lleva la etiqueta, el nombre, el celular y el link al chat", () 
     clientMessage: "Aleida Patricia Trujillo Rivera\nTel:68652085",
     timedOut: false,
   });
-  assert.match(text, /🏷️ <b>🎓 Curso de Edición Persuasiva en CapCut Pro — 11\/10<\/b>/);
+  assert.match(text, /🏷️ <b>🎓 Curso de Edición de Videos Personalizada — 11\/10<\/b>/);
   assert.match(text, /👤 Aleida Patricia Trujillo Rivera/);
   assert.match(text, /📱 68652085/);
   assert.match(text, /wa\.me\/59168652085/);
@@ -206,6 +207,31 @@ test("si no respondió en 20 min sale con el nombre de WhatsApp y lo avisa", () 
   assert.match(text, /no se sabe cuál/);
   assert.match(text, /Carla &lt;Z&gt; <i>\(nombre de WhatsApp\)<\/i>/);
   assert.match(text, /No mandó sus datos en 20 min/);
+});
+
+test("sin cursos con fecha NO se pregunta 'para cuál curso' (caso real 13 nov 2026)", () => {
+  const reason = reasonFor({ courseContext: false, courseMaterialSent: true, activeCourses: [] });
+  assert.equal(reason.kind, "unknown");
+  assert.ok(!/cuál curso es/.test(renderReceiptReply(reason, false)));
+});
+
+test("combo: 'los dos' o dos cursos nombrados se etiquetan como combo", () => {
+  const reason = reasonFor({ courseContext: true, courseMaterialSent: true });
+  assert.equal(reason.kind, "course_unknown");
+  assert.equal(extractPayerData(["Juan Pérez, los dos cursos"], reason).tag.kind, "course_bundle");
+  assert.equal(extractPayerData(["Ana Rojas, quiero el combo"], reason).tag.kind, "course_bundle");
+  assert.equal(
+    extractPayerData(["Ana Rojas, creación de contenido y edición"], reason).tag.kind,
+    "course_bundle",
+  );
+  assert.equal(extractPayerData(["Ana Rojas, el de capcut"], reason).tag.kind, "course");
+});
+
+test("combo: con nombre y combo los datos están completos y la etiqueta lo dice", () => {
+  const reason = reasonFor({ courseContext: true, courseMaterialSent: true });
+  const payer = extractPayerData(["Juan Carlos Pérez Rojas", "ambos cursos"], reason);
+  assert.equal(isPayerDataComplete(reason, payer), true);
+  assert.match(renderTagLabel(payer.tag), /Combo/);
 });
 
 console.log(`${passed} pruebas de alertas de pago OK`);

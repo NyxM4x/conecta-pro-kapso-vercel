@@ -5,7 +5,7 @@
 // de lib/course-details.ts: no repetirlos acá.
 
 import type { Metadata } from "next";
-import { COURSES, getCourseStatus, type Course } from "../../lib/courses";
+import { COURSES, getActiveBundle, getCourseStatus, type Course } from "../../lib/courses";
 import { COURSE_DETAILS, getCourseSchedule } from "../../lib/course-details";
 import { CoursesView, type CourseCard } from "./CoursesView";
 import "../paquetes/paquetes.css";
@@ -63,10 +63,19 @@ export default async function CursosPage({
   });
 
   const demoCourse = ordered[0];
+  // El combo solo se anuncia mientras se puede pagar (hasta 10 minutos antes del primer curso).
+  const activeBundle = getActiveBundle(new Date());
+  const bundle = activeBundle
+    ? {
+        price: activeBundle.price,
+        whatsappUrl: whatsappLink("Hola, quiero el combo de los dos cursos por " + activeBundle.price + " Bs"),
+      }
+    : null;
 
   return (
     <CoursesView
       courses={courses}
+      bundle={bundle}
       paymentDemo={
         paymentDemo && demoCourse
           ? { courseName: demoCourse.name, price: demoCourse.pricePreventa }
