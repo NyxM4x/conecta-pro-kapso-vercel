@@ -4645,6 +4645,11 @@ function shouldForcePaymentQr(params: {
 const PAYMENT_OFFER_ACCEPTANCE_REGEX =
   /^\W*(SI+|SIP|DALE|OK|OKEY|OKAY|YA|CLARO|BUENO|LISTO|PERFECTO|DE UNA|POR FAVOR|PORFA\w*|QUIERO|LO QUIERO|ME INTERESA|DAME|VA|VAMOS)\b/;
 
+// Palabras de quien PREGUNTA o pide información aunque no escriba el signo "?": "sí, dónde puedo
+// ver más info" empieza con "sí" pero no acepta nada (17 nov 2026 recibió el QR por eso).
+const OFFER_REPLY_QUESTION_WORDS =
+  /\b(DONDE|COMO|CUANDO|CUANTO|CUANTA|CUANTOS|CUAL|CUALES|QUE|PORQUE|INFO|INFORMACION|VER|DETALLE|DETALLES|SABER|PUEDO|PUEDE|PODRIA|HAY|DURA|TEMARIO|UBICACION|DIRECCION|PRECIO)\b/;
+
 function acceptsPaymentOffer(text: string): boolean {
   const lines = normalizeForMatch(text)
     .split("\n")
@@ -4652,6 +4657,7 @@ function acceptsPaymentOffer(text: string): boolean {
     .filter(Boolean);
 
   if (lines.some((line) => line.includes("?"))) return false;
+  if (lines.some((line) => OFFER_REPLY_QUESTION_WORDS.test(line))) return false;
 
   return lines.some(
     (line) => line.split(/\s+/).length <= 6 && PAYMENT_OFFER_ACCEPTANCE_REGEX.test(line),
@@ -5726,6 +5732,8 @@ async function sendMediaForIntent(params: {
   phone: string;
   phoneNumberId: string;
   force?: boolean;
+  // Texto que viaja como pie de la imagen (un solo mensaje en vez de texto + imagen).
+  caption?: string;
 }): Promise<MediaSendResult> {
   // Intents con VENTANA de reenvío (hoy solo service_packages): el flyer de paquetes
   // vuelve a salir pasadas 24h del último envío —precios que cambian, cliente que
@@ -5801,6 +5809,7 @@ async function sendMediaForIntent(params: {
           phoneNumberId: params.phoneNumberId,
           to: params.phone,
           imageUrl: asset.url,
+          ...(params.caption ? { caption: params.caption } : {}),
         });
       }
 
@@ -9215,13 +9224,14 @@ ${amountNote}`;
 
   const sentIntents: MediaIntent[] = [];
 
-  const sendIntentMedia = async (intent: MediaIntent) => {
+  const sendIntentMedia = async (intent: MediaIntent, caption?: string): Promise<boolean> => {
     const mediaResult = await sendMediaForIntent({
       intent,
       conversationId: mediaConversationId,
       phone: lastMessage.from,
       phoneNumberId,
       force: forcedIntents.has(intent),
+      caption,
     });
 
     if (mediaResult.status === "sent") {
@@ -9234,6 +9244,8 @@ ${amountNote}`;
         reason: mediaResult.status,
       });
     }
+
+    return mediaResult.status === "sent";
   };
 
   // Material que va ANTES del texto: las imágenes de los paquetes. El texto que las sigue
@@ -9252,6 +9264,30 @@ ${amountNote}`;
   // minutos, el texto NO se manda (el material de arriba sí salió, con su propio dedup). El
   // turno sigue igual: los avisos al equipo —lead, pago, visita— no dependen del envío.
   const isDuplicateReply = await wasSameReplySentRecently(mediaConversationId, replyText);
+
+  // EL QR VIAJA CON EL TEXTO: la respuesta va como pie de la imagen del QR, en un solo mensaje
+  // (antes salían dos: el texto y después la imagen). Solo si el QR es el único material del
+  // turno, no hay botón pegado y el texto cabe en un pie (WhatsApp: 1024 caracteres). Si el QR
+  // no sale (ya lo recibió hace poco o falla), la respuesta sale como texto normal.
+  let replySentAsCaption = false;
+  const onlyPaymentQrAfterReply = [...intentsToSend]
+    .filter((intent) => !MEDIA_BEFORE_REPLY.includes(intent))
+    .every((intent) => intent === "payment_qr");
+
+  if (
+    !isDuplicateReply &&
+    intentsToSend.has("payment_qr") &&
+    onlyPaymentQrAfterReply &&
+    !attachLinkButton &&
+    replyText.length > 0 &&
+    replyText.length <= 1000
+  ) {
+    try {
+      replySentAsCaption = await sendIntentMedia("payment_qr", replyText);
+    } catch (error) {
+      console.error("payment qr with caption failed", error);
+    }
+  }
 
   if (isDuplicateReply) {
     console.log("duplicate reply skipped, nothing sent to the client");
@@ -9297,7 +9333,7 @@ ${amountNote}`;
         }
       }
 
-      if (!linkButtonAttached) {
+      if (!linkButtonAttached && !replySentAsCaption) {
         await kapso.messages.sendText({
           phoneNumberId,
           to: lastMessage.from,
@@ -9416,6 +9452,8 @@ ${amountNote}`;
 
     for (const intent of MEDIA_SEND_ORDER) {
       if (!intentsToSend.has(intent) || MEDIA_BEFORE_REPLY.includes(intent)) continue;
+      // El QR ya salió con el texto como pie de la imagen.
+      if (intent === "payment_qr" && replySentAsCaption) continue;
       await sendIntentMedia(intent);
     }
 
