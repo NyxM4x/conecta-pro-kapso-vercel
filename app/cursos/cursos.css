@@ -193,3 +193,96 @@
   max-width: 520px;
   margin: 0 auto 28px;
 }
+
+/* ── Elige tu opción y paga con QR (PayOptions.tsx) ───────────────────────── */
+
+.cp-options-section {
+  max-width: 1080px;
+  margin: 0 auto 32px;
+  scroll-margin-top: 14px;
+}
+
+.cp-options-title {
+  margin: 0 0 14px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.cp-options {
+  display: grid;
+  gap: 10px;
+}
+
+@media (min-width: 760px) {
+  .cp-options { grid-template-columns: repeat(3, 1fr); }
+}
+
+.cp-option {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  padding: 18px 16px 16px;
+  border: 1px solid var(--cp-line);
+  border-radius: 20px;
+  background: #0c0912;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.cp-option:hover { border-color: rgba(139, 61, 255, 0.7); }
+.cp-option:active { transform: scale(0.99); }
+.cp-option-best { border-color: rgba(139, 61, 255, 0.55); background: rgba(139, 61, 255, 0.08); }
+.cp-option-active { border-color: #8b3dff; box-shadow: 0 0 0 2px rgba(139, 61, 255, 0.35); }
+
+.cp-option-flag {
+  justify-self: start;
+  margin-bottom: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(139, 61, 255, 0.28);
+  color: #d9c2ff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cp-option-price {
+  font-family: var(--font-heading), var(--font-body), sans-serif;
+  font-size: 30px;
+  line-height: 1.1;
+}
+
+.cp-option-name { font-size: 16px; font-weight: 600; }
+.cp-option-sub { color: var(--cp-muted); font-size: 13px; line-height: 1.4; }
+
+.cp-option-cta {
+  margin-top: 8px;
+  color: #c9a4ff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cp-pay-panel { margin-top: 14px; }
+
+.cp-pay-steps {
+  margin: 4px 0 6px;
+  padding-left: 20px;
+  color: var(--cp-muted);
+  font-size: 13.5px;
+  line-height: 1.6;
+  text-align: left;
+}
+
+.cp-pay-steps strong { color: var(--cp-text); }
+
+.cp-pay-back {
+  border: 0;
+  background: none;
+  color: var(--cp-muted);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}

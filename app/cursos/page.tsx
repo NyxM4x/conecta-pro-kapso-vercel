@@ -7,7 +7,9 @@
 import type { Metadata } from "next";
 import { COURSES, getActiveBundle, getCourseStatus, type Course } from "../../lib/courses";
 import { COURSE_DETAILS, getCourseSchedule } from "../../lib/course-details";
+import { getSupabase } from "../../lib/web-leads";
 import { CoursesView, type CourseCard } from "./CoursesView";
+import type { PayOption } from "./PayOptions";
 import "../paquetes/paquetes.css";
 import "./cursos.css";
 
@@ -19,6 +21,26 @@ export const metadata: Metadata = {
 // La fecha de un curso se apaga sola con la hora, así que la página se arma en cada visita
 // y no una sola vez al desplegar.
 export const dynamic = "force-dynamic";
+
+// Imagen del QR de pago: la misma que manda el bot (kapso_media_assets, intent payment_qr).
+async function getPaymentQrUrl(): Promise<string | null> {
+  try {
+    const supabase = getSupabase();
+    if (!supabase) return null;
+
+    const { data } = await supabase
+      .from("kapso_media_assets")
+      .select("url")
+      .eq("intent", "payment_qr")
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .limit(1);
+
+    return (data?.[0]?.url as string | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export default async function CursosPage({
   searchParams,
@@ -63,19 +85,39 @@ export default async function CursosPage({
   });
 
   const demoCourse = ordered[0];
-  // El combo solo se anuncia mientras se puede pagar (hasta 10 minutos antes del primer curso).
-  const activeBundle = getActiveBundle(new Date());
-  const bundle = activeBundle
-    ? {
-        price: activeBundle.price,
-        whatsappUrl: whatsappLink("Hola, quiero el combo de los dos cursos por " + activeBundle.price + " Bs"),
-      }
-    : null;
+  // Opciones de pago: cada curso a la venta y, mientras exista, el combo de los dos. Los montos
+  // salen del catálogo (lib/courses.ts), nunca se escriben acá.
+  const shortCourseName = (name: string) => name.replace(/^Curso de\s+/i, "");
+  const onSale = ordered.filter((course) => getCourseSchedule(course, now).state === "on_sale");
+  const activeBundle = getActiveBundle(now);
+  const payOptions: PayOption[] = [
+    ...(activeBundle
+      ? [
+          {
+            id: "combo",
+            title: "Los dos cursos (combo)",
+            subtitle: "Pagando antes de que empiece el primer curso",
+            price: activeBundle.price,
+            best: true,
+          },
+        ]
+      : []),
+    ...onSale.map((course) => ({
+      id: course.id,
+      title: shortCourseName(course.name),
+      subtitle: "Un solo curso",
+      price: course.pricePreventa,
+    })),
+  ];
+  const qrUrl = payOptions.length > 0 ? await getPaymentQrUrl() : null;
+  const commentLink = whatsappLink("Hola, te envío mi comprobante de pago");
 
   return (
     <CoursesView
       courses={courses}
-      bundle={bundle}
+      payOptions={payOptions}
+      qrUrl={qrUrl}
+      payWhatsappUrl={commentLink}
       paymentDemo={
         paymentDemo && demoCourse
           ? { courseName: demoCourse.name, price: demoCourse.pricePreventa }

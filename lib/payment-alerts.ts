@@ -21,6 +21,8 @@ import { extractContactLines } from "./contact-lines.ts";
 import { COURSES, detectMentionedCourses, formatCourseShortDate } from "./courses.ts";
 import type { Course } from "./courses.ts";
 import { COURSE_KEYWORDS, COURSE_PURCHASE_KEYWORDS, normalizeForMatch } from "./keywords.ts";
+import { choiceLabel } from "./course-payment-check.ts";
+import type { PaymentEvidence } from "./course-payment-check.ts";
 import { escapeTelegramHtml, sendTelegramNotification } from "./telegram.ts";
 
 type SupabaseLike = { from: (table: string) => any };
@@ -190,11 +192,25 @@ const unique = (values: string[]) => {
   });
 };
 
-function resolveTag(reason: PaymentReason, text: string, motive: string | null): PaymentTag {
+function resolveTag(
+  reason: PaymentReason,
+  text: string,
+  motive: string | null,
+  evidence?: PaymentEvidence | null,
+): PaymentTag {
   if (reason.kind === "course") return courseTag(reason.course);
   if (reason.kind === "packages") return { kind: "packages" };
 
   const options = toCatalog(reason.options);
+
+  // La evidencia del pago manda sobre lo que el cliente escribió: el monto del comprobante y el
+  // botón que tocó en la página (lib/course-payment-check.ts).
+  if (evidence && options.length >= 2) {
+    if (evidence.verdict.bundle === true) return { kind: "course_bundle", options: reason.options };
+    const chosen = options.find((course) => course.id === evidence.webChoice);
+    if (chosen) return courseTag(toCourseRef(chosen));
+  }
+
   const mentioned = detectMentionedCourses(text, options);
 
   // "los dos", "ambos", "el combo": pagó el combo. Con dos cursos nombrados también.
@@ -221,7 +237,11 @@ function resolveTag(reason: PaymentReason, text: string, motive: string | null):
 }
 
 // Nombre, celular y motivo que el cliente escribió alrededor del comprobante.
-function extractPayerData(clientTexts: string[], reason: PaymentReason): PayerData {
+function extractPayerData(
+  clientTexts: string[],
+  reason: PaymentReason,
+  evidence?: PaymentEvidence | null,
+): PayerData {
   const names: string[] = [];
   const phones: string[] = [];
   const motiveLines: string[] = [];
@@ -239,7 +259,7 @@ function extractPayerData(clientTexts: string[], reason: PaymentReason): PayerDa
     names: unique(names),
     phones: [...new Set(phones)],
     motive,
-    tag: resolveTag(reason, clientTexts.join("\n"), motive),
+    tag: resolveTag(reason, clientTexts.join("\n"), motive, evidence),
   };
 }
 
@@ -262,7 +282,19 @@ const courseOptionLabel = (course: CourseRef) =>
 const RECEIPT_THANKS = "¡Gracias por el comprobante! 😊";
 
 // Lo que el bot le responde al cliente al recibir el comprobante. Pide solo lo que falta.
-function renderReceiptReply(reason: PaymentReason, dataComplete: boolean): string {
+function renderReceiptReply(
+  reason: PaymentReason,
+  dataComplete: boolean,
+  evidence?: PaymentEvidence | null,
+): string {
+  // Pagó el combo (monto de 500 Bs o botón del combo): se le confirma que son los dos cursos.
+  if (evidence?.verdict.bundle === true && reason.kind !== "packages") {
+    const intro = `${RECEIPT_THANKS} Recibimos tu pago del combo 🎉 Nuestro equipo lo valida y, una vez verificado, te confirmamos tu cupo en los dos cursos.`;
+    return dataComplete
+      ? intro
+      : `${intro} Para registrarte bien, indícame tu nombre completo (verifica que esté bien escrito) y tu número de celular.`;
+  }
+
   if (reason.kind === "packages") {
     return `${RECEIPT_THANKS} Nuestro equipo va a validar el pago y en breve un asesor se comunicará contigo.`;
   }
@@ -356,6 +388,29 @@ const localPhone = (phone: string) => {
   return digits.startsWith("591") ? digits.slice(3) : digits;
 };
 
+// Línea del dinero: monto leído del comprobante, banco, operación y si coincide con lo elegido.
+function renderEvidenceLines(evidence: PaymentEvidence | null | undefined): string[] {
+  if (!evidence) return [];
+
+  const detail = [
+    evidence.bank ? escapeTelegramHtml(evidence.bank) : null,
+    evidence.operation ? `Op. ${escapeTelegramHtml(evidence.operation)}` : null,
+  ].filter(Boolean);
+
+  const lines = [
+    `💵 ${escapeTelegramHtml(evidence.verdict.text)}${detail.length > 0 ? ` · ${detail.join(" · ")}` : ""}`,
+  ];
+
+  const chose = choiceLabel(evidence.webChoice);
+  if (chose && evidence.verdict.status === "ok") {
+    lines.push(`🌐 En la web tocó pagar ${escapeTelegramHtml(chose)}`);
+  }
+
+  return lines;
+}
+
+// Alerta CORTA: estado y motivo arriba, quién es, cuánto pagó y el link al chat. Lo que el
+// cliente escribió ya no se repite (está en el chat, un toque más abajo).
 function buildPaymentAlertText(params: {
   phone: string;
   tag: PaymentTag;
@@ -365,6 +420,7 @@ function buildPaymentAlertText(params: {
   profileName: string | null;
   clientMessage: string;
   verification?: string;
+  evidence?: PaymentEvidence | null;
   note?: string;
   // El cliente no mandó sus datos a tiempo: se avisa con lo que hay.
   timedOut: boolean;
@@ -378,7 +434,7 @@ function buildPaymentAlertText(params: {
     `🏷️ <b>${escapeTelegramHtml(renderTagLabel(params.tag))}</b>`,
   ];
 
-  if (params.motive && params.tag.kind !== "course") {
+  if (params.motive && params.tag.kind !== "course" && params.tag.kind !== "course_bundle") {
     lines.push(`📝 Motivo que escribió: ${escapeTelegramHtml(params.motive)}`);
   }
 
@@ -389,21 +445,21 @@ function buildPaymentAlertText(params: {
       : `👤 ${params.profileName ? `${escapeTelegramHtml(params.profileName)} <i>(nombre de WhatsApp)</i>` : "<i>sin nombre</i>"}`,
     ...otherNames.map((name) => `➕ ${escapeTelegramHtml(name)}`),
     `📱 ${phones.join(" · ")}`,
-    `👉 Abrir chat: https://wa.me/${digits}`,
   );
+
+  lines.push(...renderEvidenceLines(params.evidence));
+
+  // Sin monto leído, la verificación de texto de la visión sigue siendo útil.
+  if (!params.evidence && params.verification) {
+    lines.push(`🧾 ${escapeTelegramHtml(params.verification.slice(0, 120))}`);
+  }
 
   if (params.timedOut) {
     lines.push(`⏱️ No mandó sus datos en ${PAYMENT_ALERT_WAIT_MINUTES} min: se avisa con lo que hay.`);
   }
   if (params.note) lines.push(escapeTelegramHtml(params.note));
-  if (params.verification) {
-    lines.push(`🧾 Verificación: ${escapeTelegramHtml(params.verification.slice(0, 200))}`);
-  }
 
-  const clientMessage = params.clientMessage.trim();
-  if (clientMessage) {
-    lines.push("", `👤 Cliente:\n${escapeTelegramHtml(clientMessage.slice(0, 500))}`);
-  }
+  lines.push(`👉 Abrir chat: https://wa.me/${digits}`);
 
   return lines.join("\n");
 }
@@ -419,6 +475,7 @@ type PaymentAlertParams = {
   profileName: string | null;
   clientMessage: string;
   verification?: string;
+  evidence?: PaymentEvidence | null;
   note?: string;
   timedOut: boolean;
 };
@@ -447,6 +504,7 @@ async function sendPaymentAlert(supabase: SupabaseLike, params: PaymentAlertPara
       phones: params.phones,
       motive: params.motive,
       timed_out: params.timedOut,
+      evidence: params.evidence ?? null,
     },
   });
 
@@ -462,6 +520,7 @@ type PendingPaymentPayload = {
   reason: PaymentReason;
   client_message: string;
   verification?: string;
+  evidence?: PaymentEvidence | null;
   note?: string;
 };
 
@@ -474,6 +533,7 @@ async function savePendingPaymentAlert(
     reason: PaymentReason;
     clientMessage: string;
     verification?: string;
+    evidence?: PaymentEvidence | null;
     note?: string;
   },
 ): Promise<boolean> {
@@ -483,6 +543,7 @@ async function savePendingPaymentAlert(
     reason: params.reason,
     client_message: params.clientMessage.slice(0, 1000),
     verification: params.verification,
+    evidence: params.evidence ?? null,
     note: params.note,
   };
 
@@ -622,7 +683,7 @@ async function processPendingPaymentAlerts(
     const { data: texts } = await textQuery;
     const clientTexts = (texts ?? []).map((t: { content: string | null }) => String(t.content ?? ""));
 
-    const data = extractPayerData(clientTexts, payload.reason);
+    const data = extractPayerData(clientTexts, payload.reason, payload.evidence);
     const complete = isPayerDataComplete(payload.reason, data);
     const timedOut = now - new Date(row.created_at).getTime() >= PAYMENT_ALERT_WAIT_MINUTES * 60_000;
 
@@ -645,6 +706,7 @@ async function processPendingPaymentAlerts(
       // Lo que escribió desde el comprobante (incluye sus datos), no solo la foto.
       clientMessage: clientTexts.join("\n").slice(-500) || payload.client_message || "",
       verification: payload.verification,
+      evidence: payload.evidence,
       note: payload.note,
       timedOut: !complete,
     }).catch(() => false);

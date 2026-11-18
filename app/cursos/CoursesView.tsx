@@ -7,6 +7,7 @@ import type { CourseDetails, CourseSchedule } from "../../lib/course-details";
 import { Hero } from "../components/Hero";
 import { VisitBeacon } from "../components/VisitBeacon";
 import { CoursePayment } from "./CoursePayment";
+import { PayOptions, type PayOption } from "./PayOptions";
 
 type CourseCard = {
   slug: string;
@@ -82,12 +83,16 @@ function CourseDate({ schedule }: { schedule: CourseSchedule }) {
 
 function CoursesView({
   courses,
-  bundle,
+  payOptions,
+  qrUrl,
+  payWhatsappUrl,
   paymentDemo,
 }: {
   courses: CourseCard[];
-  // Combo de los dos cursos por un solo pago (lib/courses.ts, getActiveBundle). null si ya no se vende.
-  bundle: { price: number; whatsappUrl: string } | null;
+  // Opciones de pago (un curso o el combo) con su monto; vacío si no hay nada a la venta.
+  payOptions: PayOption[];
+  qrUrl: string | null;
+  payWhatsappUrl: string;
   // Demostración del pago dentro de la página (/cursos?demo=pago).
   paymentDemo: { courseName: string; price: number } | null;
 }) {
@@ -118,25 +123,10 @@ function CoursesView({
           </div>
         )}
 
-        {bundle && (
-          <div className="cp-prices cp-bundle">
-            <div>
-              <strong>Combo: {formatPrice(bundle.price)} Bs</strong>
-              <span>
-                Los dos cursos por un solo pago. Se paga con QR antes de que empiece el primer curso.
-                {bundle.whatsappUrl && (
-                  <>
-                    {" "}
-                    <a href={bundle.whatsappUrl}>Quiero el combo</a>
-                  </>
-                )}
-              </span>
-            </div>
-          </div>
-        )}
+        <PayOptions options={payOptions} qrUrl={qrUrl} whatsappUrl={payWhatsappUrl} />
 
         <div className="cp-courses">
-          {courses.map(({ slug, name, details, schedule, whatsappUrl }, index) => (
+          {courses.map(({ slug, name, details, schedule }, index) => (
             <article key={slug} id={slug} className="cp-course">
               <div className={`cp-course-cover cp-card-${(index % 4) + 1}`}>
                 <span className="cp-card-num">{pad(index)}</span>
@@ -191,9 +181,9 @@ function CoursesView({
                 )}
 
                 <div className="cp-course-actions">
-                  {whatsappUrl && (
-                    <a className="cp-btn cp-btn-wa" href={whatsappUrl}>
-                      Reservar mi cupo por WhatsApp
+                  {schedule.state === "on_sale" && payOptions.length > 0 && (
+                    <a className="cp-btn cp-btn-wa" href="#pagar">
+                      Pagar con QR
                     </a>
                   )}
                   {schedule.state !== "no_date" && (
@@ -203,9 +193,7 @@ function CoursesView({
                   )}
                   {schedule.state === "on_sale" && (
                     <p className="cp-course-note">
-                      {whatsappUrl
-                        ? "Te pasamos el QR de pago por el chat."
-                        : "Para reservar tu cupo, vuelve al chat de WhatsApp y pídenos el QR de pago."}
+                      También puedes pedirnos el QR por el chat de WhatsApp.
                     </p>
                   )}
                 </div>

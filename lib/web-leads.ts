@@ -11,7 +11,13 @@
 // mensaje cuesta.
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { siteVisitMarker, webLeadMarker, type LeadPage, type SitePage } from "./site-links.ts";
+import {
+  coursePayClickMarker,
+  siteVisitMarker,
+  webLeadMarker,
+  type LeadPage,
+  type SitePage,
+} from "./site-links.ts";
 
 // Lo mismo que HUMAN_HANDOFF_PAUSE_MINUTES del webhook: el asesor puede tomar el lead
 // recién a la mañana siguiente.
@@ -102,6 +108,41 @@ async function recordSiteVisit(
   });
 }
 
+// Tocó un botón de pago en /cursos: queda la opción elegida ("combo" o el id de un curso) para
+// cruzarla con el monto del comprobante. NO se le manda nada por WhatsApp y no avisa a Telegram:
+// el equipo la ve dentro de la alerta del pago. Repetir el mismo botón cada pocos minutos no
+// llena la conversación.
+const COURSE_PAY_CLICK_DEDUP_MINUTES = 5;
+
+async function recordCoursePayClick(
+  supabase: SupabaseClient,
+  conversation: ConversationRow,
+  phone: string,
+  option: string,
+  amount: number,
+): Promise<void> {
+  const conversationId = conversation.kapso_conversation_id;
+  const since = new Date(Date.now() - COURSE_PAY_CLICK_DEDUP_MINUTES * 60_000).toISOString();
+
+  const { data } = await supabase
+    .from("kapso_messages")
+    .select("id")
+    .eq("kapso_conversation_id", conversationId)
+    .like("content", `${coursePayClickMarker(option)}%`)
+    .gte("created_at", since)
+    .limit(1);
+
+  if ((data ?? []).length > 0) return;
+
+  await saveMarker(
+    supabase,
+    conversationId,
+    phone,
+    `${coursePayClickMarker(option)} tocó pagar en la página de cursos (${amount} Bs)`,
+    { type: "course_pay_click", option, amount },
+  );
+}
+
 // Envió un formulario de la página: el lead queda cerrado en su conversación.
 async function closeWebLead(
   supabase: SupabaseClient,
@@ -164,5 +205,5 @@ async function closeWebLead(
   if (error) console.error("web: no se pudo actualizar la conversación", error.message);
 }
 
-export { closeWebLead, findConversation, getSupabase, recordSiteVisit };
+export { closeWebLead, findConversation, getSupabase, recordCoursePayClick, recordSiteVisit };
 export type { ConversationRow };

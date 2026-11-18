@@ -77,6 +77,11 @@ const linkSentMarker = (kind: LinkButtonKind) => `${LINK_SENT_MARKER_PREFIX}${ki
 const SITE_VISIT_MARKER_PREFIX = "[SITE_VISIT:";
 const siteVisitMarker = (page: SitePage) => `${SITE_VISIT_MARKER_PREFIX}${page}]`;
 
+// Botón de pago que el cliente tocó en /cursos ("combo" o el id de un curso). Lo guarda
+// /api/course-choice y el webhook lo cruza con el monto del comprobante.
+const COURSE_PAY_CLICK_PREFIX = "[COURSE_PAY_CLICK:";
+const coursePayClickMarker = (option: string) => `${COURSE_PAY_CLICK_PREFIX}${option}]`;
+
 // Lead que llegó por un formulario de la página (lo guarda /api/leads en la conversación).
 // Empieza como el del lead por chat para que todo lo que ya busca [TELEGRAM_LEAD_SENT] lo
 // cuente; el webhook usa el prefijo completo para saber que vino de la web.
@@ -536,6 +541,8 @@ export {
   renderCoursesButtonText,
   renderNoCourseDatesText,
   replyMentionsButton,
+  COURSE_PAY_CLICK_PREFIX,
+  coursePayClickMarker,
   signLeadPhone,
   siteVisitMarker,
   verifyLeadPhone,

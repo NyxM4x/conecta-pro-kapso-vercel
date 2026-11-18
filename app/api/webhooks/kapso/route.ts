@@ -22,6 +22,7 @@ import {
   sendPaymentAlert,
 } from "../../../../lib/payment-alerts";
 import type { PayerData, PaymentReason } from "../../../../lib/payment-alerts";
+import type { PaymentEvidence } from "../../../../lib/course-payment-check";
 import {
   getChatModel,
   getFallbackChatModel,
@@ -163,6 +164,8 @@ import {
   WAITLIST_SENTENCE,
 } from "../../../../lib/qr-routing";
 import { shouldBlockReceiptThanks, stripPlaceholderBrackets } from "../../../../lib/reply-guards";
+import { buildPaymentEvidence, choiceLabel } from "../../../../lib/course-payment-check";
+import { COURSE_PAY_CLICK_PREFIX } from "../../../../lib/site-links";
 
 type IncomingMessage = {
   from: string;
@@ -2922,6 +2925,36 @@ async function notifyLeadToTelegram(params: {
 // Alerta 💰 inmediata (sin esperar datos del cliente): pagos de paquetes, comprobantes que ya
 // traen el nombre, o el chat en atención humana. La que espera los datos la manda
 // lib/payment-alerts.ts. Ambas llevan la etiqueta del pago (curso, paquete u otro).
+// Último botón de pago que el cliente tocó en la página /cursos (lo deja /api/course-choice como
+// "[COURSE_PAY_CLICK:<opción>]"): "combo" o el id de un curso. Solo cuenta si es reciente.
+const COURSE_PAY_CLICK_WINDOW_HOURS = 72;
+
+async function getLatestCoursePayChoice(
+  conversationId: string | undefined,
+  now: Date,
+): Promise<string | null> {
+  if (!conversationId) return null;
+
+  const since = new Date(now.getTime() - COURSE_PAY_CLICK_WINDOW_HOURS * 3_600_000).toISOString();
+  const { data, error } = await getSupabaseClient()
+    .from("kapso_messages")
+    .select("content")
+    .eq("kapso_conversation_id", conversationId)
+    .eq("direction", "outbound")
+    .ilike("content", `${COURSE_PAY_CLICK_PREFIX}%`)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error("supabase latest course pay click failed", error);
+    return null;
+  }
+
+  const match = String(data?.[0]?.content ?? "").match(/^\[COURSE_PAY_CLICK:([a-z0-9_]+)\]/);
+  return match?.[1] ?? null;
+}
+
 async function notifyPaymentToTelegram(params: {
   phone: string;
   conversationId?: string;
@@ -2933,8 +2966,10 @@ async function notifyPaymentToTelegram(params: {
   contactName?: string | null;
   note?: string;
   verification?: string;
+  evidence?: PaymentEvidence | null;
 }): Promise<boolean> {
-  const payer = params.payer ?? extractPayerData([params.clientMessage], params.reason);
+  const payer =
+    params.payer ?? extractPayerData([params.clientMessage], params.reason, params.evidence);
 
   return sendPaymentAlert(getSupabaseClient(), {
     phone: params.phone,
@@ -2947,6 +2982,7 @@ async function notifyPaymentToTelegram(params: {
     profileName: params.contactName ?? null,
     clientMessage: params.clientMessage,
     verification: params.verification,
+    evidence: params.evidence,
     note: params.note,
     timedOut: false,
   });
@@ -3711,6 +3747,10 @@ type ReceiptCheck = {
   // misma llamada de visión: no cuesta una consulta más.
   showsPromoOffer: boolean;
   source: "vision" | "fallback";
+  // Lo que se leyó del comprobante (solo con visión): monto, banco y número de operación.
+  amount?: number | null;
+  bank?: string | null;
+  operation?: string | null;
 };
 
 // 8 s abortaba el 26 % de las verificaciones (37 de 155, ago–nov 2026): se da más tiempo y un
@@ -3725,6 +3765,20 @@ const ReceiptVisionSchema = z.object({
   reason: z
     .string()
     .describe("Explicación de una frase corta, en español, de lo que se ve en la imagen"),
+  amount_bs: z
+    .number()
+    .nullable()
+    .describe(
+      "Monto pagado en bolivianos que figura en el comprobante (solo el número, por ejemplo 300 o 500). null si no se lee o no es un comprobante",
+    ),
+  bank: z
+    .string()
+    .nullable()
+    .describe("Nombre del banco o billetera que figura en el comprobante. null si no se lee"),
+  operation_id: z
+    .string()
+    .nullable()
+    .describe("Número de operación o transacción del comprobante. null si no se lee"),
   shows_promo_offer: z
     .boolean()
     .describe(
@@ -3818,6 +3872,8 @@ async function classifyReceiptImage(params: {
                   "Aparte, responde shows_promo_offer = true si la imagen es la captura de un",
                   "anuncio, publicación o flyer que ofrece una promoción de videos (un precio",
                   "como 999 Bs, una cantidad como '4 videos', la palabra promoción u oferta).",
+                  "Si es un comprobante, lee también el monto en Bs (amount_bs), el banco (bank) y el",
+                  "número de operación (operation_id); si algo no se lee con claridad, pon null.",
                   "En reason describe lo que se ve, incluido el texto principal si lo hay.",
                 ].join(" "),
               },
@@ -3833,6 +3889,9 @@ async function classifyReceiptImage(params: {
         reason: result.output.reason.trim(),
         showsPromoOffer: !result.output.is_receipt && result.output.shows_promo_offer,
         source: "vision",
+        amount: result.output.is_receipt ? result.output.amount_bs : null,
+        bank: result.output.is_receipt ? result.output.bank : null,
+        operation: result.output.is_receipt ? result.output.operation_id : null,
       };
     } catch (error) {
       lastError = error;
@@ -3878,6 +3937,7 @@ async function classifyReceiptImage(params: {
       shows_promo_offer: check.showsPromoOffer,
       detection_source: check.source,
       reason: check.reason,
+      amount: check.amount ?? null,
     },
   });
 
@@ -6771,10 +6831,31 @@ async function processWebhookEvent(
   // su nombre junto con la foto); si no, queda pendiente hasta que mande sus datos o pasen
   // 20 minutos, y sale UNA vez con todo (lib/payment-alerts.ts). Un segundo comprobante con
   // una alerta todavía pendiente no abre otra.
+  // Botón de pago que tocó en la página de cursos: el bot lo sabe aunque no lo diga.
+  const webPayChoice = await getLatestCoursePayChoice(
+    lastMessage.conversationId ?? firstMessage.conversationId,
+    turnNow,
+  );
+  const webPayLabel = choiceLabel(webPayChoice);
+  if (webPayLabel) {
+    contextParts.push(
+      `En la página de cursos el cliente tocó el botón de pagar ${webPayLabel}. Si ahora escribe que ya pagó o manda un comprobante, es por eso: no le preguntes de nuevo si quiere uno o los dos cursos.`,
+    );
+  }
+
   if (receiptDetected && !telegramPaymentSent && !openPaymentAlert) {
     const receiptMessageId = (receiptMedia ?? lastMessage).messageId ?? "unknown";
     const paymentConversationId = lastMessage.conversationId ?? firstMessage.conversationId;
-    const payer = extractPayerData([unansweredClientText], paymentReason);
+    // Monto leído del comprobante + botón que tocó en la página: dicen si pagó un curso o el
+    // combo (lib/course-payment-check.ts) y viajan en la alerta de Telegram.
+    const evidence = buildPaymentEvidence({
+      amount: receiptCheck?.amount,
+      bank: receiptCheck?.bank,
+      operation: receiptCheck?.operation,
+      webChoice: webPayChoice,
+      now: turnNow,
+    });
+    const payer = extractPayerData([unansweredClientText], paymentReason, evidence);
     const payerComplete = isPayerDataComplete(paymentReason, payer);
     const paymentNote = promoDetected
       ? `🎥 Promo del live — el cliente indicó ${promoAmount} Bs (verificar contra el comprobante)`
@@ -6792,6 +6873,7 @@ async function processWebhookEvent(
         contactName: lastMessage.contactName,
         note: paymentNote,
         verification,
+        evidence,
       });
     } else {
       await savePendingPaymentAlert(getSupabaseClient(), {
@@ -6801,11 +6883,12 @@ async function processWebhookEvent(
         reason: paymentReason,
         clientMessage: batchText,
         verification,
+        evidence,
         note: paymentNote,
       });
     }
 
-    receiptReplyTemplate = renderReceiptReply(paymentReason, payerComplete);
+    receiptReplyTemplate = renderReceiptReply(paymentReason, payerComplete, evidence);
 
     await logSystemEvent({
       level: "info",
@@ -8527,6 +8610,21 @@ async function processWebhookEvent(
   }
 
   let qrOtherApproved = false;
+
+  // BOTÓN SIEMPRE EN LOS TURNOS DE CURSOS. Una pregunta puntual ("¿cuánto cuesta?") se responde en
+  // texto y el modelo no marcaba course_flyer: el cliente se quedaba sin el botón a la página con
+  // toda la información (17 nov 2026). El botón viaja pegado a esta misma respuesta, sin gastar
+  // otro mensaje, y decideLinkButton ya evita repetirlo dentro del día.
+  if (
+    turn.should_reply &&
+    courseTurn &&
+    hasCourseWithDate(turnNow) &&
+    !turn.payment_confirmation &&
+    !turn.intents.payment_qr &&
+    !turn.advisor_handoff
+  ) {
+    turn.intents.course_flyer = true;
+  }
 
   if (turn.should_reply && !turn.payment_confirmation && qrRouting.action !== "none") {
     const noCourseDates = !hasCourseWithDate(turnNow);
