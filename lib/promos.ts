@@ -12,6 +12,7 @@
 // la lista o dejarla: pasada su ventana el sistema la ignora igual.
 
 import { normalizeForMatch } from "./keywords.ts";
+import { renderCoursePromoLine } from "./courses.ts";
 import { renderPackageSizes } from "./packages.ts";
 import { PROMO_FORM_BUTTON_TEXT } from "./site-links.ts";
 
@@ -473,13 +474,32 @@ function mentionsExpiredVideoPromo(text: string, now: Date): boolean {
       return hasPromoWord || EXPIRED_PROMO_MONEY.test(normalized) || EXPIRED_PROMO_VIDEOS.test(normalized);
     }
     if (hasVideoCount && hasPromoWord) return true;
+    // "Vi la promoción" a secas: con la promo de los cursos a la venta es ESA (así la llaman los
+    // videos), no la de paquetes que ya terminó.
+    if (renderCoursePromoLine(now)) return false;
     return SAW_PROMO.test(normalized) && !/\bCURSOS?\b/.test(normalized);
   });
 }
 
-const EXPIRED_VIDEO_PROMO_REPLY = `Gracias por escribirnos 😊 La promoción de los 4 videos por 999 Bs estuvo vigente hasta el 13 de noviembre y ya finalizó, así que por ahora no tenemos ninguna promoción vigente.
+// "La única promo vigente es la de los cursos: ...". null si no hay cursos a la venta.
+function renderOnlyActivePromoSentence(now: Date): string | null {
+  const line = renderCoursePromoLine(now);
+  return line ? `La única promo vigente ahora es ${line} 🎓` : null;
+}
 
-Si te interesa, tenemos nuestros paquetes de producción de ${renderPackageSizes()} videos (estrategia, guiones, grabación, edición y publicación) — dime y te cuento 🎬`;
+function renderExpiredVideoPromoReply(now: Date): string {
+  const onlyPromo = renderOnlyActivePromoSentence(now);
+  return [
+    onlyPromo
+      ? `Gracias por escribirnos 😊 La promoción de los 4 videos por 999 Bs estuvo vigente hasta el 13 de noviembre y ya finalizó. ${onlyPromo}`
+      : "Gracias por escribirnos 😊 La promoción de los 4 videos por 999 Bs estuvo vigente hasta el 13 de noviembre y ya finalizó, así que por ahora no tenemos ninguna promoción vigente.",
+    "",
+    `Si lo que buscas son videos para tu negocio, tenemos nuestros paquetes de producción de ${renderPackageSizes()} videos (estrategia, guiones, grabación, edición y publicación) — dime y te cuento 🎬`,
+  ].join("\n");
+}
+
+// Texto fijo de cuando no hay cursos a la venta (lo usan las pruebas y quien no tenga la fecha).
+const EXPIRED_VIDEO_PROMO_REPLY = renderExpiredVideoPromoReply(new Date("2026-12-31T12:00:00-04:00"));
 
 // ¿La respuesta del modelo ya dice que la promo terminó?
 const EXPIRED_VIDEO_PROMO_ACK =
@@ -490,8 +510,12 @@ function acknowledgesExpiredVideoPromo(reply: string): boolean {
 }
 
 // Contexto para el prompt del turno cuando el cliente nombra una promo vencida.
-function renderExpiredVideoPromoContext(): string {
-  return `El cliente pregunta por la PROMOCIÓN DE 4 VIDEOS (999 Bs / 1.000 Bs). Esa promoción YA FINALIZÓ (estuvo vigente hasta el 13 de noviembre) y NO tenemos ninguna promoción vigente. Díselo con amabilidad y claridad en la primera línea. NUNCA envíes su texto oficial, no confirmes ese precio, no des un monto alternativo, no prometas reactivarla ni digas que un asesor puede hacer ese precio. Después ofrécele los paquetes normales (${renderPackageSizes()} videos). NO marques intents.service_packages_promo ni envíes el formulario de datos.`;
+function renderExpiredVideoPromoContext(now: Date): string {
+  const onlyPromo = renderOnlyActivePromoSentence(now);
+  const tell = onlyPromo
+    ? `Díselo con amabilidad en la primera línea y agrega: "${onlyPromo}".`
+    : "NO tenemos ninguna promoción vigente. Díselo con amabilidad y claridad en la primera línea.";
+  return `El cliente pregunta por la PROMOCIÓN DE 4 VIDEOS (999 Bs / 1.000 Bs). Esa promoción YA FINALIZÓ (estuvo vigente hasta el 13 de noviembre). ${tell} NUNCA envíes su texto oficial, no confirmes ese precio, no des un monto alternativo, no prometas reactivarla ni digas que un asesor puede hacer ese precio. Después ofrécele los paquetes normales (${renderPackageSizes()} videos). NO marques intents.service_packages_promo ni envíes el formulario de datos.`;
 }
 
 // Promo vigente que se responde con su texto literal (clientText), si hay una.
@@ -546,6 +570,17 @@ function renderPromoContext(now: Date): string {
   const active = getActivePromos(now);
 
   if (active.length === 0) {
+    const onlyPromo = renderOnlyActivePromoSentence(now);
+    if (onlyPromo) {
+      // En los videos de noviembre se llamó "promo" al combo de los cursos: "la promo" a secas
+      // es eso. Las de paquetes (999 Bs, 4 videos, edición a 50 Bs) ya terminaron.
+      return [
+        "PROMOCIONES: la ÚNICA vigente es la de los CURSOS. No hay ninguna promo de paquetes de videos.",
+        `- Si el cliente pregunta por "la promo", "la promoción", ofertas o descuentos, o dice que vio la promoción, SIN aclarar que habla de paquetes de videos, se refiere a la promo de los cursos (así se anunció en los videos). Responde con el FLUJO A y deja claro: "${onlyPromo}". Marca intents.course_flyer = true.`,
+        "- Si nombra una promo de paquetes (999 Bs, 1.000 Bs, 4 videos, paquete exprés, edición a 50 Bs), dile con amabilidad que esa ya terminó y que la única promo vigente es la de los cursos (con los precios de arriba). NUNCA inventes otra promo, otro precio promocional ni una fecha.",
+        "- NO marques intents.service_packages_promo: no hay promo de paquetes que enviar.",
+      ].join("\n");
+    }
     return [
       "PROMOCIONES TEMPORALES: NINGUNA vigente en este momento.",
       '- Si el cliente pregunta por promociones, ofertas o descuentos, dile con naturalidad que por ahora no hay una promoción activa y ofrécele los paquetes normales (FLUJO B). NUNCA inventes una promo, un precio promocional ni una fecha de promoción.',
@@ -631,6 +666,8 @@ export {
   mentionsExpiredVideoPromo,
   acknowledgesExpiredVideoPromo,
   renderExpiredVideoPromoContext,
+  renderExpiredVideoPromoReply,
+  renderOnlyActivePromoSentence,
   EXPIRED_VIDEO_PROMO_REPLY,
 };
 export type { Promo, PromoIntent, ReliefCampaign };

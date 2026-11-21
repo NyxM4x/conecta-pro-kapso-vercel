@@ -167,10 +167,16 @@ function containsIncomingLink(text: string): boolean {
 const OFFICE_VISIT_REGEX =
   /\b(VISITARLOS|VISITARLES|VISITARLAS|VISITAR\s+(SU|SUS|LA|LAS)\s+OFICINAS?|VISITAR\s+CONECTA|IRE\s+A\s+VISITAR\w*|PASAR\s+A\s+VISITAR\w*|UNA\s+VISITA|HACER\s+UNA\s+CITA|AGENDAR\s+UNA\s+CITA|QUIERO\s+UNA\s+CITA|REUNION\s+PRESENCIAL|REUNIRNOS|REUNIRME\s+CON|APERSONAR\w*)\b|\b(IR|PASAR|PASO|IRE|VOY|LLEGAR|ACERCARME|APERSONARME)\b(?:\s+\S+){0,3}?\s+(SU|SUS|LA|LAS)\s+OFICINAS?\b|\bREUNION\b(?:\s+\S+){0,3}?\s+(SU|SUS|LA|LAS)\s+OFICINAS?\b/;
 
-// Lo que NO es pedir venir: negarlo ("no puedo ir a su oficina"), pedir la reunión a
-// distancia ("reunirnos de forma virtual o por llamada") o buscar trabajo.
+// Lo que NO es pedir venir: negarlo ("no puedo ir a su oficina") o buscar trabajo.
 const OFFICE_VISIT_EXCLUSIONS =
-  /\bNO\s+(PUEDO|PODRE|VOY\s+A\s+PODER)\s+(IR|PASAR|VISITAR\w*)\b|\b(VIRTUAL|VIRTUALMENTE|ZOOM|MEET|VIDEOLLAMADA|POR\s+LLAMADA)\b|\bFORMAR\s+PARTE\s+DE\s+SU\s+EQUIPO\b|\bTRABAJAR\s+CON\s+USTEDES\s+COMO\b/;
+  /\bNO\s+(PUEDO|PODRE|VOY\s+A\s+PODER)\s+(IR|PASAR|VISITAR\w*)\b|\bFORMAR\s+PARTE\s+DE\s+SU\s+EQUIPO\b|\bTRABAJAR\s+CON\s+USTEDES\s+COMO\b/;
+
+// REUNIÓN VIRTUAL: desde el 21 nov 2026 la respuesta es SÍ (antes el bot decía "no hacemos
+// reuniones virtuales" mientras el equipo las ofrecía). Va por el mismo camino que la visita:
+// un asesor coordina con el cliente el día y la hora. Exige una palabra de reunión: "¿el curso
+// es virtual?" pregunta la modalidad del curso, no pide una reunión.
+const VIRTUAL_MEETING_REGEX =
+  /\b(VIDEOLLAMADA|VIDEO\s+LLAMADA|ZOOM|MEET)\b|\b(REUNION|REUNIONES|REUNIRNOS|REUNIRME|REUNIRSE|JUNTARNOS)\b(?:\s+\S+){0,4}?\s*\b(VIRTUAL|VIRTUALMENTE|ONLINE|EN\s+LINEA|POR\s+LLAMADA|POR\s+VIDEO)\b|\b(VIRTUAL|ONLINE)\b(?:\s+\S+){0,2}?\s*\b(REUNION|REUNIRNOS)\b/;
 
 // Preguntar DÓNDE es el curso es su ubicación (otro flujo), no una visita a la oficina.
 const COURSE_LOCATION_QUESTION = /\b(DONDE|UBICACION|DIRECCION|COMO\s+LLEGO|COMO\s+LLEGAR)\b/;
@@ -182,8 +188,9 @@ type OfficeVisitKind = "business" | "course";
 function detectOfficeVisit(text: string): OfficeVisitKind | null {
   if (!text) return null;
   const normalized = normalizeForMatch(text);
-  if (OFFICE_VISIT_EXCLUSIONS.test(normalized)) return null;
-  if (!OFFICE_VISIT_REGEX.test(normalized)) return null;
+  const virtualMeeting = VIRTUAL_MEETING_REGEX.test(normalized);
+  if (OFFICE_VISIT_EXCLUSIONS.test(normalized) && !virtualMeeting) return null;
+  if (!OFFICE_VISIT_REGEX.test(normalized) && !virtualMeeting) return null;
 
   if (COURSE_KEYWORDS.test(normalized)) {
     return COURSE_LOCATION_QUESTION.test(normalized) ? null : "course";

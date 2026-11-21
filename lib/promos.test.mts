@@ -10,6 +10,9 @@ import { renderPackageSizes } from "./packages.ts";
 import { CTA_BODY_MAX_CHARS, PROMO_FORM_BUTTON_TEXT, canAttachButtonToReply } from "./site-links.ts";
 import {
   EXPIRED_VIDEO_PROMO_REPLY,
+  renderExpiredVideoPromoReply,
+  renderExpiredVideoPromoContext,
+  renderOnlyActivePromoSentence,
   acknowledgesExpiredVideoPromo,
   getExpiredPromoAmounts,
   mentionsExpiredVideoPromo,
@@ -107,7 +110,8 @@ test("vigente: el contexto dice que NO reemplaza a los paquetes normales", () =>
 });
 
 test("vencida: el contexto ordena no inventar promos y no marcar el intent", () => {
-  const context = renderPromoContext(at("2026-08-08T09:00:00-04:00"));
+  // Fecha sin cursos a la venta: con cursos, la única promo vigente sería la de los cursos.
+  const context = renderPromoContext(at("2026-12-10T09:00:00-04:00"));
   assert.match(context, /NINGUNA vigente/);
   assert.match(context, /NUNCA inventes una promo/);
   assert.match(context, /NO marques intents\.service_packages_promo/);
@@ -331,16 +335,47 @@ test("el contexto avisa que el paquete exprés y el de 1000 Bs son esta promo", 
 // --- Promo de 999 finalizada ------------------------------------------------------
 
 const AFTER_999 = at("2026-11-14T12:00:00-04:00");
+// Sin ningún curso a la venta (después del 29 de noviembre): ahí no hay ninguna promo.
+const NO_COURSES = at("2026-12-10T12:00:00-04:00");
 
 test("la promo de 999 ya no está vigente después del 13 de noviembre", () => {
   assert.equal(getActiveTextPromo(AFTER_999), null);
   assert.equal(isPromoIntentActive(PROMO, AFTER_999), false);
-  assert.match(renderPromoContext(AFTER_999), /NINGUNA vigente/);
+  assert.match(renderPromoContext(NO_COURSES), /NINGUNA vigente/);
+});
+
+test("con los cursos a la venta, la única promo vigente es la de los cursos (combo de 500 Bs)", () => {
+  const context = renderPromoContext(AFTER_999);
+  assert.match(context, /ÚNICA vigente es la de los CURSOS/);
+  assert.match(context, /los 2 cursos por 500 Bs/);
+  assert.match(context, /300 Bs cada uno en preventa/);
+  assert.doesNotMatch(context, /NINGUNA vigente/);
+  assert.match(renderOnlyActivePromoSentence(AFTER_999) ?? "", /^La única promo vigente ahora es la de los cursos/);
+});
+
+test("cuando cierra el combo, la promo es la preventa del curso que queda; sin cursos, no hay", () => {
+  // Domingo 22, después del primer curso: el combo ya no se vende.
+  const line = renderOnlyActivePromoSentence(at("2026-11-23T10:00:00-04:00")) ?? "";
+  assert.ok(line.includes("preventa de Edición de Videos Personalizada (29/11) a 300 Bs"), line);
+  assert.ok(!line.includes("los 2 cursos"), line);
+  assert.equal(renderOnlyActivePromoSentence(NO_COURSES), null);
+});
+
+test("'vi la promoción' a secas es la promo de los cursos mientras se venden (así la llaman los videos)", () => {
+  assert.equal(mentionsExpiredVideoPromo("Hola vi la promoción", AFTER_999), false);
+  assert.equal(mentionsExpiredVideoPromo("Hola vi la promoción", NO_COURSES), true);
+});
+
+test("la respuesta a la promo de 999 dice que terminó y cuál es la única vigente", () => {
+  const reply = renderExpiredVideoPromoReply(AFTER_999);
+  assert.match(reply, /ya finalizó/);
+  assert.match(reply, /La única promo vigente ahora es la de los cursos/);
+  assert.equal(acknowledgesExpiredVideoPromo(reply), true);
+  assert.match(renderExpiredVideoPromoContext(AFTER_999), /única promo vigente/);
 });
 
 test("clientes que nombran la promo vencida son reconocidos", () => {
   for (const frase of [
-    "Hola vi la promoción",
     "la promo de 999",
     "promo 1000",
     "¿siguen con la promoción de 1.000 Bs?",

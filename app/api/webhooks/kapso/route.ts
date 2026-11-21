@@ -84,7 +84,7 @@ import {
   replyMentionsButton,
 } from "../../../../lib/site-links";
 import type { LinkButton, LinkButtonKind } from "../../../../lib/site-links";
-import { MAPS_OFICINA } from "../../../../lib/locations";
+import { MAPS_OFICINA, OFFICE_HOURS } from "../../../../lib/locations";
 import {
   getActivePromoAmounts,
   getActivePromoVideoCounts,
@@ -99,7 +99,8 @@ import {
   mentionsExpiredVideoPromo,
   acknowledgesExpiredVideoPromo,
   renderExpiredVideoPromoContext,
-  EXPIRED_VIDEO_PROMO_REPLY,
+  renderExpiredVideoPromoReply,
+  renderOnlyActivePromoSentence,
 } from "../../../../lib/promos";
 import {
   MEDIA_RESEND_WINDOW_HOURS,
@@ -366,12 +367,12 @@ const OFFICE_VISIT_AI_AGENT_REPLY = OFFICE_BUTTON_TEXT;
 const OFFICE_VISIT_COURSE_REPLY = OFFICE_COURSE_BUTTON_TEXT;
 
 // Cuando ya dejó sus datos (o ya se le pidieron) y vuelve a hablar de venir a la oficina.
-const OFFICE_VISIT_PENDING_CALL_REPLY = `Antes de reunirnos en la oficina, un asesor te llamará para coordinar el día y la hora y conocer más de tu negocio 📞 Así nos aseguramos de que alguien esté disponible para atenderte 😊`;
+const OFFICE_VISIT_PENDING_CALL_REPLY = `Un asesor te llamará para coordinar contigo el día y la hora de la reunión (en la oficina o virtual) y conocer más de tu negocio 📞 Así nos aseguramos de que alguien esté disponible para atenderte 😊`;
 
 // Texto EXACTO del Flujo C — consulta general del agente de IA. Centralizado para que la
 // red de seguridad pueda enviarlo textual cuando el LLM devuelve el saludo genérico pese a
-// haber intención clara de agente de IA. Ya no ofrece Zoom: el siguiente paso es una
-// llamada del asesor por WhatsApp, y el bot junta los datos para esa llamada.
+// haber intención clara de agente de IA. El siguiente paso es una llamada del asesor por
+// WhatsApp (o la reunión virtual/en oficina que él coordine), y el bot junta los datos para esa llamada.
 // NUNCA incluir un precio aquí: la cotización es personalizada y el flyer muestra el estimado.
 const AI_AGENT_INFO = `¡Claro! 🤖 En Conecta Pro implementamos agentes de IA para negocios: un asistente que atiende tu WhatsApp las 24 horas, responde las consultas de tus clientes, envía tu información y captura los datos de clientes potenciales automáticamente. Es el mismo tipo de agente que te está atendiendo ahora 😊
 
@@ -613,8 +614,8 @@ LÍNEA C — Agente de IA para negocios (servicio nuevo):
 - Los precios que aparecen en el flyer son un ESTIMADO para negocios de ALTO FLUJO de mensajes
   (por ejemplo con varias sucursales). Un negocio más pequeño paga distinto. Si el cliente
   pregunta por el precio del flyer, aclara esto y que la cotización real es personalizada.
-- LLAMADA POR WHATSAPP, NO ZOOM: ya NO existen reuniones por Zoom. El siguiente paso es SIEMPRE
-  que un asesor llame al cliente por WhatsApp para conocer cómo atiende hoy los mensajes de su
+- LLAMADA DEL ASESOR: el siguiente paso es SIEMPRE que un asesor llame al cliente por WhatsApp
+  (si prefiere una reunión virtual o en la oficina, dile que sí y que el asesor la coordina con él) para conocer cómo atiende hoy los mensajes de su
   negocio y explicarle cómo se aplicaría el agente en su caso. TU MISIÓN es juntar los datos del
   formulario de la LÍNEA C para que el asesor llegue a esa llamada con todo listo.
 - NUNCA agendes ni propongas un día u hora para la llamada, y NUNCA preguntes "¿qué día y hora te
@@ -644,7 +645,7 @@ SERVICIO DE SOLO EDICIÓN (el cliente ya tiene los videos grabados, solo quiere 
   forma de pago) se coordinan directamente con él por ese número.
 
 PROMOCIÓN DE EDICIÓN DE VIDEO POR 50 Bs — YA NO ESTÁ VIGENTE:
-- Hace aproximadamente 2 meses se publicó un video ofreciendo edición de video por 50 Bs. Esa
+- Se publicó un video ofreciendo edición de video por 50 Bs. Esa
   promoción YA VENCIÓ, pero el video sigue circulando y por eso todavía llegan clientes
   preguntando por ella (ej. "¿siguen con la promo de 50?", "vi el video de edición a 50 Bs",
   "¿es cierto lo de los 50 bolivianos?").
@@ -652,8 +653,9 @@ PROMOCIÓN DE EDICIÓN DE VIDEO POR 50 Bs — YA NO ESTÁ VIGENTE:
   puede hacerle ese precio. Tampoco lo niegues de forma cortante ni ignores la pregunta: el
   cliente vio el video y su pregunta es legítima — si no recibe explicación siente que la oferta
   fue un engaño.
-- Explícale con amabilidad que ese video se publicó hace unos 2 meses y que esa promoción ya no
-  se encuentra vigente. Después derívalo: si lo que busca es EDICIÓN NETA (él proporciona los
+- Explícale con amabilidad que esa promoción de edición ya no está vigente (NUNCA digas cuándo se
+  publicó el video: no lo sabes, y a veces el cliente lo ve recién compartido). La única promo
+  vigente es la de los cursos (está en el contexto de promociones). Después derívalo: si lo que busca es EDICIÓN NETA (él proporciona los
   videos crudos), ese servicio lo maneja el editor de ConectaPro al ${EDITOR_PHONE}, y el precio,
   los plazos y la forma de pago los coordina directamente con él.
 - Deja claro que ese servicio de edición neta es DISTINTO de los paquetes de producción de
@@ -678,8 +680,17 @@ UBICACIÓN OFICINA (NO es donde se dictan los cursos):
   lo llama para coordinarla y conocer su negocio. Ver flujo "CLIENTE QUIERE VISITARNOS".
 - Si el cliente pide la ubicación, SÍ puedes dársela (el link de arriba), aclarando que las reuniones
   se coordinan primero con un asesor.
-- HORARIO: NO des un horario de atención ni digas a qué hora puede venir. Si pregunta el horario o
-  cuándo puede pasar, dile que para visitarnos un asesor lo llama y le indica la hora.
+- HORARIO DE ATENCIÓN: la oficina atiende ${OFFICE_HOURS}. Si pregunta el horario, dáselo, pero
+  aclara SIEMPRE que para visitarnos primero un asesor le confirma la hora (puede no haber alguien
+  libre en ese momento). NUNCA le digas que puede venir a cualquier hora dentro de ese horario.
+
+REUNIONES (presenciales o virtuales):
+- SÍ hacemos reuniones, en la oficina o de forma virtual (videollamada o llamada). Si el cliente pide
+  una reunión, una videollamada, un Zoom o un Meet, respóndele que SÍ y que un asesor lo contacta para
+  coordinar con él el día y la hora. NUNCA digas que no hacemos reuniones virtuales.
+- La HORA la pone el asesor con el cliente. Tú NUNCA propones, fijas ni confirmas un día u hora, y
+  tampoco le pidas al cliente que la elija. Si el cliente propone un horario, agradécelo y dile que
+  se lo pasas al asesor, sin confirmarlo.
 
 ZONA DE COBERTURA DEL SERVICIO (MUY IMPORTANTE):
 - Los servicios de grabación y edición SOLO se realizan en la ciudad de Santa Cruz de la Sierra.
@@ -1370,7 +1381,7 @@ ${EDITING_CLARIFY_REPLY.replace(/^/gm, "  ")}
   video de edición a 50 Bs"). Primero explica que esa promoción ya no está vigente y RECIÉN
   DESPUÉS deriva al editor. Tono:
 
-  "Gracias por escribirnos 😊 Ese video se publicó hace unos 2 meses y esa promoción ya no se encuentra vigente. Pero si lo que buscas es SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE} 📲 Con él coordinas precio y plazos directamente."
+  "Gracias por escribirnos 😊 Esa promoción de edición ya no se encuentra vigente. Pero si lo que buscas es SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE} 📲 Con él coordinas precio y plazos directamente."
 
   - NUNCA confirmes los 50 Bs ni ofrezcas otro monto en su lugar.
   - Nunca respondas de forma cortante ni des a entender que el cliente se equivocó: la publicación
@@ -1404,14 +1415,15 @@ ${EDITING_CLARIFY_REPLY.replace(/^/gm, "  ")}
   "¡Perfecto! Justo eso es lo que recomendamos en ConectaPro para potenciar tu marca personal ✅"
 
 ▸ CLIENTE QUIERE VISITARNOS O REUNIRSE EN PERSONA
-  Aplica cuando el cliente da a entender que quiere venir a la oficina o tener una reunión
-  presencial (ej. "quiero visitarlos", "mañana iré a visitarlos", "quiero hacer una cita", "quiero
+  Aplica cuando el cliente da a entender que quiere venir a la oficina o tener una reunión,
+  presencial o VIRTUAL (ej. "¿podemos tener una reunión virtual?", "¿hacen videollamada?", "quiero visitarlos", "mañana iré a visitarlos", "quiero hacer una cita", "quiero
   reunirme con ustedes", "¿puedo pasar por su oficina?", "¿a dónde me puedo apersonar?"), sea para
   paquetes, para el agente de IA o sin decir para qué.
 
-  No sabemos si habrá alguien en la oficina para atenderlo, así que NUNCA lo invitas a venir ni
-  anotas un día/hora. Antes de confirmar cualquier reunión en oficina, un asesor lo llama para
-  coordinarla y conocer su negocio. Responde EXACTAMENTE con este texto (el sistema adjunta el
+  La respuesta es SÍ: nos reunimos en la oficina o de forma virtual. Pero NUNCA lo invitas a venir
+  ni anotas un día/hora: un asesor lo llama para coordinar con él el día y la hora (y conocer su
+  negocio). Si pregunta el horario de la oficina, es ${OFFICE_HOURS}, siempre con la hora confirmada
+  antes por el asesor. Responde EXACTAMENTE con este texto (el sistema adjunta el
   botón "Agendar visita", que abre la página con el formulario; NO pegues campos 📌 en el chat):
 
 ${OFFICE_VISIT_INTAKE_REPLY.replace(/^/gm, "  ")}
@@ -1444,9 +1456,10 @@ ${OFFICE_VISIT_COURSE_REPLY.replace(/^/gm, "    ")}
   La oficina de Conecta Pro está aquí 📍
   ${MAPS_OFICINA}
 
-  Para visitarnos, primero un asesor te llama y te indica la hora 📞 Si quieres, te pido tus datos para que te contacte 😊
+  Atendemos ${OFFICE_HOURS}, pero para visitarnos primero un asesor te confirma la hora 📞 Si quieres, te pido tus datos para que te contacte 😊
 
-  - Si preguntó el horario, NO des un horario: el asesor le indica la hora.
+  - Si preguntó el horario, da el de atención (${OFFICE_HOURS}) y aclara que la hora de la visita la
+    confirma antes un asesor. NUNCA digas que puede venir cuando quiera.
   - NO envíes el formulario todavía: solo lo ofreces. Si responde que sí, usa el flujo anterior.
   - En una conversación de CURSOS, en vez de ofrecer "tus datos" pregúntale qué dudas tiene del
     curso; el formulario de negocio nunca aplica ahí.
@@ -1509,8 +1522,9 @@ ${AI_AGENT_INFO.replace(/^/gm, "  ")}
     "¿me lo dejan probando?"): NUNCA prometas una demo, un agente configurado para su negocio, una
     prueba gratuita ni un periodo de prueba. Di que en la llamada el asesor le explica cómo
     funcionaría en su caso a partir de cómo atiende hoy sus mensajes, y pídele los datos.
-  - NO EXISTEN REUNIONES POR ZOOM. Si el cliente pide un Zoom, una videollamada o una reunión,
-    explícale que el asesor lo contacta por llamada de WhatsApp, y pídele los datos. NUNCA pidas ni
+  - REUNIONES: si el cliente pide un Zoom, una videollamada o una reunión, dile que SÍ, que puede ser
+    virtual o en la oficina y que el asesor lo contacta para coordinar con él el día y la hora; pídele
+    los datos. NUNCA pidas ni
     confirmes un día u hora: el asesor decide cuándo llama. Si el cliente propone un horario, dile
     que se lo pasas al asesor, sin confirmarlo.
   - FORMULARIO DE DATOS: si todavía no se lo pediste (o lo pide de nuevo), usa exactamente:
@@ -1651,8 +1665,9 @@ Marca solo lo que corresponda al ÚLTIMO mensaje del usuario:
   oficina o reunirse en persona, o acepta que le pidas los datos para coordinar esa reunión (ver
   flujo "CLIENTE QUIERE VISITARNOS"), también si viene por un curso. Avisa al asesor de que
   quiere una reunión. FALSE si solo pregunta dónde queda la oficina o el horario, y FALSE cuando
-  pregunta DÓNDE se dicta un curso (eso es la ubicación del curso). Ya no existen citas con día y
-  hora ni reuniones por Zoom: no hay otros campos para eso.
+  pregunta DÓNDE se dicta un curso (eso es la ubicación del curso). También TRUE si pide una
+  reunión virtual (videollamada, Zoom, Meet): el asesor la coordina igual. Tú nunca fijas el día ni
+  la hora.
 - ai_agent_lead_submitted: true cuando el cliente interesado en el agente de IA ya compartió, en
   cualquier punto del historial, al menos su nombre y su negocio/rubro (los mensajes por día y las
   sucursales son deseables, no bloqueantes). Ver FLUJO C arriba. Es el equivalente de
@@ -1825,7 +1840,7 @@ const DRONE_ADDON_NOTICE = `¡Qué buena idea sumar tomas con dron! 🚁 Te cuen
 En los demás paquetes se puede sumar igual: un asesor te arma la cotización exacta con el dron incluido.`;
 
 // El bot NO invita a la oficina ni agenda nada: no sabe si habrá alguien para atender (y ya
-// no existen citas con día y hora ni reuniones por Zoom). Estas son las frases que dan una
+// el día y la hora de una reunión, virtual o en oficina, los pone el asesor). Estas son las frases que dan una
 // visita o una reunión por hecha, o que invitan a pasar sin coordinar — viejas costumbres del
 // prompt anterior que el modelo podría repetir.
 // Sobre normalizeForMatch (sin tildes, mayúsculas). Tolera hasta 8 palabras entre el verbo y
@@ -1866,11 +1881,11 @@ function replyStillOffersRelief(reply: string): boolean {
   return RELIEF_STILL_OFFERING_REGEX.test(normalizeForMatch(reply));
 }
 
-// Promo de edición de video por 50 Bs: VENCIDA (el video se publicó ~2 meses atrás y
+// Promo de edición de video por 50 Bs: VENCIDA (el video sigue circulando y
 // sigue circulando). No se puede confirmar el precio, pero negarlo a secas hace que el
 // cliente sienta que la publicación fue un engaño: se explica el vencimiento y se lo
 // deriva al editor externo, que sí sigue trabajando.
-const EDIT_PROMO_50_EXPIRED_REPLY = `Gracias por escribirnos 😊 Ese video se publicó hace unos 2 meses y esa promoción de edición por 50 Bs ya no se encuentra vigente.
+const EDIT_PROMO_50_EXPIRED_REPLY = `Gracias por escribirnos 😊 Esa promoción de edición por 50 Bs ya no se encuentra vigente.
 
 Pero si lo que buscas es SOLO EDICIÓN NETA (tú nos proporcionas los videos crudos), ese servicio lo maneja un editor de ConectaPro: ${EDITOR_PHONE} 📲 Con él coordinas precio y plazos directamente.
 
@@ -7032,14 +7047,14 @@ async function processWebhookEvent(
 
   if (mentionsEditPromo50) {
     contextParts.push(
-      "El cliente pregunta por la PROMOCIÓN DE EDICIÓN DE VIDEO POR 50 Bs. Esa promoción YA NO ESTÁ VIGENTE: el video donde se anunció se publicó hace aproximadamente 2 meses. Explícaselo con amabilidad y sin sonar cortante — el cliente vio el video y su pregunta es legítima. NUNCA le confirmes ese precio, no le des un monto alternativo y no le digas que un asesor puede hacerle ese precio. Después de explicarlo, derívalo: si lo que quiere es EDICIÓN NETA (él proporciona los videos crudos), ese servicio lo maneja un editor de ConectaPro al " +
+      "El cliente pregunta por la PROMOCIÓN DE EDICIÓN DE VIDEO POR 50 Bs. Esa promoción YA NO ESTÁ VIGENTE (NUNCA digas cuándo se publicó el video: no lo sabes). Explícaselo con amabilidad y sin sonar cortante — el cliente vio el video y su pregunta es legítima. NUNCA le confirmes ese precio, no le des un monto alternativo y no le digas que un asesor puede hacerle ese precio. Después de explicarlo, derívalo: si lo que quiere es EDICIÓN NETA (él proporciona los videos crudos), ese servicio lo maneja un editor de ConectaPro al " +
         EDITOR_PHONE +
         `, y el precio, los plazos y la forma de pago los coordina directamente con él. Deja claro que ese servicio es DISTINTO de los paquetes de producción de Conecta Pro (grabación + edición, ${renderPackageSizes()} videos), que sí puedes ofrecerle si le interesa. NO marques intents.service_packages ni envíes el formulario de datos en este turno.`,
     );
   }
 
   if (mentionsExpressPromo) {
-    contextParts.push(renderExpiredVideoPromoContext());
+    contextParts.push(renderExpiredVideoPromoContext(turnNow));
   }
 
   if (paymentAcknowledged) {
@@ -7108,9 +7123,9 @@ async function processWebhookEvent(
       course:
         "El cliente YA preguntó por cursos en su mensaje. NO es un saludo puro: marca is_greeting=false, responde con el FLUJO A (cursos) y marca intents.course_flyer=true.",
       office:
-        "El cliente YA preguntó por la oficina en su mensaje. NO es un saludo puro: marca is_greeting=false. Si quiere visitarnos o reunirse, usa el flujo \"CLIENTE QUIERE VISITARNOS\" (explicación + formulario); si solo pregunta dónde queda o el horario, usa el flujo \"PREGUNTA SOLO POR LA UBICACIÓN O EL HORARIO DE LA OFICINA\". NUNCA ofrezcas agendar un día y hora.",
+        "El cliente YA preguntó por la oficina en su mensaje. NO es un saludo puro: marca is_greeting=false. Si quiere visitarnos o reunirse, usa el flujo \"CLIENTE QUIERE VISITARNOS\" (explicación + formulario); si solo pregunta dónde queda o el horario, usa el flujo \"PREGUNTA SOLO POR LA UBICACIÓN O EL HORARIO DE LA OFICINA\". NUNCA ofrezcas agendar un día y hora. Si pide una reunión virtual, dile que sí y usa el mismo flujo: el asesor coordina el día y la hora.",
       ai_agent:
-        "El cliente YA expresó intención sobre el AGENTE DE IA en su mensaje (menciona agente, IA, chatbot, bot, automatizar mensajes o asistente virtual). NO es un saludo puro y NO es el flujo de paquetes de video, aunque haya usado palabras como servicio o edición: marca is_greeting=false, responde con el texto del FLUJO C (agente de IA) y marca intents.ai_agent_flyer=true. NUNCA des un precio: la cotización es personalizada y el flyer muestra el estimado. NUNCA prometas una demo o prueba ni ofrezcas Zoom: un asesor lo llama por WhatsApp con sus datos.",
+        "El cliente YA expresó intención sobre el AGENTE DE IA en su mensaje (menciona agente, IA, chatbot, bot, automatizar mensajes o asistente virtual). NO es un saludo puro y NO es el flujo de paquetes de video, aunque haya usado palabras como servicio o edición: marca is_greeting=false, responde con el texto del FLUJO C (agente de IA) y marca intents.ai_agent_flyer=true. NUNCA des un precio: la cotización es personalizada y el flyer muestra el estimado. NUNCA prometas una demo o prueba: un asesor lo llama por WhatsApp con sus datos (si pide una reunión virtual o en la oficina, dile que sí y que el asesor coordina con él el día y la hora).",
       editing_ambiguous:
         "El cliente YA habló de EDICIÓN en su mensaje, pero sin aclarar si ya tiene los videos grabados. NO es un saludo puro: marca is_greeting=false y responde EXACTAMENTE con el texto del flujo \"CLIENTE DICE 'EDICIÓN' SIN ACLARAR QUÉ NECESITA\", sin marcar intents y sin el número del editor.",
     };
@@ -7956,7 +7971,7 @@ async function processWebhookEvent(
     turn.lead_data_submitted = false;
     turn.intents.service_packages_promo = false;
 
-    if (!acknowledgedExpiry) turn.reply = EXPIRED_VIDEO_PROMO_REPLY;
+    if (!acknowledgedExpiry) turn.reply = renderExpiredVideoPromoReply(turnNow);
 
     if (!acknowledgedExpiry || killedLeadFlags) {
       await logSystemEvent({
@@ -7990,7 +8005,14 @@ async function processWebhookEvent(
     turn.intents.service_packages = false;
     turn.intents.service_packages_promo = false;
 
-    if (replacedReply) turn.reply = EDIT_PROMO_50_EXPIRED_REPLY;
+    if (replacedReply) {
+      // Con cursos a la venta se suma la única promo vigente: así nadie se queda pensando que
+      // hay otra promo de videos.
+      const onlyPromo = renderOnlyActivePromoSentence(turnNow);
+      turn.reply = onlyPromo ? `${EDIT_PROMO_50_EXPIRED_REPLY}
+
+${onlyPromo}` : EDIT_PROMO_50_EXPIRED_REPLY;
+    }
 
     if (replacedReply || killedLeadFlags) {
       console.log("expired edit promo notice enforced", {

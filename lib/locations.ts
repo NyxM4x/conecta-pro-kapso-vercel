@@ -12,4 +12,8 @@
 const MAPS_CURSOS = "https://maps.app.goo.gl/Qk6XXohdNf735gKAA";
 const MAPS_OFICINA = "https://maps.app.goo.gl/dw7oXDDSYygE7WFW9";
 
-export { MAPS_CURSOS, MAPS_OFICINA };
+// Horario de atención de la oficina. Igual la visita se coordina antes: un asesor confirma la
+// hora con el cliente (puede no haber nadie libre en ese momento).
+const OFFICE_HOURS = "de 10:00 a 19:00";
+
+export { MAPS_CURSOS, MAPS_OFICINA, OFFICE_HOURS };

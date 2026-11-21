@@ -72,7 +72,7 @@ function OfficeView({
       <VisitBeacon page="oficina" />
       <Hero
         title="Visítanos"
-        copy="Antes de reunirnos en la oficina, un asesor te llama para coordinar el día y la hora."
+        copy="Nos reunimos en la oficina o de forma virtual: un asesor te llama para coordinar contigo el día y la hora."
         ctaLabel="Agendar visita"
         ctaHref="#agendar"
       />
@@ -83,7 +83,7 @@ function OfficeView({
             <>
               <SuccessCheck
                 title="Tus datos fueron enviados a un Asesor"
-                message="Te llamará para coordinar el día y la hora de tu visita"
+                message="Te llamará para coordinar contigo el día y la hora de la reunión"
               />
               {businessWhatsapp && (
                 // Sin texto escrito: un mensaje le llegaría al bot, que queda apagado para

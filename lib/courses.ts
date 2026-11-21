@@ -386,6 +386,31 @@ function renderCourseContext(now: Date): string {
 
 // Línea con el monto a pagar que acompaña al QR. El QR del banco es de MONTO LIBRE (Bs. 0.00):
 // el cliente escribe cuánto paga, así que hay que decírselo. null si no hay nada que cobrar.
+// LA ÚNICA PROMO VIGENTE. En los guiones de los videos de noviembre 2026 se llamó "promo" al
+// combo de los dos cursos, así que quien escribe "la promo" o "vi la promoción" casi siempre
+// habla de eso, no de las promos viejas de paquetes (999 Bs, edición a 50 Bs). Esta frase es lo
+// que el bot dice cuando le preguntan por promociones. Sale del catálogo: cuando el combo cierra
+// (10 min antes del primer curso) pasa sola a la preventa del curso que queda, y sin cursos a la
+// venta es null (no hay promo que ofrecer).
+//   "la de los cursos: los 2 cursos por 500 Bs (Creación de Contenido, dom 22/11, y Edición de
+//    Videos Personalizada, dom 29/11), o 300 Bs cada uno en preventa"
+function renderCoursePromoLine(now: Date): string | null {
+  const label = (course: Course) =>
+    `${course.name.replace(/^Curso de\s+/i, "")}, ${formatCourseShortDate(course.startsAt)}`;
+
+  const bundle = getActiveBundle(now);
+  if (bundle) {
+    const prices = [...new Set(bundle.courses.map((course) => course.pricePreventa))];
+    return `la de los cursos: los 2 cursos por ${bundle.price} Bs (${bundle.courses.map(label).join(", y ")}), o ${prices.join(" / ")} Bs cada uno en preventa`;
+  }
+
+  const sellable = getActiveCourses(now).filter((course) => !isPresaleClosed(course, now));
+  if (sellable.length === 0) return null;
+  return `la preventa de ${sellable
+    .map((course) => `${course.name.replace(/^Curso de\s+/i, "")} (${formatCourseShortDate(course.startsAt)}) a ${course.pricePreventa} Bs (${course.pricePresencial} Bs en puerta)`)
+    .join(" y ")}`;
+}
+
 function renderQrAmountNote(now: Date): string | null {
   const sellable = getActiveCourses(now).filter((course) => !isPresaleClosed(course, now));
   if (sellable.length === 0) return null;
@@ -465,6 +490,7 @@ export {
   hasSellableCourse,
   getActiveBundle,
   renderQrAmountNote,
+  renderCoursePromoLine,
   COURSE_BUNDLE,
   hasCourseWithDate,
   hasActiveLocationOverride,

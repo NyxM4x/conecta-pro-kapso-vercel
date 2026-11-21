@@ -142,7 +142,7 @@ const PROMO_FORM_BUTTON_TEXT =
 
 // Visita a la oficina por los servicios o por el agente de IA.
 const OFFICE_BUTTON_TEXT =
-  "¡Con gusto te recibimos! 😊 Antes de la reunión en nuestra oficina, un asesor te llamará para coordinarla y conocer tu negocio. Deja tus datos dentro de este botón para agendar tu visita 👇";
+  "¡Claro que sí! 😊 Podemos reunirnos en nuestra oficina o de forma virtual. Un asesor te llamará para coordinar contigo el día y la hora, y conocer tu negocio. Deja tus datos dentro de este botón para agendar tu visita 👇";
 
 // Visita a la oficina por un curso: no hay datos de negocio, solo sus dudas.
 const OFFICE_COURSE_BUTTON_TEXT =

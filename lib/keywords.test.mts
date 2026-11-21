@@ -220,9 +220,18 @@ test("preguntar solo dónde queda la oficina no es pedir una reunión", () => {
   assert.equal(mentionsOfficeVisit("qué horario tienen"), false);
 });
 
-test("negar la visita, pedirla virtual o buscar trabajo no es una visita", () => {
+test("pedir una reunión virtual SÍ va al flujo de reunión (el asesor coordina la hora)", () => {
+  assert.equal(detectOfficeVisit("a las 16:00 podríamos reunirnos de forma virtual o por llamada"), "business");
+  assert.equal(detectOfficeVisit("PODRIAMOS TENER UNA REUNION VIRTUAL PARA QUE PUEDAN EXPLICAR SOBRE SUS SERVICIOS"), "business");
+  assert.equal(detectOfficeVisit("¿hacen videollamada?"), "business");
+  assert.equal(detectOfficeVisit("no puedo ir a su oficina, ¿podemos hacerlo por zoom?"), "business");
+  // Preguntar si el CURSO es virtual es la modalidad del curso, no una reunión.
+  assert.equal(detectOfficeVisit("¿el curso es virtual?"), null);
+  assert.equal(detectOfficeVisit("¿tienen clases online?"), null);
+});
+
+test("negar la visita o buscar trabajo no es una visita", () => {
   assert.equal(mentionsOfficeVisit("No, no puedo ir yo a su oficina"), false);
-  assert.equal(mentionsOfficeVisit("a las 16:00 podríamos reunirnos de forma virtual o por llamada"), false);
   assert.equal(mentionsOfficeVisit("cómo puedo formar parte de su equipo o a donde me puedo apersonar"), false);
   // Un cliente empresa que habla de SUS propias oficinas.
   assert.equal(mentionsOfficeVisit("le escribo para coordinar una reunión en nuestras oficinas"), false);
