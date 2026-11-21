@@ -112,6 +112,7 @@ import {
   getIncomingAudioMediaUrl,
   isIncomingAudioMessage,
 } from "../../../../lib/incoming-audio";
+import { labelNonTextMessage } from "../../../../lib/incoming-labels";
 import {
   VIDEO_PACKAGES,
   PACKAGE_SIZES,
@@ -2165,6 +2166,11 @@ function extractMessageText(
   // transcribe por su cuenta (transcribeIncomingAudio).
   if (isIncomingAudioMessage(message)) return AUDIO_PLACEHOLDER;
 
+  // Ubicación, sticker, video o contacto: su propio rótulo. Sin esto caían más abajo en el
+  // texto de Kapso y se guardaban como "🎙️ Audio recibido" (lib/incoming-labels.ts).
+  const nonTextLabel = labelNonTextMessage(message);
+  if (nonTextLabel) return nonTextLabel;
+
   const transcriptText = message?.kapso?.transcript?.text;
   if (typeof transcriptText === "string" && transcriptText.trim()) return transcriptText.trim();
 
@@ -3615,11 +3621,16 @@ ${params.extraContext}`
         temperature: 0.4,
         output: Output.object({ schema: AssistantTurnSchema }),
       });
+    // `result.output` se lee ADENTRO de cada intento: el SDK no falla en generateText cuando el
+    // modelo no devuelve nada, falla recién al leer output ("No output generated"). Leído
+    // afuera, ese error saltaba el respaldo y el cliente recibía el menú genérico: 9 de 113
+    // respuestas entre el 17 y el 21 nov 2026, solo 3 llegaron a probar el otro proveedor.
+    const generateTurn = async (model: ReturnType<typeof getChatModel>) => (await request(model)).output;
 
-    let result: Awaited<ReturnType<typeof request>>;
+    let turn: Awaited<ReturnType<typeof generateTurn>>;
 
     try {
-      result = await request(getChatModel());
+      turn = await generateTurn(getChatModel());
     } catch (primaryError) {
       // Sin cupo o sin crédito en el proveedor principal: se reintenta con el otro.
       const fallbackModel = getFallbackChatModel();
@@ -3641,10 +3652,9 @@ ${params.extraContext}`
         },
       });
 
-      result = await request(fallbackModel);
+      turn = await generateTurn(fallbackModel);
     }
 
-    const turn = result.output;
     const reply = turn.reply.trim();
 
     return {
@@ -7086,7 +7096,10 @@ async function processWebhookEvent(
   // el mensaje ya trae intención concreta, se le indica al LLM que NO use el saludo
   // genérico y vaya directo al flujo. Ahorra un mensaje de WhatsApp (costo Meta).
   const hasAssistantHistory = history.some((message) => message.role === "assistant");
-  const detectedIntent = detectExplicitIntent(lastMessage.text);
+  // Toda la ráfaga, no solo el último mensaje: "Buenas tardes / Para hacer publicidad / Para
+  // venta de telas / Cuanto es" terminaba en "Cuanto es", no se detectaba nada y el cliente
+  // recibía el saludo genérico en vez de los paquetes (20 nov 2026).
+  const detectedIntent = detectExplicitIntent(unansweredClientText);
 
   if (!hasAssistantHistory && detectedIntent) {
     const intentDirective: Record<DetectedIntent, string> = {
