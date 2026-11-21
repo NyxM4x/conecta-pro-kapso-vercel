@@ -26,6 +26,7 @@ import type { PaymentEvidence } from "../../../../lib/course-payment-check";
 import {
   getChatModel,
   getFallbackChatModel,
+  getReceiptVisionModels,
   resolveFallbackProvider,
   getTopUpUrl,
   getTranscriptionModel,
@@ -3830,6 +3831,9 @@ async function classifyReceiptImage(params: {
 }): Promise<ReceiptCheck> {
   let check: ReceiptCheck | null = null;
   let lastError: unknown = null;
+  // Primero un modelo fijo que lee imágenes y después el otro proveedor (lib/ai-provider.ts):
+  // el router gratuito al azar hacía fallar casi un tercio de las lecturas.
+  const visionModels = getReceiptVisionModels();
 
   for (let attempt = 1; attempt <= RECEIPT_VISION_ATTEMPTS && check === null; attempt++) {
     const controller = new AbortController();
@@ -3842,14 +3846,15 @@ async function classifyReceiptImage(params: {
         signal: controller.signal,
       });
 
-      // Segundo intento con el otro proveedor (si hay clave): el primero suele fallar por
-      // cupo diario del tier gratuito o por lentitud.
-      const visionModel =
-        attempt > 1 ? (getFallbackChatModel() ?? getChatModel()) : getChatModel();
+      // Segundo intento con el otro proveedor (si hay clave); con uno solo, el mismo otra vez.
+      const visionModel = visionModels[Math.min(attempt, visionModels.length) - 1];
 
       const result = await generateText({
         model: visionModel,
         abortSignal: controller.signal,
+        // Sin reintentos internos del SDK: con ellos el primer intento se comía los 20 s en
+        // esperas ("Delay was aborted") y el respaldo nunca llegaba a probarse.
+        maxRetries: 0,
         temperature: 0,
         messages: [
           {
@@ -6288,10 +6293,16 @@ async function processWebhookEvent(
         // manualHumanMediaSentPaused cubre el caso en que un humano ya tomó el chat
         // (por eso el bot está pausado) y le mandó el QR a mano — sin esto, el
         // comprobante que llegue después nunca calificaría.
+        // El QR de la página de cursos también cuenta: quien tocó pagar ahí y manda la foto con el
+        // chat en manos de una persona no debe quedarse sin alerta.
+        const webPayChoicePaused = receiptMedia?.isImage
+          ? await getLatestCoursePayChoice(lastMessage.conversationId, new Date())
+          : null;
         const hasPaymentContextPaused =
           mediaStatusPaused.payment_qr ||
           intakeFormSentPaused ||
-          manualHumanMediaSentPaused;
+          manualHumanMediaSentPaused ||
+          webPayChoicePaused !== null;
 
         // Misma verificación por visión que en la rama normal: una imagen solo
         // cuenta como comprobante si de verdad se ve una transacción.
@@ -6773,6 +6784,23 @@ async function processWebhookEvent(
   const documentReceiptEligible =
     Boolean(receiptMedia?.isDocument) && (mediaStatus.payment_qr || manualHumanMediaSent);
 
+  // Botón de pago que tocó en la página de cursos: el bot lo sabe aunque no lo diga. Se lee
+  // antes de mirar la foto porque también dice si el cliente venía a pagar.
+  const webPayChoice = await getLatestCoursePayChoice(
+    lastMessage.conversationId ?? firstMessage.conversationId,
+    turnNow,
+  );
+  // Señal FUERTE de que la foto puede ser un pago: le pasaron el QR (bot o a mano), tocó pagar en
+  // la página, tiene el formulario de paquetes o escribió que pagó. Hablar de cursos sola no
+  // alcanza: el 13 nov 2026 alguien que preguntaba por las clases mandó capturas del anuncio, la
+  // lectura falló y recibió "¡Gracias por el comprobante!".
+  const strongPaymentContext =
+    mediaStatus.payment_qr ||
+    manualHumanMediaSent ||
+    intakeFormSent ||
+    hasExplicitPaymentPhrase ||
+    webPayChoice !== null;
+
   const receiptCheck =
     imageReceiptEligible && receiptMedia
       ? await classifyReceiptImage({
@@ -6786,9 +6814,11 @@ async function processWebhookEvent(
 
   const rejectedByVision =
     receiptCheck !== null && !receiptCheck.isReceipt && receiptCheck.source === "vision";
-  // La visión falló dos veces: ni comprobante ni rechazada. Solo importa si el cliente venía
-  // pagando; sin contexto de pago, la imagen sigue el camino de "¿qué es esta imagen?".
-  const receiptUnverified = receiptCheck?.source === "fallback" && imageHadPaymentContext;
+  // La visión falló dos veces: ni comprobante ni rechazada. Solo se trata como posible pago
+  // ("un asesor revisa tu imagen" + aviso al equipo) si el cliente venía pagando de verdad; si
+  // solo hablaba de cursos, la imagen sigue el camino de "¿qué es esta imagen?" y el bot
+  // responde lo que preguntó. Igual queda en /pagos como archivo por revisar.
+  const receiptUnverified = receiptCheck?.source === "fallback" && strongPaymentContext;
   // La foto es el anuncio de la promo vigente: cuenta como si la hubiera pedido por nombre.
   // En una conversación de cursos no: ahí la "promoción" de la foto suele ser la de un curso.
   const imageShowsActivePromo =
@@ -6839,11 +6869,6 @@ async function processWebhookEvent(
   // su nombre junto con la foto); si no, queda pendiente hasta que mande sus datos o pasen
   // 20 minutos, y sale UNA vez con todo (lib/payment-alerts.ts). Un segundo comprobante con
   // una alerta todavía pendiente no abre otra.
-  // Botón de pago que tocó en la página de cursos: el bot lo sabe aunque no lo diga.
-  const webPayChoice = await getLatestCoursePayChoice(
-    lastMessage.conversationId ?? firstMessage.conversationId,
-    turnNow,
-  );
   const webPayLabel = choiceLabel(webPayChoice);
   if (webPayLabel) {
     contextParts.push(

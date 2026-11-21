@@ -106,6 +106,28 @@ function getFallbackChatModel(env: ProviderEnv = process.env) {
   return getChatModel({ ...env, AI_PROVIDER: fallback.provider });
 }
 
+// LECTURA DE COMPROBANTES: con qué modelo se mira cada foto, en orden de intento.
+//
+// El router gratuito ("openrouter/free") elige un modelo AL AZAR en cada llamada: unos tardan
+// más que el límite, otros no leen imágenes y el cupo diario se agota. Hasta el 17 nov 2026
+// fallaba el 29 % de las lecturas (17 de 59) y cada falla terminaba en una alerta 💰 falsa.
+// Para leer una foto se prefiere un modelo FIJO que sí ve imágenes (OpenAI, gpt-4o-mini: unos
+// centavos al mes con el volumen de fotos del bot) y el router gratuito queda de segundo
+// intento. Con un modelo fijo elegido en OPENROUTER_MODEL, o con OpenAI de principal, el orden
+// es el de siempre: principal y después respaldo.
+function resolveReceiptVisionProviders(env: ProviderEnv = process.env): AiProviderConfig[] {
+  const primary = resolveAiProvider(env);
+  const fallback = resolveFallbackProvider(env);
+  if (!fallback) return [primary];
+
+  const randomFreeRouter = primary.provider === "openrouter" && primary.model === DEFAULT_OPENROUTER_MODEL;
+  return randomFreeRouter ? [fallback, primary] : [primary, fallback];
+}
+
+function getReceiptVisionModels(env: ProviderEnv = process.env) {
+  return resolveReceiptVisionProviders(env).map((config) => getChatModel({ ...env, AI_PROVIDER: config.provider }));
+}
+
 // LA TRANSCRIPCIÓN DE AUDIOS NO DEPENDE DE AI_PROVIDER: OpenRouter no tiene endpoint de
 // transcripción (su API es solo chat-completions). Tiene su propio orden de intento:
 //
@@ -176,11 +198,13 @@ export {
   OPENROUTER_BASE_URL,
   getChatModel,
   getFallbackChatModel,
+  getReceiptVisionModels,
   getTopUpUrl,
   getTranscriptionModel,
   isQuotaError,
   resolveAiProvider,
   resolveFallbackProvider,
+  resolveReceiptVisionProviders,
   resolveTranscriptionTargets,
 };
 export type { AiProvider, AiProviderConfig, TranscriptionTarget };

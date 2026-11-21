@@ -25,6 +25,7 @@ import {
   isQuotaError,
   resolveAiProvider,
   resolveFallbackProvider,
+  resolveReceiptVisionProviders,
   resolveTranscriptionTargets,
 } from "./ai-provider.ts";
 
@@ -198,6 +199,35 @@ test("respaldo: OpenAI principal -> OpenRouter si hay OPENROUTER_API_KEY", () =>
 test("respaldo: sin la clave del otro proveedor no hay respaldo", () => {
   assert.equal(resolveFallbackProvider({ AI_PROVIDER: "openrouter", OPENROUTER_API_KEY: "or" }), null);
   assert.equal(resolveFallbackProvider({ AI_PROVIDER: "openai", OPENAI_API_KEY: "oa" }), null);
+});
+
+test("comprobantes: con el router gratuito al azar, la foto la lee primero OpenAI", () => {
+  const order = resolveReceiptVisionProviders({
+    AI_PROVIDER: "openrouter",
+    OPENROUTER_API_KEY: "or",
+    OPENAI_API_KEY: "oa",
+  }).map((c) => `${c.provider}:${c.model}`);
+  assert.deepEqual(order, ["openai:gpt-4o-mini", "openrouter:openrouter/free"]);
+});
+
+test("comprobantes: con un modelo fijo de OpenRouter o con OpenAI principal, el orden de siempre", () => {
+  const fixed = resolveReceiptVisionProviders({
+    AI_PROVIDER: "openrouter",
+    OPENROUTER_MODEL: "openai/gpt-4o-mini",
+    OPENROUTER_API_KEY: "or",
+    OPENAI_API_KEY: "oa",
+  }).map((c) => c.provider);
+  assert.deepEqual(fixed, ["openrouter", "openai"]);
+
+  const openaiFirst = resolveReceiptVisionProviders({ AI_PROVIDER: "openai", OPENAI_API_KEY: "oa", OPENROUTER_API_KEY: "or" }).map(
+    (c) => c.provider,
+  );
+  assert.deepEqual(openaiFirst, ["openai", "openrouter"]);
+});
+
+test("comprobantes: sin la clave del otro proveedor solo queda el principal", () => {
+  const only = resolveReceiptVisionProviders({ AI_PROVIDER: "openrouter", OPENROUTER_API_KEY: "or" });
+  assert.deepEqual(only.map((c) => c.provider), ["openrouter"]);
 });
 
 console.log(`${passed} pruebas de proveedor de IA OK`);
