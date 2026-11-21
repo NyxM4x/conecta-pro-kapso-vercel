@@ -38,10 +38,13 @@ type OutboundMarker = {
     names?: string[];
     phones?: string[];
     motive?: string | null;
+    // Monto leído del comprobante (alertas desde nov 2026, lib/course-payment-check.ts).
+    evidence?: { amount?: number | null } | null;
   } | null;
 };
 
-type VisionVerdict = { isReceipt: boolean; reason: string };
+// amount: monto que la visión leyó en el comprobante (null o ausente = no lo leyó).
+type VisionVerdict = { isReceipt: boolean; reason: string; amount?: number | null };
 
 // confirmed = verificado por visión o con alerta 💰 enviada.
 // review    = puede ser un pago real y nadie lo confirmó (texto de pago, o archivo sin
@@ -65,6 +68,10 @@ type PaymentEntry = {
   // Nombres y motivo que el cliente mandó para la alerta.
   taggedNames?: string[];
   taggedMotive?: string | null;
+  // Ids de WhatsApp de los mensajes del envío: identifican el comprobante (lista de inscritos).
+  messageIds?: string[];
+  // Monto del comprobante: el de la alerta 💰 o, si no hubo alerta, el que leyó la visión.
+  amount?: number | null;
 };
 
 // Texto del cliente que AFIRMA haber pagado. En Bolivia "cancelar" es pagar ("ya cancelé").
@@ -171,6 +178,7 @@ function buildPaymentsReport(params: {
     let reason = "";
     let claimText = "";
     let caption = "";
+    let visionAmount: number | null = null;
 
     for (const row of group) {
       const media = isMediaCandidate(row);
@@ -194,6 +202,7 @@ function buildPaymentsReport(params: {
       if (verdict?.isReceipt) {
         anyReceipt = true;
         allMediaDiscarded = false;
+        visionAmount ??= verdict.amount ?? null;
       } else if (verdict) {
         reason ||= verdict.reason;
       } else {
@@ -242,6 +251,8 @@ function buildPaymentsReport(params: {
       tag: alertMarker?.rawPayload?.tag ?? null,
       taggedNames: alertMarker?.rawPayload?.names ?? [],
       taggedMotive: alertMarker?.rawPayload?.motive ?? null,
+      messageIds: group.map((row) => row.messageId).filter(Boolean),
+      amount: alertMarker?.rawPayload?.evidence?.amount ?? visionAmount,
     };
   });
 }

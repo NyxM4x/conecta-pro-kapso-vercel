@@ -6,7 +6,13 @@
 //                       etiqueta (curso, paquete, otro o sin etiqueta), el nombre, el celular y
 //                       el link al chat (lib/payments-ledger.ts). Sirve para revisar chat por
 //                       chat que no falte ninguno. Rango exacto: "/pagos 10/09 18/09".
-//                       /inscritos, el nombre anterior, abre el mismo menú.
+//   🎓 Inscritos (/inscritos) → la lista guía de cada curso con fecha: cupos pagados, nombres,
+//                       celular y monto; los pagos que el bot no supo asignar, con botones para
+//                       decir de qué son (curso, combo, paquete o nada) (lib/course-roster.ts).
+//   🛒 Por cobrar (/porcobrar) → quienes tocaron pagar en la página o recibieron el QR y no
+//                       mandaron comprobante.
+//   📋 Lista de espera (/espera) → quienes preguntaron por un curso cuando no había fecha, para
+//                       avisarles cuando abra una nueva.
 //   📞 Llamadas y visitas (/llamadas o /visitas) → una sola lista de quienes pidieron que los
 //                              llamen o venir a la oficina, con los que nadie contactó primero
 //                              (lib/pending-contacts.ts).
@@ -21,21 +27,31 @@
 import { createClient } from "@supabase/supabase-js";
 import { callTelegramApi, chunkTelegramBlocks, sendTelegramMessage } from "../../../../lib/telegram";
 import {
-  loadClientTexts,
-  loadContactNames,
-  loadPaymentReportData,
+  loadCourseRosterData,
+  loadCourseWaitlist,
+  loadPaymentsLedgerEntries,
   loadPendingContactsData,
+  loadRosterCorrections,
+  saveRosterCorrection,
 } from "../../../../lib/telegram-reports-data";
-import { buildPaymentsReport } from "../../../../lib/payments-report";
 import {
-  NAME_LOOKAHEAD_HOURS,
-  NAME_LOOKBACK_MINUTES,
   RANGE_PRESETS,
-  buildPaymentsLedger,
   parseCustomRange,
   renderPaymentsLedger,
   resolvePresetRange,
 } from "../../../../lib/payments-ledger";
+import {
+  applyTeamCorrections,
+  buildCourseRoster,
+  isValidChoice,
+  parseRosterCallback,
+  renderAssignmentResult,
+  renderCourseRoster,
+  renderCourseWaitlist,
+  renderPendingPayments,
+} from "../../../../lib/course-roster";
+import type { RosterCourse, RosterMessage } from "../../../../lib/course-roster";
+import { COURSES, COURSE_BUNDLE } from "../../../../lib/courses";
 import type { LedgerRange } from "../../../../lib/payments-ledger";
 import { loadClientStatus, normalizeClientPhone, renderClientStatus } from "../../../../lib/client-status";
 import {
@@ -46,19 +62,41 @@ import {
 
 export const maxDuration = 60;
 
+// Panel del equipo: cursos arriba (lo que más se usa la semana del curso), después pagos y
+// contactos. De a dos por fila para que se lea de un vistazo.
 const MAIN_MENU = {
   inline_keyboard: [
-    [{ text: "💰 Pagos", callback_data: "menu:pagos" }],
+    [
+      { text: "🎓 Inscritos", callback_data: "menu:inscritos" },
+      { text: "🛒 Por cobrar", callback_data: "menu:porcobrar" },
+    ],
+    [
+      { text: "💰 Pagos", callback_data: "menu:pagos" },
+      { text: "📋 Lista de espera", callback_data: "menu:espera" },
+    ],
     // callback_data sigue siendo "menu:visitas": los menús viejos del chat siguen andando.
     [{ text: "📞 Llamadas y visitas", callback_data: "menu:visitas" }],
   ],
 };
 
+const MAIN_MENU_TEXT = [
+  "📋 <b>Panel de Conecta Pro</b>",
+  "",
+  "🎓 <b>Inscritos</b> — quiénes pagaron cada curso",
+  "🛒 <b>Por cobrar</b> — tocaron pagar y no mandaron comprobante",
+  "💰 <b>Pagos</b> — todos los comprobantes por fecha",
+  "📋 <b>Lista de espera</b> — interesados en próximos cursos",
+  "📞 <b>Llamadas y visitas</b> — por coordinar",
+].join("\n");
+
 // Comandos que muestra el menú de Telegram. Se publican solos una vez por arranque del
 // servidor, así un cambio de botones no requiere volver a correr /api/telegram/setup.
 const BOT_COMMANDS = [
-  { command: "menu", description: "Botones del equipo" },
+  { command: "menu", description: "Panel con todos los botones" },
+  { command: "inscritos", description: "Inscritos de cada curso con fecha" },
+  { command: "porcobrar", description: "Tocaron pagar y no mandaron comprobante" },
   { command: "pagos", description: "Lista de comprobantes por rango de fechas" },
+  { command: "espera", description: "Lista de espera para próximos cursos" },
   { command: "llamadas", description: "Llamadas y visitas por coordinar" },
   { command: "visitas", description: "Llamadas y visitas por coordinar" },
   { command: "cliente", description: "Estado de un cliente: /cliente 71234567" },
@@ -78,6 +116,21 @@ const isAllowedChat = (chatId: unknown) =>
 async function sendBlocks(chatId: string | number, blocks: string[]) {
   for (const text of chunkTelegramBlocks(blocks)) {
     await sendTelegramMessage({ chatId, text, disablePreview: true });
+  }
+}
+
+// Un mensaje armado (lib/course-roster.ts): si es largo se corta, y los botones van en el último
+// pedazo para que queden al final de lo que se lee.
+async function sendRosterMessage(chatId: string | number, message: RosterMessage) {
+  const chunks = chunkTelegramBlocks(message.blocks);
+  for (const [i, text] of chunks.entries()) {
+    const last = i === chunks.length - 1;
+    await sendTelegramMessage({
+      chatId,
+      text,
+      disablePreview: true,
+      ...(last && message.keyboard ? { replyMarkup: message.keyboard } : {}),
+    });
   }
 }
 
@@ -107,20 +160,13 @@ async function sendPaymentsRangeMenu(chatId: string | number, notice?: string) {
 async function sendPaymentsLedger(chatId: string | number, range: LedgerRange) {
   try {
     const supabase = getSupabaseClient();
-    const paymentData = await loadPaymentReportData(supabase, range.fromIso, range.toIso);
-    const payments = buildPaymentsReport(paymentData);
-    const phones = [...new Set(payments.map((p) => p.phone))];
-
-    // El nombre llega en la ráfaga del comprobante o en las horas siguientes.
-    const textsFrom = new Date(new Date(range.fromIso).getTime() - NAME_LOOKBACK_MINUTES * 60_000).toISOString();
-    const textsUntil = new Date(new Date(range.toIso).getTime() + NAME_LOOKAHEAD_HOURS * 3600_000).toISOString();
-    const [texts, profileNames] = await Promise.all([
-      loadClientTexts(supabase, phones, textsFrom, textsUntil),
-      loadContactNames(supabase, phones),
+    const [entries, corrections] = await Promise.all([
+      loadPaymentsLedgerEntries(supabase, range.fromIso, range.toIso),
+      loadRosterCorrections(supabase, range.fromIso),
     ]);
-
-    const entries = buildPaymentsLedger({ payments, texts, profileNames });
-    await sendBlocks(chatId, renderPaymentsLedger({ entries, range }));
+    // Lo que el equipo revisó en /inscritos (curso, combo, paquete) se ve también aquí.
+    const reviewed = applyTeamCorrections(entries, corrections, rosterCourses());
+    await sendBlocks(chatId, renderPaymentsLedger({ entries: reviewed, range }));
   } catch (error) {
     console.error("payments ledger report failed", error);
     await sendTelegramMessage({
@@ -167,6 +213,116 @@ async function sendPendingContacts(chatId: string | number) {
   }
 }
 
+const rosterCourses = (): RosterCourse[] =>
+  COURSES.map((course) => ({
+    id: course.id,
+    name: course.name,
+    startsAt: course.startsAt,
+    pricePreventa: course.pricePreventa,
+    pricePresencial: course.pricePresencial,
+  }));
+
+async function buildRosterNow(now: Date) {
+  const supabase = getSupabaseClient();
+  const data = await loadCourseRosterData(supabase, now);
+  const params = { courses: rosterCourses(), bundle: COURSE_BUNDLE, now };
+  return { supabase, data, params, roster: buildCourseRoster({ ...data, ...params }) };
+}
+
+// /inscritos: el resumen, un mensaje por curso y uno con botones por cada pago por asignar.
+async function sendCourseRoster(chatId: string | number) {
+  try {
+    const { roster, params } = await buildRosterNow(new Date());
+    for (const message of renderCourseRoster(roster, params)) await sendRosterMessage(chatId, message);
+  } catch (error) {
+    console.error("course roster failed", error);
+    await sendTelegramMessage({
+      chatId,
+      text: "⚠️ No se pudo armar la lista de inscritos. Intenta de nuevo en un momento.",
+    });
+  }
+}
+
+// /porcobrar: tocaron pagar o recibieron el QR y no mandaron comprobante.
+async function sendPendingPayments(chatId: string | number) {
+  try {
+    const { roster, params } = await buildRosterNow(new Date());
+    await sendRosterMessage(chatId, renderPendingPayments(roster, params));
+  } catch (error) {
+    console.error("pending payments failed", error);
+    await sendTelegramMessage({
+      chatId,
+      text: "⚠️ No se pudo armar la lista de por cobrar. Intenta de nuevo en un momento.",
+    });
+  }
+}
+
+// Botón de un pago por asignar: guarda lo que eligió el equipo y reemplaza ese mensaje por el
+// resultado (con los mismos botones, por si se equivocaron).
+async function handleRosterAssignment(callback: Record<string, any>, shortKey: string, choice: string) {
+  const chatId = callback.message?.chat?.id;
+  const messageId = callback.message?.message_id;
+  const by = [callback.from?.first_name, callback.from?.last_name].filter(Boolean).join(" ") || null;
+
+  try {
+    const now = new Date();
+    const { supabase, data, params, roster } = await buildRosterNow(now);
+    const row = roster.byShortKey.get(shortKey);
+
+    if (!row || !isValidChoice(choice, params.courses, now)) {
+      await sendTelegramMessage({
+        chatId,
+        text: "⚠️ Ese pago ya no está en la lista (o el curso ya pasó). Abre /inscritos de nuevo.",
+      });
+      return;
+    }
+
+    if (!(await saveRosterCorrection(supabase, { key: row.key, phone: row.phone, choice, by }))) {
+      await sendTelegramMessage({ chatId, text: "⚠️ No se pudo guardar. Intenta de nuevo en un momento." });
+      return;
+    }
+
+    // Se vuelve a armar con la corrección nueva para mostrar los cupos que quedaron.
+    const updated = buildCourseRoster({
+      ...data,
+      corrections: [...data.corrections, { key: row.key, choice, createdAt: now.toISOString(), by }],
+      ...params,
+    }).byShortKey.get(shortKey) ?? row;
+
+    const { text, keyboard } = renderAssignmentResult(updated, choice, { ...params, by });
+    const edited = messageId
+      ? await callTelegramApi("editMessageText", {
+          chat_id: chatId,
+          message_id: messageId,
+          text,
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: keyboard,
+        })
+      : null;
+    if (!edited) await sendTelegramMessage({ chatId, text, replyMarkup: keyboard, disablePreview: true });
+  } catch (error) {
+    console.error("roster assignment failed", error);
+    await sendTelegramMessage({ chatId, text: "⚠️ No se pudo guardar. Intenta de nuevo en un momento." });
+  }
+}
+
+async function sendCourseWaitlist(chatId: string | number) {
+  try {
+    const now = new Date();
+    const [entries, { roster }] = await Promise.all([loadCourseWaitlist(getSupabaseClient(), now), buildRosterNow(now)]);
+    // Quien ya se inscribió en un curso vigente sale con ✅ y no entra en los números para difusión.
+    const enrolled = new Set(roster.courses.flatMap((course) => course.rows.map((row) => row.phone)));
+    await sendBlocks(chatId, renderCourseWaitlist(entries, now, enrolled));
+  } catch (error) {
+    console.error("course waitlist failed", error);
+    await sendTelegramMessage({
+      chatId,
+      text: "⚠️ No se pudo armar la lista de espera. Intenta de nuevo en un momento.",
+    });
+  }
+}
+
 export async function POST(request: Request) {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (!secret || request.headers.get("x-telegram-bot-api-secret-token") !== secret) {
@@ -196,20 +352,27 @@ export async function POST(request: Request) {
       return new Response("ok", { status: 200 });
     }
 
+    const rosterButton = parseRosterCallback(data);
+
     await callTelegramApi("answerCallbackQuery", {
       callback_query_id: callback.id,
-      text: "Armando la lista…",
+      text: rosterButton ? "Guardando…" : "Armando la lista…",
     });
 
     const range = data.startsWith("pagos:rango:")
       ? resolvePresetRange(data.slice("pagos:rango:".length), new Date())
       : null;
 
-    if (range) await sendPaymentsLedger(chatId, range);
+    if (rosterButton) await handleRosterAssignment(callback, rosterButton.shortKey, rosterButton.choice);
+    else if (range) await sendPaymentsLedger(chatId, range);
     else if (data === "menu:visitas") await sendPendingContacts(chatId);
-    // Cualquier otro botón de pagos —incluidos los viejos por curso ("pagos:<curso>",
-    // "inscritos:<curso>") que siguen en el chat— abre el menú de fechas.
-    else if (data.startsWith("pagos") || data.startsWith("inscritos") || data.startsWith("menu:")) {
+    else if (data === "menu:espera") await sendCourseWaitlist(chatId);
+    else if (data === "menu:porcobrar") await sendPendingPayments(chatId);
+    // "menu:inscritos" y los botones viejos por curso ("inscritos:<curso>") que siguen en el chat.
+    else if (data.startsWith("menu:inscritos") || data.startsWith("inscritos")) await sendCourseRoster(chatId);
+    // Cualquier otro botón de pagos —incluidos los viejos por curso ("pagos:<curso>")— abre el
+    // menú de fechas.
+    else if (data.startsWith("pagos") || data.startsWith("menu:")) {
       await sendPaymentsRangeMenu(chatId);
     }
 
@@ -234,7 +397,10 @@ export async function POST(request: Request) {
   }
 
   if (message && command && isAllowedChat(message.chat?.id)) {
-    if (command === "pagos" || command === "inscritos") {
+    if (command === "inscritos") await sendCourseRoster(message.chat.id);
+    else if (command === "espera") await sendCourseWaitlist(message.chat.id);
+    else if (command === "porcobrar") await sendPendingPayments(message.chat.id);
+    else if (command === "pagos") {
       // "/pagos 10/09 18/09" va directo a la lista; sin fechas (o mal escritas), el menú.
       const range = args ? parseCustomRange(args, new Date()) : null;
       if (range) await sendPaymentsLedger(message.chat.id, range);
@@ -249,7 +415,7 @@ export async function POST(request: Request) {
     else if (command === "menu" || command === "start") {
       await sendTelegramMessage({
         chatId: message.chat.id,
-        text: "📋 <b>Botones del equipo</b>",
+        text: MAIN_MENU_TEXT,
         replyMarkup: MAIN_MENU,
       });
     }

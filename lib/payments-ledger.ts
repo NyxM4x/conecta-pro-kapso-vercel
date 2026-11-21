@@ -36,6 +36,13 @@ type LedgerEntry = {
   // Contexto detectado (QR enviado, formulario...), útil cuando no hay etiqueta.
   context: string;
   evidence: string;
+  // Ids de los mensajes del comprobante (el primero lo identifica) y monto leído.
+  messageIds: string[];
+  amount: number | null;
+  // Lo que decidió el equipo en /inscritos (curso, combo, paquete...) y su nota de contexto.
+  // Mandan sobre la etiqueta del bot (lib/course-roster.ts, applyTeamCorrections).
+  teamLabel?: string | null;
+  teamNote?: string | null;
 };
 
 type LedgerRange = { fromIso: string; toIso: string; label: string };
@@ -207,6 +214,8 @@ function buildPaymentsLedger(params: {
         motive: entry.taggedMotive ?? null,
         context: entry.context,
         evidence: entry.detail,
+        messageIds: entry.messageIds ?? [],
+        amount: entry.amount ?? null,
       };
     })
     // Lo más reciente arriba: es lo primero que se revisa.
@@ -217,7 +226,7 @@ const escapeHtml = (text: string) =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const tagLabel = (entry: LedgerEntry) =>
-  entry.tag ? renderTagLabel(entry.tag) : "❔ Sin etiqueta";
+  entry.teamLabel ? entry.teamLabel : entry.tag ? renderTagLabel(entry.tag) : "❔ Sin etiqueta";
 
 function formatBoliviaTime(iso: string): string {
   return new Intl.DateTimeFormat("es-BO", {
@@ -239,15 +248,21 @@ function renderLedgerEntry(entry: LedgerEntry, index: number): string {
   const localPhone = digits.startsWith("591") ? digits.slice(3) : digits;
   const [firstName, ...otherNames] = entry.names;
   // Sin etiqueta se muestra el contexto que se detectó, para saber por dónde empezar.
-  const label = entry.tag ? tagLabel(entry) : `${tagLabel(entry)} · ${entry.context}`;
+  const label = entry.teamLabel
+    ? `${entry.teamLabel} · ✍️ revisado`
+    : entry.tag
+      ? tagLabel(entry)
+      : `${tagLabel(entry)} · ${entry.context}`;
+  // La nota del equipo es el contexto del pago; sin ella, el motivo que escribió el cliente.
+  const context = entry.teamNote ?? (entry.motive && entry.tag?.kind !== "course" ? entry.motive : null);
 
   return [
     firstName
       ? `<b>${index}.</b> 👤 ${escapeHtml(firstName)}`
       : `<b>${index}.</b> 👤 <i>(no escribió su nombre${entry.profileName ? ` — perfil: ${escapeHtml(entry.profileName)}` : ""})</i>`,
     ...otherNames.map((name) => `     ➕ ${escapeHtml(name)}`),
-    `     🏷️ ${escapeHtml(label)}`,
-    ...(entry.motive && entry.tag?.kind !== "course" ? [`     📝 ${escapeHtml(entry.motive)}`] : []),
+    `     🏷️ ${escapeHtml(label)}${entry.amount ? ` · 💵 ${entry.amount} Bs` : ""}`,
+    ...(context ? [`     📝 ${escapeHtml(context)}`] : []),
     `     📱 ${[...new Set([localPhone, ...entry.phones])].join(" · ")} · <a href="https://wa.me/${digits}">abrir chat</a>`,
     `     🕐 ${formatBoliviaTime(entry.paidAt)} · ${entry.status === "confirmed" ? "✅ confirmado" : "❓ por revisar"}${entry.alerted ? " · 🔔 alerta" : ""}${entry.status === "review" && entry.evidence ? ` · ${escapeHtml(entry.evidence)}` : ""}`,
   ].join("\n");

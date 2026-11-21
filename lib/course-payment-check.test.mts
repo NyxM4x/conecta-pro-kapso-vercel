@@ -56,6 +56,24 @@ test("un monto raro o ilegible no se da por bueno", () => {
   assert.equal(sanitizeAmount("500"), 500);
 });
 
+test("un comprobante por varias personas: 1000 Bs = 2 combos, 900 Bs = 3 cupos (20 nov 2026, 'de dos')", () => {
+  const dosCombos = judgePaymentAmount({ amount: 1000, webChoice: null, now: antes });
+  assert.deepEqual([dosCombos.status, dosCombos.bundle, dosCombos.seats], ["ok", true, 2]);
+  assert.match(dosCombos.text, /2 combos/);
+
+  const tresCupos = judgePaymentAmount({ amount: 900, webChoice: null, now: antes });
+  assert.deepEqual([tresCupos.status, tresCupos.bundle, tresCupos.seats], ["ok", false, 3]);
+
+  // 1500 son 3 combos o 5 cursos: no se adivina.
+  const ambiguo = judgePaymentAmount({ amount: 1500, webChoice: null, now: antes });
+  assert.deepEqual([ambiguo.status, ambiguo.bundle, ambiguo.seats], ["warn", null, null]);
+
+  // Un pago suelto sigue siendo de una persona.
+  assert.equal(judgePaymentAmount({ amount: 500, webChoice: null, now: antes }).seats, 1);
+  // Un saldo de paquete (1750 Bs) no es un múltiplo de nada.
+  assert.equal(judgePaymentAmount({ amount: 1750, webChoice: null, now: antes }).status, "warn");
+});
+
 // --- La evidencia decide la etiqueta del pago -------------------------------------------
 
 const ofrecidos = COURSES.map((course) => ({ id: course.id, name: course.name, startsAt: course.startsAt }));

@@ -161,7 +161,6 @@ import {
   QR_ASK_PURPOSE_REPLY,
   QR_OTHER_ABOVE_REPLY,
   QR_OTHER_SENT_REPLY,
-  WAITLIST_SENTENCE,
 } from "../../../../lib/qr-routing";
 import { shouldBlockReceiptThanks, stripPlaceholderBrackets } from "../../../../lib/reply-guards";
 import { buildPaymentEvidence, choiceLabel } from "../../../../lib/course-payment-check";
@@ -3473,7 +3472,7 @@ async function getRecentConversationHistory(
     .filter((message) => message.content.trim().length > 0)
     // Excluir marcadores internos ([MEDIA_SENT...], [LOCATION_...]) para no
     // ensuciar el contexto del LLM; el estado de "ya enviado" lo resuelve el dedup.
-    .filter((message) => !/^\[(MEDIA_SENT|LOCATION_|PAYMENT_ALERT_PENDING|LINK_SENT|SITE_VISIT)/.test(message.content.trim()));
+    .filter((message) => !/^\[(MEDIA_SENT|LOCATION_|PAYMENT_ALERT_PENDING|LINK_SENT|SITE_VISIT|COURSE_WAITLIST_JOINED)/.test(message.content.trim()));
 }
 
 async function getNewestInboundMessage(
@@ -5205,7 +5204,13 @@ const COURSE_OFFICE_VISIT_ALERT_MARKER = "[TELEGRAM_COURSE_OFFICE_VISIT_SENT]";
 // minutos para empezar). El bot ya no manda el QR, pero es una venta a punto de perderse:
 // el equipo tiene esos minutos para pasarle el QR a mano o cobrarle en la puerta.
 const PRESALE_CLOSED_QR_ALERT_MARKER = "[TELEGRAM_PRESALE_CLOSED_QR_SENT]";
-const COURSE_WAITLIST_ALERT_MARKER = "[TELEGRAM_COURSE_WAITLIST_SENT]";
+// Lista de espera de cursos (/espera en Telegram). El marcador viejo solo se guardaba si la
+// alerta a Telegram salía bien, y la respuesta de "sin fechas" ni siquiera anotaba: en toda la
+// historia no juntó a nadie (21 nov 2026). Se siguen leyendo los dos.
+const COURSE_WAITLIST_MARKER = "[COURSE_WAITLIST_JOINED]";
+const LEGACY_COURSE_WAITLIST_MARKER = "[TELEGRAM_COURSE_WAITLIST_SENT]";
+// Frase fija de renderNoCourseDatesText (lib/site-links.ts): quien la recibe queda anotado.
+const NO_COURSE_DATES_PHRASE = "no tenemos fechas oficiales confirmadas";
 const RECEIPT_UNVERIFIED_ALERT_MARKER = "[TELEGRAM_RECEIPT_UNVERIFIED_SENT]";
 
 // Texto fijo cuando la visión no pudo leer la imagen que llegó con contexto de pago.
@@ -5279,38 +5284,32 @@ async function notifyPresaleClosedQrToTelegram(params: {
   }
 }
 
-// LISTA DE ESPERA DE CURSOS. Sin ningún curso con fecha, quien pregunta o pide pagar un curso
-// no se pierde: el equipo recibe su contacto (una vez por conversación) para avisarle cuando
-// abra una fecha nueva.
-async function notifyCourseWaitlistToTelegram(params: {
+// LISTA DE ESPERA DE CURSOS. Quien pregunta por un curso sin fecha (o con el curso ya en marcha)
+// queda anotado una vez por conversación, sin alerta: el equipo la consulta con /espera cuando
+// abre una fecha nueva y les escribe.
+async function recordCourseWaitlist(params: {
   phone: string;
   conversationId?: string;
   clientMessage: string;
-}): Promise<boolean> {
-  if (await hasTelegramMarkerBeenSent(params.conversationId, COURSE_WAITLIST_ALERT_MARKER)) {
-    return true;
+  trigger: "no_course_dates" | "offer_accepted";
+}): Promise<void> {
+  if (
+    (await hasTelegramMarkerBeenSent(params.conversationId, COURSE_WAITLIST_MARKER)) ||
+    (await hasTelegramMarkerBeenSent(params.conversationId, LEGACY_COURSE_WAITLIST_MARKER))
+  ) {
+    return;
   }
 
-  const notified = await sendTelegramNotification(
-    buildTelegramBody({
-      headline: "📋 <b>Lista de espera — Curso sin fecha</b>",
-      phone: params.phone,
-      clientMessage: params.clientMessage,
-      contextLabel: "Quiere un curso y no hay cupo disponible (sin fecha, o el curso ya está en marcha)",
-      note: "El bot NO le dio QR. Avísale cuando abra una fecha nueva.",
-    }),
-  );
-
-  if (notified) {
-    await saveOutboundMessage({
-      conversationId: params.conversationId,
-      phone: params.phone,
-      content: `${COURSE_WAITLIST_ALERT_MARKER} lista de espera enviada a Telegram`,
-      rawPayload: { type: "telegram_notification", event: "course_waitlist" },
-    });
-  }
-
-  return notified;
+  await saveOutboundMessage({
+    conversationId: params.conversationId,
+    phone: params.phone,
+    content: `${COURSE_WAITLIST_MARKER} anotado en la lista de espera de cursos`,
+    rawPayload: {
+      type: "course_waitlist",
+      trigger: params.trigger,
+      client_message: params.clientMessage.slice(0, 300),
+    },
+  });
 }
 
 // Imagen con contexto de pago que la visión no pudo leer: un humano la revisa.
@@ -8595,10 +8594,11 @@ async function processWebhookEvent(
     !hasExplicitPaymentPhrase &&
     acceptsPaymentOffer(unansweredClientText)
   ) {
-    await notifyCourseWaitlistToTelegram({
+    await recordCourseWaitlist({
       phone: lastMessage.from,
       conversationId: lastMessage.conversationId,
       clientMessage: unansweredClientText,
+      trigger: "offer_accepted",
     });
 
     turn.reply = COURSE_WAITLIST_JOINED_REPLY;
@@ -8657,15 +8657,8 @@ async function processWebhookEvent(
       turn.intents.payment_qr = false;
       turn.intents.course_flyer = false;
       turn.intents.location_video = false;
-      const onWaitlist = await notifyCourseWaitlistToTelegram({
-        phone: lastMessage.from,
-        conversationId: lastMessage.conversationId,
-        clientMessage: unansweredClientText,
-      });
-      qrReplacement = onWaitlist
-        ? `${renderNoCourseDatesText(turnNow)}
-${WAITLIST_SENTENCE}`
-        : renderNoCourseDatesText(turnNow);
+      // El texto ya le dice que queda anotado; lo anota el paso de antes de enviar.
+      qrReplacement = renderNoCourseDatesText(turnNow);
     }
 
     if (qrReplacement !== null) {
@@ -8889,6 +8882,18 @@ ${amountNote}`;
   if (await isStale("pre_send")) {
     return new Response("newer inbound message exists, skipping stale reply", {
       status: 200,
+    });
+  }
+
+  // LISTA DE ESPERA: el texto de "sin fechas" le promete avisarle cuando salga una fecha nueva,
+  // así que quien lo recibe queda anotado (una vez por conversación). Va aquí, con la respuesta
+  // ya decidida, para no anotar a quien al final recibió otra cosa.
+  if (replyText.includes(NO_COURSE_DATES_PHRASE)) {
+    await recordCourseWaitlist({
+      phone: lastMessage.from,
+      conversationId: lastMessage.conversationId,
+      clientMessage: unansweredClientText,
+      trigger: "no_course_dates",
     });
   }
 

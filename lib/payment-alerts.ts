@@ -287,12 +287,23 @@ function renderReceiptReply(
   dataComplete: boolean,
   evidence?: PaymentEvidence | null,
 ): string {
+  const seats = evidence?.verdict.seats ?? 1;
+
   // Pagó el combo (monto de 500 Bs o botón del combo): se le confirma que son los dos cursos.
   if (evidence?.verdict.bundle === true && reason.kind !== "packages") {
+    if (seats >= 2) {
+      const intro = `${RECEIPT_THANKS} Recibimos tu pago de ${seats} combos 🎉 Nuestro equipo lo valida y, una vez verificado, les confirmamos los ${seats} cupos en los dos cursos.`;
+      return `${intro} Para registrarlos bien, indícame el nombre completo de cada participante (verifica que estén bien escritos) y un número de celular.`;
+    }
     const intro = `${RECEIPT_THANKS} Recibimos tu pago del combo 🎉 Nuestro equipo lo valida y, una vez verificado, te confirmamos tu cupo en los dos cursos.`;
     return dataComplete
       ? intro
       : `${intro} Para registrarte bien, indícame tu nombre completo (verifica que esté bien escrito) y tu número de celular.`;
+  }
+
+  // Varios cupos de un curso en un solo comprobante: se piden todos los nombres.
+  if (seats >= 2 && reason.kind === "course") {
+    return `${RECEIPT_THANKS} Recibimos el pago de ${seats} cupos 🎉 Nuestro equipo lo valida y, una vez verificado, les confirmamos la inscripción. Para registrarlos bien, indícame el nombre completo de cada participante y un número de celular.`;
   }
 
   if (reason.kind === "packages") {

@@ -194,8 +194,10 @@ function boliviaGreeting(now: Date): string {
 
 // FLUJO A sin ningún curso con fecha cargada: este texto y nada más (sin botón, sin QR, sin
 // ubicación). Es la respuesta a cualquier pregunta por los cursos mientras no haya fecha.
+// Promete avisarle: quien lo recibe queda en la lista de espera (/espera en Telegram), y el
+// webhook reconoce el texto por "no tenemos fechas oficiales confirmadas" — no cambiar esa frase.
 function renderNoCourseDatesText(now: Date): string {
-  return `${boliviaGreeting(now)} 😊 Sobre los cursos, por ahora no tenemos fechas oficiales confirmadas. Puedes seguirnos como ConectaPro o @marketero7 en TikTok, ahí anunciamos las nuevas fechas apenas salen.`;
+  return `${boliviaGreeting(now)} 😊 Sobre los cursos, por ahora no tenemos fechas oficiales confirmadas. Te dejamos anotado y te avisamos por aquí apenas salga la nueva fecha 🙌 También puedes seguirnos como ConectaPro o @marketero7 en TikTok.`;
 }
 
 // ¿A qué página apunta un texto de botón? Reconoce los textos fijos de arriba (aunque el

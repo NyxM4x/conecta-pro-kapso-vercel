@@ -3,10 +3,20 @@
 // variables de entorno; toda la lógica de negocio vive en funciones puras aparte
 // (lib/payments-report.ts, lib/payments-ledger.ts, lib/pending-contacts.ts).
 
+import { buildPaymentsReport } from "./payments-report.ts";
 import type { InboundCandidate, OutboundMarker, VisionVerdict } from "./payments-report.ts";
-import type { ClientText } from "./payments-ledger.ts";
+import { NAME_LOOKAHEAD_HOURS, NAME_LOOKBACK_MINUTES, buildPaymentsLedger } from "./payments-ledger.ts";
+import type { ClientText, LedgerEntry } from "./payments-ledger.ts";
 import { REQUEST_MARKERS, requestTypeOf } from "./pending-contacts.ts";
 import type { PendingContactsData } from "./pending-contacts.ts";
+import {
+  PENDING_LOOKBACK_DAYS,
+  ROSTER_LOOKBACK_DAYS,
+  ROSTER_SET_MARKER,
+  WAITLIST_LOOKBACK_DAYS,
+  WAITLIST_MARKERS,
+} from "./course-roster.ts";
+import type { CourseIntent, RosterChoice, RosterCorrection, WaitlistEntry } from "./course-roster.ts";
 
 // Cliente de Supabase (tipado laxo a propósito: evita importar supabase-js aquí).
 type SupabaseLike = { from: (table: string) => any };
@@ -134,13 +144,152 @@ async function loadPaymentReportData(
   const vision = new Map<string, VisionVerdict>();
   for (const row of visionRows) {
     if (!row.kapso_message_id || row.metadata?.detection_source !== "vision") continue;
+    const amount = Number(row.metadata?.amount);
     vision.set(row.kapso_message_id, {
       isReceipt: Boolean(row.metadata?.is_receipt),
       reason: String(row.metadata?.reason ?? ""),
+      amount: Number.isFinite(amount) && amount > 0 ? amount : null,
     });
   }
 
   return { candidates, markers, vision };
+}
+
+// Comprobantes de un rango con nombre y celular: lo que muestran /pagos y /inscritos.
+async function loadPaymentsLedgerEntries(
+  supabase: SupabaseLike,
+  fromIso: string,
+  toIso: string,
+): Promise<LedgerEntry[]> {
+  const payments = buildPaymentsReport(await loadPaymentReportData(supabase, fromIso, toIso));
+  const phones = [...new Set(payments.map((p) => p.phone))];
+
+  // El nombre llega en la ráfaga del comprobante o en las horas siguientes.
+  const textsFrom = new Date(new Date(fromIso).getTime() - NAME_LOOKBACK_MINUTES * 60_000).toISOString();
+  const textsUntil = new Date(new Date(toIso).getTime() + NAME_LOOKAHEAD_HOURS * 3600_000).toISOString();
+  const [texts, profileNames] = await Promise.all([
+    loadClientTexts(supabase, phones, textsFrom, textsUntil),
+    loadContactNames(supabase, phones),
+  ]);
+
+  return buildPaymentsLedger({ payments, texts, profileNames });
+}
+
+const DAY = 24 * 3600_000;
+
+// Todo lo que necesita /inscritos: los comprobantes de las últimas semanas, lo que corrigió el
+// equipo con los botones y quiénes tocaron pagar o recibieron el QR.
+async function loadCourseRosterData(
+  supabase: SupabaseLike,
+  now: Date,
+): Promise<{
+  entries: LedgerEntry[];
+  corrections: RosterCorrection[];
+  intents: CourseIntent[];
+  profileNames: Map<string, string>;
+}> {
+  const fromIso = new Date(now.getTime() - ROSTER_LOOKBACK_DAYS * DAY).toISOString();
+  const intentsFrom = new Date(now.getTime() - PENDING_LOOKBACK_DAYS * DAY).toISOString();
+
+  const [entries, corrections, intentRows] = await Promise.all([
+    loadPaymentsLedgerEntries(supabase, fromIso, now.toISOString()),
+    loadRosterCorrections(supabase, fromIso),
+    fetchAllPages<{ contact_phone: string; content: string; created_at: string; raw_payload: any }>(() =>
+      supabase
+        .from("kapso_messages")
+        .select("contact_phone, content, created_at, raw_payload")
+        .eq("direction", "outbound")
+        .gte("created_at", intentsFrom)
+        .or('content.like."[COURSE_PAY_CLICK%",content.like."[MEDIA_SENT:payment_qr%"')
+        .order("created_at", { ascending: true }),
+    ),
+  ]);
+
+  const intents: CourseIntent[] = intentRows.map((row) => {
+    if (!row.content.startsWith("[COURSE_PAY_CLICK")) {
+      return { phone: row.contact_phone, kind: "qr", option: null, amount: null, createdAt: row.created_at };
+    }
+    const amount = Number(row.raw_payload?.amount);
+    return {
+      phone: row.contact_phone,
+      kind: "pay_click",
+      option: row.raw_payload?.option ?? null,
+      amount: Number.isFinite(amount) ? amount : null,
+      createdAt: row.created_at,
+    };
+  });
+
+  const profileNames = await loadContactNames(supabase, [...new Set(intents.map((i) => i.phone))]);
+  return { entries, corrections, intents, profileNames };
+}
+
+// Lo que el equipo decidió sobre cada comprobante (botones de /inscritos o registro manual).
+async function loadRosterCorrections(supabase: SupabaseLike, sinceIso: string): Promise<RosterCorrection[]> {
+  const rows = await fetchAllPages<{ created_at: string; raw_payload: any }>(() =>
+    supabase
+      .from("kapso_messages")
+      .select("created_at, raw_payload")
+      .eq("direction", "outbound")
+      .like("content", `${ROSTER_SET_MARKER}%`)
+      .gte("created_at", sinceIso)
+      .order("created_at", { ascending: true }),
+  );
+
+  return rows.flatMap((row) => {
+    const key = String(row.raw_payload?.key ?? "");
+    const choice = String(row.raw_payload?.choice ?? "");
+    const note = typeof row.raw_payload?.note === "string" ? row.raw_payload.note : null;
+    return key && choice ? [{ key, choice, createdAt: row.created_at, by: row.raw_payload?.by ?? null, note }] : [];
+  });
+}
+
+// Lo que eligió el equipo con un botón de /inscritos. Va SIN conversación a propósito: así nunca
+// entra al historial que lee el bot ni cuenta como el último mensaje del asistente.
+async function saveRosterCorrection(
+  supabase: SupabaseLike,
+  params: { key: string; phone: string; choice: RosterChoice; by: string | null; note?: string | null },
+): Promise<boolean> {
+  const { error } = await supabase.from("kapso_messages").insert({
+    kapso_message_id: null,
+    kapso_conversation_id: null,
+    contact_phone: params.phone,
+    direction: "outbound",
+    role: "assistant",
+    content: `${ROSTER_SET_MARKER}:${params.key}] ${params.choice}`,
+    message_timestamp: new Date().toISOString(),
+    batch_index: null,
+    raw_payload: {
+      type: "course_roster_set",
+      key: params.key,
+      choice: params.choice,
+      by: params.by,
+      ...(params.note ? { note: params.note } : {}),
+    },
+  });
+  if (error) console.error("roster correction insert failed", error);
+  return !error;
+}
+
+// Lista de espera de cursos (/espera), con el nombre de perfil de cada uno.
+async function loadCourseWaitlist(supabase: SupabaseLike, now: Date): Promise<WaitlistEntry[]> {
+  const since = new Date(now.getTime() - WAITLIST_LOOKBACK_DAYS * DAY).toISOString();
+  const rows = await fetchAllPages<{ contact_phone: string; created_at: string; raw_payload: any }>(() =>
+    supabase
+      .from("kapso_messages")
+      .select("contact_phone, created_at, raw_payload")
+      .eq("direction", "outbound")
+      .gte("created_at", since)
+      .or(WAITLIST_MARKERS.map((marker) => `content.like.${marker}%`).join(","))
+      .order("created_at", { ascending: true }),
+  );
+
+  const names = await loadContactNames(supabase, [...new Set(rows.map((row) => row.contact_phone))]);
+  return rows.map((row) => ({
+    phone: row.contact_phone,
+    createdAt: row.created_at,
+    clientMessage: row.raw_payload?.client_message ?? null,
+    profileName: names.get(row.contact_phone) ?? null,
+  }));
 }
 
 // Todo lo que escribieron estos clientes en el rango (para sacar el nombre y el celular que
@@ -245,4 +394,14 @@ async function loadPendingContactsData(supabase: SupabaseLike, sinceIso: string)
   };
 }
 
-export { loadPaymentReportData, loadClientTexts, loadContactNames, loadPendingContactsData };
+export {
+  loadPaymentReportData,
+  loadPaymentsLedgerEntries,
+  loadClientTexts,
+  loadContactNames,
+  loadPendingContactsData,
+  loadCourseRosterData,
+  loadRosterCorrections,
+  saveRosterCorrection,
+  loadCourseWaitlist,
+};

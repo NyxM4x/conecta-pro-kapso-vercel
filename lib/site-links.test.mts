@@ -326,7 +326,7 @@ test("sin ningún curso con fecha cargada no sale el botón de cursos, pase lo q
 test("sin fechas, el texto es el de 'no hay fechas confirmadas' con saludo según la hora", () => {
   assert.equal(
     renderNoCourseDatesText(NO_DATES),
-    "¡Buenos días! 😊 Sobre los cursos, por ahora no tenemos fechas oficiales confirmadas. Puedes seguirnos como ConectaPro o @marketero7 en TikTok, ahí anunciamos las nuevas fechas apenas salen.",
+    "¡Buenos días! 😊 Sobre los cursos, por ahora no tenemos fechas oficiales confirmadas. Te dejamos anotado y te avisamos por aquí apenas salga la nueva fecha 🙌 También puedes seguirnos como ConectaPro o @marketero7 en TikTok.",
   );
   assert.match(renderNoCourseDatesText(new Date("2030-01-01T15:00:00-04:00")), /^¡Buenas tardes!/);
   assert.match(renderNoCourseDatesText(new Date("2030-01-01T21:00:00-04:00")), /^¡Buenas noches!/);
